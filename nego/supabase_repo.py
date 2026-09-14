@@ -36,6 +36,26 @@ CONFLICT_COLUMNS = "work_type,bid_ntce_no,bid_ntce_ord"
 # 한 번에 보내는 행 수. 너무 크면 요청이 커져 타임아웃이 난다.
 BATCH_SIZE = 100
 
+ROW_COLUMNS = (
+    "work_type", "bid_ntce_no", "bid_ntce_ord", "title",
+    "notice_institution", "demand_institution", "detail_url",
+    "award_method", "award_variant", "contract_method", "bid_method",
+    "notice_kind", "is_re_notice", "change_reason",
+    "estimated_price", "assigned_budget", "budget", "posted_at",
+    "qualification_deadline", "joint_agreement_deadline", "bid_deadline",
+    "earliest_deadline", "earliest_deadline_kind", "days_left",
+    "joint_allowed", "joint_submit_type", "joint_exec_type", "joint_method_name",
+    "qualification_summary", "qualification_total_groups",
+    "qualification_missing_count", "qualification_checked",
+    "regions", "confidence",
+    "matched_keywords", "matched_product_codes", "matched_industry_codes",
+    "attachments", "attachment_count", "raw", "is_candidate", "collected_at",
+)
+
+
+def align_columns(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """모든 행의 키 구성을 ROW_COLUMNS로 통일한다. 빠진 키는 None."""
+    return [{col: row.get(col) for col in ROW_COLUMNS} for row in rows]
 
 class SupabaseError(Exception):
     pass
