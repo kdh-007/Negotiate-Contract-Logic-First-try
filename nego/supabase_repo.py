@@ -169,6 +169,10 @@ class SupabaseRepository:
 
     def upsert_rows(self, rows: list[dict[str, Any]], timeout: float = 60.0) -> int:
         """행을 BATCH_SIZE씩 나눠 upsert 한다."""
+        
+        rows = align_columns(rows)
+
+        saved = 0
         if not rows:
             return 0
 
