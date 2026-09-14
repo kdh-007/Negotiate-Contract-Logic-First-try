@@ -1,0 +1,11 @@
+# 수집 원문 · 결과물은 커밋하지 않는다 (담당자 연락처 등 개인정보 포함 가능)
+data/
+output/
+cache/
+.env
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
