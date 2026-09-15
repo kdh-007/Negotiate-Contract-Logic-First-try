@@ -306,6 +306,26 @@ class TestScreen(unittest.TestCase):
         result = self._screen(fixtures.notice("X", title="○○ 과 학 관 전시물"))
         self.assertTrue(result.matched)
 
+    def test_overseas_korea_pavilion_is_excluded(self):
+        """국내 공고만 다루기로 한 방침(2026-09-15) — 실측: UAE 두바이/미국 뉴욕 한국관 설치 공고."""
+        result = self._screen(
+            fixtures.notice("X", title="2027 UAE 두바이 의료기기전시회 한국관 전시디자인설치공사 입찰")
+        )
+        self.assertFalse(result.matched)
+        self.assertEqual(result.excluded_by, "해외공고")
+
+    def test_overseas_group_pavilion_is_excluded(self):
+        result = self._screen(
+            fixtures.notice("X", title="2026 홍콩 코스모프로프 뷰티 전시회 단체관 전시디자인 및 설치용역")
+        )
+        self.assertFalse(result.matched)
+        self.assertEqual(result.excluded_by, "해외공고")
+
+    def test_institution_name_containing_hanguk_gwan_is_not_falsely_excluded(self):
+        """'한국관광공사'가 제목에 있어도 '전시회'가 없으면 해외공고로 오판하면 안 된다."""
+        result = self._screen(fixtures.notice("X", title="한국관광공사 ○○센터 전시관 리모델링 용역"))
+        self.assertNotEqual(result.excluded_by, "해외공고")
+
 
 class TestSchedule(unittest.TestCase):
     def test_earliest_deadline_is_chosen(self):

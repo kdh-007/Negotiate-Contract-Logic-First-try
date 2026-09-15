@@ -3,6 +3,8 @@
 키워드·제외키워드·최소예산·코드 매칭 규칙은 **기존 시스템과 동일하게 유지한다**
 (`matching/matchEngine.ts`, `keywordMatcher.ts`, `codeMatcher.ts`).
 
+  - 해외 전시회 "한국관"/"단체관" 설치 공고는 무조건 제외 (국내 공고만 다루기로
+    한 방침, 2026-09-15 결정 — excludeKeywords와는 별개로 코드에 직접 둔다)
   - 제외키워드가 제목에 하나라도 있으면 무조건 제외
   - 예산이 확인되는 공고 중 minBudgetAmount 미만이면 제외 (예산 미상은 통과)
   - 세부품명번호(물품)는 정확일치 → 단독으로도 인정
@@ -45,6 +47,27 @@ class ScreenResult:
     excluded_reason: str | None = None
 
 
+# 해외 전시회 참가용 "한국관"/"단체관" 설치 공고 제외 — 국내 공고만 다루기로 한
+# 방침(2026-09-15 결정)에 따른 것. `config/keywords.json`의 excludeKeywords는
+# "회사가 정한 사업 판단, 임의로 안 바꾼다" 정책 하에 있어서 건드리지 않고
+# 코드에 별도로 둔다.
+#
+# "한국관"/"단체관" 단독으로는 "한국관광공사" 같은 국내 기관명과 겹칠 위험이
+# 있어서(부분일치라 "한국관광공사"도 "한국관"을 포함한다), 제목에 "전시회"가
+# 함께 있을 때만 해외 파빌리온 설치로 판단한다. 실측 확인: "2026 미국 뉴욕
+# 치과 전시회 한국관 전시디자인설치공사", "2027 UAE 두바이 의료기기전시회
+# 한국관 전시디자인설치공사", "2026 홍콩 코스모프로프 뷰티 전시회 단체관
+# 전시디자인 및 설치용역" 전부 이 패턴과 일치한다.
+_OVERSEAS_PAVILION_WORDS = ("한국관", "단체관")
+
+
+def _is_overseas_pavilion(notice: Notice) -> bool:
+    haystack = _squash(notice.title)
+    if "전시회" not in haystack:
+        return False
+    return any(word in haystack for word in _OVERSEAS_PAVILION_WORDS)
+
+
 def _match_exclude(notice: Notice, exclude_keywords: list[str]) -> str | None:
     haystack = _squash(notice.title)
     for word in exclude_keywords:
@@ -74,6 +97,14 @@ def _match_codes(notice: Notice, config: ScreenConfig) -> tuple[list[str], list[
 
 
 def screen(notice: Notice, config: ScreenConfig) -> ScreenResult:
+    if _is_overseas_pavilion(notice):
+        return ScreenResult(
+            matched=False,
+            confidence=None,
+            excluded_by="해외공고",
+            excluded_reason="해외 전시회 한국관/단체관 설치",
+        )
+
     excluded_word = _match_exclude(notice, config.exclude_keywords)
     if excluded_word:
         return ScreenResult(
