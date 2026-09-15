@@ -22,9 +22,11 @@ from nego.attachments import (  # noqa: E402
     _hwpx_section_text,
     extract_text,
     fetch_attachment_text,
+    fetch_missing_qualification_notes,
     save_attachment_texts,
 )
 from nego.models import notice_from_raw  # noqa: E402
+from nego.qualify import QualificationResult  # noqa: E402
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "attachments"
 
@@ -390,10 +392,11 @@ class TestFetchAttachmentText(unittest.TestCase):
 
 
 class _FakeCandidate:
-    """save_attachment_texts는 candidate.notice만 본다 — pipeline.Candidate 전체를 안 만들어도 된다."""
+    """save_attachment_texts/fetch_missing_qualification_notes가 보는 최소 인터페이스만 흉내낸다."""
 
-    def __init__(self, notice):
+    def __init__(self, notice, checked: bool = False):
         self.notice = notice
+        self.qualification = QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=checked)
 
 
 class TestSaveAttachmentTexts(unittest.TestCase):
@@ -443,6 +446,65 @@ class TestSaveAttachmentTexts(unittest.TestCase):
             self.assertEqual(stats["qualification_found"], 0)
             written = {p.name for p in (output_dir / "attachment_text").iterdir()}
             self.assertEqual(len(written), 1)  # .txt만, _참가자격.txt는 없음
+
+
+class TestFetchMissingQualificationNotes(unittest.TestCase):
+    def _notice(self, notice_no: str, fixture: Path):
+        raw = {
+            "bidNtceNo": notice_no,
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고",
+            "ntceSpecFileNm1": fixture.name,
+            "ntceSpecDocUrl1": f"file://{fixture}",
+        }
+        return notice_from_raw(raw, "용역")
+
+    def test_finds_note_when_api_has_no_qualification_data(self):
+        """checked=False(면허제한정보 API가 비어있음)인 후보만 첨부파일을 본다."""
+        fixture = FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx"
+        notice = self._notice("R26TEST0003", fixture)
+        session = FakeSession(fixture.read_bytes())
+
+        notes = fetch_missing_qualification_notes(
+            [_FakeCandidate(notice, checked=False)], timeout=5.0, session=session
+        )
+
+        self.assertIn("R26TEST0003", notes)
+        self.assertIn("5. 입찰 참가자격", notes["R26TEST0003"])
+        self.assertIn("개 항목", notes["R26TEST0003"])
+
+    def test_skips_candidates_already_checked_by_api(self):
+        """API에 이미 자격정보가 있으면(checked=True) 첨부파일을 내려받지 않는다."""
+        fixture = FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx"
+        notice = self._notice("R26TEST0004", fixture)
+        session = FakeSession(fixture.read_bytes())
+
+        notes = fetch_missing_qualification_notes(
+            [_FakeCandidate(notice, checked=True)], timeout=5.0, session=session
+        )
+
+        self.assertEqual(notes, {})
+
+    def test_no_note_when_attachment_has_no_qualification_section(self):
+        fixture = FIXTURES_DIR / "jeongseon_culture_center_task_order.hwpx"
+        notice = self._notice("R26TEST0005", fixture)
+        session = FakeSession(fixture.read_bytes())
+
+        notes = fetch_missing_qualification_notes(
+            [_FakeCandidate(notice, checked=False)], timeout=5.0, session=session
+        )
+
+        self.assertEqual(notes, {})
+
+    def test_attachment_failure_does_not_raise(self):
+        notice = self._notice("R26TEST0006", FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx")
+        session = FakeSession(b"", status_code=404)
+
+        notes = fetch_missing_qualification_notes(
+            [_FakeCandidate(notice, checked=False)], timeout=5.0, session=session
+        )
+
+        self.assertEqual(notes, {})
 
 
 if __name__ == "__main__":

@@ -35,6 +35,10 @@ class QualificationResult:
     missing_groups: list[LicenseGroup]
     passes: bool
     checked: bool  # False면 자격정보가 없어 판정을 못 한 것 (fail-open으로 통과)
+    # API에 자격정보가 없을 때(checked=False), 첨부파일에서 대신 찾은 "입찰
+    # 참가자격" 절 요약. 자동 합격/불합격 판정은 아니고, 사람이 확인해야 할
+    # 정보가 있다는 것만 알려준다 (attachments.fetch_missing_qualification_notes 참고).
+    attachment_note: str | None = None
 
     @property
     def missing_count(self) -> int:
@@ -43,6 +47,8 @@ class QualificationResult:
     @property
     def summary(self) -> str:
         if not self.checked:
+            if self.attachment_note:
+                return f"자격정보 없음(API) — 첨부파일 확인: {self.attachment_note}"
             return "자격정보 없음 (판정 보류, 통과)"
         if self.missing_count == 0:
             return f"자격 충족 ({self.total_groups}개 그룹 전부)"

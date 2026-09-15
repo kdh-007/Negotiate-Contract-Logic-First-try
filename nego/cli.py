@@ -65,6 +65,22 @@ def _verify_api(config) -> int:
     return 0
 
 
+def _apply_missing_qualification_notes(candidates) -> None:
+    """면허제한정보 API가 비어 있는 후보는 첨부파일에서 참가자격 절을 찾아 보완한다.
+
+    리포트(콘솔/CSV/HTML/Supabase)가 전부 `candidate.qualification.summary`를
+    그대로 쓰므로, 이 함수는 그 값을 만들기 **전에** 실행돼야 한다. 매 실행마다
+    자동으로 돈다 — `--fetch-attachment-text`처럼 별도 플래그가 필요 없다.
+    """
+    from .attachments import fetch_missing_qualification_notes
+
+    notes = fetch_missing_qualification_notes(candidates)
+    for candidate in candidates:
+        note = notes.get(candidate.notice.notice_no)
+        if note:
+            candidate.qualification.attachment_note = note
+
+
 def _save_to_supabase(candidates, stats) -> None:
     """Supabase 환경변수가 있으면 저장한다. 없으면 조용히 건너뛴다.
 
@@ -148,6 +164,14 @@ def main(argv: list[str] | None = None) -> int:
     except ApiError as err:
         print(redact(str(err), [config.api.service_key]), file=sys.stderr)
         return 1
+
+    if not args.from_store:
+        # --from-store는 "API 호출 없이 즉시 재필터링"이 목적이라 첨부파일
+        # 다운로드(별도 네트워크 호출)까지 걸면 그 취지가 깨진다. 게다가
+        # --from-store는 면허제한정보 API 자체를 안 불러서(license_groups={})
+        # 후보 전부가 checked=False로 잡히므로, 여기서 돌리면 매번 전체 후보의
+        # 첨부파일을 다 내려받게 된다 — 그래서 실제 API를 부른 경로에서만 돈다.
+        _apply_missing_qualification_notes(candidates)
 
     print(render_console(candidates, stats))
 

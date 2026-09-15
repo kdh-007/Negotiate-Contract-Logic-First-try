@@ -161,6 +161,16 @@ class TestQualification(unittest.TestCase):
         self.assertEqual(result.missing_count, 2)
         self.assertFalse(result.passes, "2개 이상 미충족이면 제외 — 기존 규칙")
 
+    def test_attachment_note_surfaces_when_api_has_no_data(self):
+        """API가 비어 있어도(checked=False) 첨부파일에서 찾은 정보가 있으면 요약에 드러나야 한다."""
+        result = qualify.evaluate([], self.held)
+        self.assertFalse(result.checked)
+        self.assertIn("자격정보 없음 (판정 보류, 통과)", result.summary)
+
+        result.attachment_note = "3. 입찰 참가자격 — 5개 항목 (원문 확인 필요)"
+        self.assertIn("첨부파일 확인", result.summary)
+        self.assertIn("5개 항목", result.summary)
+
 
 class TestScreen(unittest.TestCase):
     config = screen.ScreenConfig(

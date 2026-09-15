@@ -166,6 +166,55 @@ def save_attachment_texts(
     return stats
 
 
+def fetch_missing_qualification_notes(
+    candidates: list["Candidate"],
+    timeout: float = 30.0,
+    session: requests.Session | None = None,
+) -> dict[str, str]:
+    """면허제한정보 API에 데이터가 없는 후보만 골라 첨부파일에서 참가자격 절을 찾는다.
+
+    이건 부가 기능이 아니라 수집의 핵심 줄기다 — API가 비어 있다고 "자격정보
+    없음"으로만 두면, 발주기관이 구조화 등록을 안 했을 뿐 첨부파일엔 참가자격이
+    버젓이 적혀 있는 공고(실측: 부안청자박물관 R26BK01719858)를 사람이 놓치기
+    쉽다. `--fetch-attachment-text` 플래그 없이도 매 실행마다 자동으로 돈다.
+
+    자동으로 합격/불합격을 정하지는 않는다 — 절을 찾았다는 사실과 항목 수만
+    `QualificationResult.attachment_note`에 담아 리포트에 노출하고, 사람이
+    원문을 확인하도록 안내한다. API에 이미 데이터가 있는 후보는 건드리지
+    않는다(불필요한 다운로드를 피하기 위함). 첨부파일 하나가 실패해도 다음
+    첨부파일/다음 후보로 계속 진행한다.
+    """
+    from .qualification_text import find_qualification_section
+
+    session = session or requests.Session()
+    notes: dict[str, str] = {}
+
+    for candidate in candidates:
+        if candidate.qualification.checked:
+            continue
+
+        notice = candidate.notice
+        for att in notice.attachments:
+            ext = (att.get("ext") or "").lower()
+            if ext not in SUPPORTED_EXTENSIONS or not att.get("url"):
+                continue
+            try:
+                data = download_bytes(session, att["url"], timeout=timeout)
+                text = extract_text(data, ext)
+            except AttachmentError as err:
+                log.warning(
+                    "자격정보 보완용 첨부파일 처리 실패 [%s] %s: %s", notice.notice_no, att.get("file_name"), err
+                )
+                continue
+
+            section = find_qualification_section(text)
+            if section is not None:
+                notes[notice.notice_no] = f"{section.heading} — {len(section.items)}개 항목 (원문 확인 필요)"
+                break  # 이 공고는 됐다. 나머지 첨부파일까지 볼 필요 없다
+
+    return notes
+
+
 # ── PDF ──────────────────────────────────────────────────────────
 
 def _extract_pdf_text(data: bytes) -> str:
