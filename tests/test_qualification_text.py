@@ -143,6 +143,59 @@ class TestRealFixtures(unittest.TestCase):
         self.assertIn("세종특별자치시", section.items[0])
         self.assertGreater(len(section.items), 3)  # 다음 절(4. 이하)까지 딸려옴 — 알려진 한계
 
+    def test_naro_space_center_pdf_uses_circled_number_items(self):
+        """나로우주센터 공고(PDF): '2. 입찰참가자격' 아래 ①~④ 원문자 번호 4개 항목."""
+        text = self._extract("naro_space_center_bid_notice.pdf")
+        section = find_qualification_section(text)
+        self.assertIsNotNone(section)
+        self.assertEqual(section.heading, "2. 입찰참가자격")
+        self.assertEqual(len(section.items), 4)
+        self.assertTrue(section.items[0].startswith("①"))
+        self.assertIn("정보통신공사업", section.items[2])
+
+    def test_anseong_notice_uses_korean_letter_items(self):
+        """안성시 공고(HWPX): '4. 입찰 참가자격' 아래 가~바 6개 항목."""
+        text = self._extract("anseong_gosam_lake_park_notice.hwpx")
+        section = find_qualification_section(text)
+        self.assertIsNotNone(section)
+        self.assertEqual(section.heading, "4. 입찰 참가자격")
+        self.assertEqual(len(section.items), 6)
+        self.assertIn("실내건축공사업", section.items[2])
+
+    def test_gwangju_pdf_uses_korean_letter_items(self):
+        """광주 전자 디지털 체험관 공고(PDF): '3. 입찰참가자격' 아래 가~바 6개 항목."""
+        text = self._extract("gwangju_digital_experience_center_notice.pdf")
+        section = find_qualification_section(text)
+        self.assertIsNotNone(section)
+        self.assertEqual(section.heading, "3. 입찰참가자격")
+        self.assertEqual(len(section.items), 6)
+        self.assertIn("소프트웨어사업자", section.items[0])
+
+    def test_yangsan_notice_uses_korean_letter_items(self):
+        """양산시 공고(HWPX): '4. 입찰참가자격' 아래 가~라 4개 항목."""
+        text = self._extract("yangsan_jujin_park_notice.hwpx")
+        section = find_qualification_section(text)
+        self.assertIsNotNone(section)
+        self.assertEqual(section.heading, "4. 입찰참가자격")
+        self.assertEqual(len(section.items), 4)
+        self.assertIn("세부품명번호", section.items[1])
+
+
+class TestCircledNumberItems(unittest.TestCase):
+    def test_splits_circled_number_items(self):
+        body = " ① 첫째\n ② 둘째\n ③ 셋째\n"
+        items = split_items(body)
+        self.assertEqual(len(items), 3)
+        self.assertTrue(items[0].startswith("①"))
+        self.assertTrue(items[2].startswith("③"))
+
+    def test_heading_matches_regardless_of_spacing_between_syllables(self):
+        """'입찰참가자격'의 각 글자 사이 공백 유무와 무관하게 헤딩을 찾아야 한다."""
+        text = "2. 입 찰 참 가 자 격\n 가. 요건\n"
+        section = find_qualification_section(text)
+        self.assertIsNotNone(section)
+        self.assertEqual(section.heading, "2. 입 찰 참 가 자 격")
+
 
 if __name__ == "__main__":
     unittest.main()

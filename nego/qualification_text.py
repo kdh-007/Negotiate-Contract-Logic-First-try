@@ -5,12 +5,13 @@ API의 면허제한정보가 비어 있을 때(예: 발주기관이 나라장터
 원문으로 직접 자격요건을 확인해야 한다. 표를 파싱하는 게 아니라, 절 전체와
 번호/기호가 붙은 개별 항목을 나눠서 읽기 쉽게 만드는 정도다.
 
-실측한 세 관행을 지원한다:
+실측한 네 관행을 지원한다:
   - 지자체식: "5. 입찰 참가자격" 아래 "가. / 나. / 다. ..." (정선군 공고문)
   - 조달청식: "3. 입찰참가자격" 아래 "3.1. / 3.2. / 3.3. ..." (세종 입찰설명서)
   - "가." 하나 아래 실제 요건은 "1) / 2) / 3) ..."로 나열 (정선군 제안요청서,
     부안청자박물관 공고 첨부파일에서도 같은 형태 확인)
-셋 다 아니면 절 전체를 항목 1개로 반환한다 (fail-open — 잘못 쪼개느니
+  - 원문자 번호: "①/ ② / ③ ..." (지일이 보내준 실제 자격조건 문서에서 확인)
+넷 다 아니면 절 전체를 항목 1개로 반환한다 (fail-open — 잘못 쪼개느니
 통째로 보여주는 편이 낫다).
 
 한계: PDF는 문단 구분이 없어서(페이지 레이아웃 기준으로만 줄바꿈됨) 다음
@@ -24,7 +25,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_HEADING_RE = re.compile(r"^[ \t]*\d{1,2}\.[ \t]*입찰[ \t]*참가[ \t]*자격[ \t]*[:：]?[ \t]*$", re.MULTILINE)
+_HEADING_RE = re.compile(r"^[ \t]*\d{1,2}\.[ \t]*입\s*찰\s*참\s*가\s*자\s*격[ \t]*[:：]?[ \t]*$", re.MULTILINE)
 
 # "6. 입찰내용"처럼 새 최상위 절이 시작되는 줄. "3.1. ..."(소항목)과 구분하기
 # 위해, 번호 뒤에 공백이 최소 1개 있고 그다음이 숫자가 아니어야 한다
@@ -36,6 +37,8 @@ _DECIMAL_ITEM_RE = re.compile(r"^[ \t]*(\d{1,2}\.\d{1,2}\.)[ \t]*", re.MULTILINE
 # "가." 하나 아래 "1) 2) 3) ..."로 개별 요건을 나열하는 문서도 있다 (실측:
 # 정선군 제안요청서 — 요건 자체는 이 번호 목록에 있고 "가."는 도입 문장뿐).
 _NUMBERED_PAREN_ITEM_RE = re.compile(r"^[ \t]*(\d{1,2})\)[ \t]*", re.MULTILINE)
+# 원문자 번호(①~⑳, U+2460~U+2473). 조달청 표준 입찰공고문에서 실측 확인.
+_CIRCLED_NUMBER_ITEM_RE = re.compile(r"^[ \t]*([①-⑳])[ \t]*", re.MULTILINE)
 
 
 @dataclass
@@ -61,7 +64,7 @@ def find_qualification_section(text: str) -> QualificationSection | None:
 
 def split_items(body: str) -> list[str]:
     """절 본문을 항목 단위로 나눈다. 아는 패턴이 없으면 통째로 1개 항목."""
-    for pattern in (_KOREAN_LETTER_ITEM_RE, _DECIMAL_ITEM_RE, _NUMBERED_PAREN_ITEM_RE):
+    for pattern in (_KOREAN_LETTER_ITEM_RE, _DECIMAL_ITEM_RE, _NUMBERED_PAREN_ITEM_RE, _CIRCLED_NUMBER_ITEM_RE):
         markers = list(pattern.finditer(body))
         if len(markers) < 2:
             continue
