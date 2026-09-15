@@ -172,6 +172,70 @@ class TestQualification(unittest.TestCase):
         self.assertIn("5개 항목", result.summary)
 
 
+class TestExtractCandidateCodes(unittest.TestCase):
+    def test_extracts_labeled_industry_code(self):
+        codes = qualify._extract_candidate_codes("산업디자인전문회사(환경디자인분야)(업종코드: 4442)로 신고를 필한 업체")
+        self.assertEqual(codes, ["4442"])
+
+    def test_extracts_bracket_only_code_without_label(self):
+        codes = qualify._extract_candidate_codes("소프트웨어사업자(디지털콘텐츠 개발서비스사업)[1469]")
+        self.assertEqual(codes, ["1469"])
+
+    def test_extracts_ten_digit_product_code(self):
+        codes = qualify._extract_candidate_codes("조합놀이대(세부품명번호 10자리, 4924159701)을 제조물품으로 등록")
+        self.assertEqual(codes, ["4924159701"])
+
+    def test_ignores_year_looking_numbers(self):
+        codes = qualify._extract_candidate_codes("계약기간: 2026. 12. 15.까지(재공고)")
+        self.assertEqual(codes, [])
+
+    def test_ignores_phone_number_tail_inside_parens(self):
+        """실측 회귀: 담당부서 연락처의 마지막 4자리가 업종코드로 오인되면 안 된다."""
+        text = "실적인정 여부는 발주부서(안성시청 문화관광과 관광팀, ☎031-678-2492)에서 최종 판단함"
+        self.assertEqual(qualify._extract_candidate_codes(text), [])
+
+    def test_finds_multiple_codes_across_separate_brackets(self):
+        text = "산업디자인전문회사(제품디자인분야)(업종코드: 4441) 또는 산업디자인전문회사(환경디자인분야)(업종코드: 4442)"
+        self.assertEqual(qualify._extract_candidate_codes(text), ["4441", "4442"])
+
+
+class TestEvaluateFromTextItems(unittest.TestCase):
+    def test_no_codified_items_is_fail_open(self):
+        """실적·신용등급처럼 코드가 없는 항목만 있으면 판정하지 않는다(checked=False)."""
+        items = ["가. 부정당업자가 아닌 자", "나. 최근 3년 이내 5천만원 이상의 완료 실적이 있는 업체"]
+        result = qualify.evaluate_from_text_items(items, {"4990"}, set())
+        self.assertFalse(result.checked)
+        self.assertTrue(result.passes)
+
+    def test_passes_when_held_code_matches_one_of_the_alternatives(self):
+        items = ["가. 산업디자인전문회사(환경디자인분야)(업종코드: 4442) 또는 (종합디자인분야)(업종코드: 4444)"]
+        result = qualify.evaluate_from_text_items(items, {"4442"}, set())
+        self.assertTrue(result.checked)
+        self.assertTrue(result.passes)
+        self.assertEqual(result.missing_count, 0)
+        self.assertEqual(result.source, "첨부파일 텍스트")
+
+    def test_one_missing_group_still_passes(self):
+        items = [
+            "가. 실내건축공사업(업종코드: 4990) 면허 보유업체",
+            "나. 정보통신공사업(업종코드: 0036) 등록업체",
+        ]
+        result = qualify.evaluate_from_text_items(items, {"4990"}, set())
+        self.assertTrue(result.checked)
+        self.assertEqual(result.missing_count, 1)
+        self.assertTrue(result.passes, "1개까지는 통과 — API 판정과 동일 규칙")
+
+    def test_two_missing_groups_fails(self):
+        items = [
+            "가. 실내건축공사업(업종코드: 4990) 면허 보유업체",
+            "나. 정보통신공사업(업종코드: 0036) 등록업체",
+        ]
+        result = qualify.evaluate_from_text_items(items, set(), set())
+        self.assertEqual(result.missing_count, 2)
+        self.assertFalse(result.passes)
+        self.assertIn("미충족", result.summary)
+
+
 class TestScreen(unittest.TestCase):
     config = screen.ScreenConfig(
         keywords=["전시관", "박물관", "과학관", "체험관", "전시디자인", "전시홍보관", "미디어아트", "전시콘텐츠"],

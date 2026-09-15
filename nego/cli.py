@@ -65,20 +65,26 @@ def _verify_api(config) -> int:
     return 0
 
 
-def _apply_missing_qualification_notes(candidates) -> None:
-    """면허제한정보 API가 비어 있는 후보는 첨부파일에서 참가자격 절을 찾아 보완한다.
+def _apply_missing_qualification_notes(candidates, config) -> None:
+    """면허제한정보 API가 비어 있는 후보는 첨부파일 텍스트로 자격을 대신 판정한다.
+
+    항목 안의 업종코드/세부품명번호를 보유 목록(`config/held_qualifications.json`)과
+    직접 대조해서, 가능하면 "원문 확인 필요"가 아니라 실제 충족/미충족까지
+    자동으로 채운다(`qualify.evaluate_from_text_items`) — 사람이 매번 첨부파일을
+    열어보지 않아도 되게 하는 게 목적이다.
 
     리포트(콘솔/CSV/HTML/Supabase)가 전부 `candidate.qualification.summary`를
     그대로 쓰므로, 이 함수는 그 값을 만들기 **전에** 실행돼야 한다. 매 실행마다
     자동으로 돈다 — `--fetch-attachment-text`처럼 별도 플래그가 필요 없다.
     """
-    from .attachments import fetch_missing_qualification_notes
+    from .attachments import resolve_missing_qualifications
 
-    notes = fetch_missing_qualification_notes(candidates)
+    held_industry_codes, held_product_codes = qualify.load_held_codes(config.held_raw)
+    resolved = resolve_missing_qualifications(candidates, held_industry_codes, held_product_codes)
     for candidate in candidates:
-        note = notes.get(candidate.notice.notice_no)
-        if note:
-            candidate.qualification.attachment_note = note
+        result = resolved.get(candidate.notice.notice_no)
+        if result is not None:
+            candidate.qualification = result
 
 
 def _save_to_supabase(candidates, stats) -> None:
@@ -171,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
         # --from-store는 면허제한정보 API 자체를 안 불러서(license_groups={})
         # 후보 전부가 checked=False로 잡히므로, 여기서 돌리면 매번 전체 후보의
         # 첨부파일을 다 내려받게 된다 — 그래서 실제 API를 부른 경로에서만 돈다.
-        _apply_missing_qualification_notes(candidates)
+        _apply_missing_qualification_notes(candidates, config)
 
     print(render_console(candidates, stats))
 

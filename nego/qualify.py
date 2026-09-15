@@ -35,9 +35,13 @@ class QualificationResult:
     missing_groups: list[LicenseGroup]
     passes: bool
     checked: bool  # False면 자격정보가 없어 판정을 못 한 것 (fail-open으로 통과)
-    # API에 자격정보가 없을 때(checked=False), 첨부파일에서 대신 찾은 "입찰
-    # 참가자격" 절 요약. 자동 합격/불합격 판정은 아니고, 사람이 확인해야 할
-    # 정보가 있다는 것만 알려준다 (attachments.fetch_missing_qualification_notes 참고).
+    # 이 판정이 어디서 나왔는지. "API"(면허제한정보) 또는 "첨부파일 텍스트"
+    # (evaluate_from_text_items 참고) — 후자는 정규식 기반이라 API보다
+    # 신뢰도가 낮으므로 리포트에 출처를 구분해 보여준다.
+    source: str = "API"
+    # API·텍스트 양쪽 다 코드 기반 판정을 못 했을 때(checked=False), 첨부파일에서
+    # 그래도 "입찰 참가자격" 절 자체는 찾았다면 그 요약. 사람이 확인해야 할
+    # 정보가 있다는 것만 알려준다 (attachments.resolve_missing_qualifications 참고).
     attachment_note: str | None = None
 
     @property
@@ -50,9 +54,10 @@ class QualificationResult:
             if self.attachment_note:
                 return f"자격정보 없음(API) — 첨부파일 확인: {self.attachment_note}"
             return "자격정보 없음 (판정 보류, 통과)"
+        prefix = "" if self.source == "API" else f"[{self.source} 기준] "
         if self.missing_count == 0:
-            return f"자격 충족 ({self.total_groups}개 그룹 전부)"
-        return f"미충족 {self.missing_count}/{self.total_groups} 그룹"
+            return f"{prefix}자격 충족 ({self.total_groups}개 그룹 전부)"
+        return f"{prefix}미충족 {self.missing_count}/{self.total_groups} 그룹"
 
 
 def split_industry_list(text: str) -> list[str]:
@@ -139,6 +144,84 @@ def load_held_names(held_config: dict) -> list[str]:
             if name:
                 names.append(name)
     return names
+
+
+def load_held_codes(held_config: dict) -> tuple[set[str], set[str]]:
+    """(보유 업종코드 집합, 보유 세부품명번호 집합)을 반환한다.
+
+    첨부파일 텍스트에서 코드를 직접 뽑아 대조하는 용도 — `evaluate_from_text_items` 참고.
+    """
+    industry_codes = {str(e.get("code", "")).strip() for e in held_config.get("heldIndustries", [])}
+    product_codes = {str(e.get("code", "")).strip() for e in held_config.get("heldProducts", [])}
+    return industry_codes - {""}, product_codes - {""}
+
+
+# 괄호/대괄호 안에 든 내용 하나를 통째로 뽑는다 ("업종코드: 4442", "세부품명번호
+# 10자리, 4924159701" 처럼 라벨이 코드와 같이 있는 경우까지 잡기 위해 내용 전체를
+# 먼저 떼어낸 뒤, 그 안에서 숫자만 다시 찾는다.
+_BRACKET_CONTENT_RE = re.compile(r"[(\[]([^()\[\]]{0,40}?)[)\]]")
+_DIGIT_RUN_RE = re.compile(r"\d+")
+# 4자리 순수 숫자가 연도로 보이면(예: "(2026. 12. 15.)") 업종코드로 착각하면 안 된다.
+_YEAR_RANGE = range(2000, 2100)
+# 참가자격 항목 안에 담당 부서 연락처가 괄호로 같이 적힌 경우가 있다
+# (실측: "(안성시청 문화관광과 관광팀, ☎031-678-2492)") — 전화번호의 마지막
+# 4자리가 업종코드로 오인되지 않도록 코드를 찾기 전에 전화번호부터 지운다.
+_PHONE_LIKE_RE = re.compile(r"\d{2,4}[-.]\d{3,4}[-.]\d{4}")
+
+
+def _extract_candidate_codes(text: str) -> list[str]:
+    """괄호/대괄호 안의 4자리(업종코드)·10자리(세부품명번호) 숫자만 후보로 뽑는다."""
+    codes: list[str] = []
+    for content in _BRACKET_CONTENT_RE.findall(text):
+        content = _PHONE_LIKE_RE.sub(" ", content)
+        for run in _DIGIT_RUN_RE.findall(content):
+            if len(run) == 4:
+                if int(run) in _YEAR_RANGE:
+                    continue
+                codes.append(run)
+            elif len(run) == 10:
+                codes.append(run)
+    return codes
+
+
+def evaluate_from_text_items(
+    items: list[str], held_industry_codes: set[str], held_product_codes: set[str]
+) -> QualificationResult:
+    """첨부파일에서 뽑은 참가자격 항목들을 업종코드/세부품명번호 기준으로 판정한다.
+
+    면허제한정보 API가 비어 있을 때의 보완 로직이다(PoC4: 등록업종 스캔 규칙).
+    항목 하나 = 그룹 하나로 보고, 그 안의 괄호/대괄호 숫자 중 보유 코드와
+    하나라도 일치하면 충족(OR) — API 판정과 동일한 규칙(`MAX_ALLOWED_MISSING_QUALIFICATIONS`)을
+    그대로 적용한다.
+
+    "중소기업 확인서 소지" 같은 코드가 아예 없는 항목은 뭘 보유해야 하는지 알
+    방법이 없으므로 판정 대상에서 빼고 넘어간다 — 실적·신용평가등급처럼 코드로
+    표현되지 않는 요건도 마찬가지라 아직은 자동 판정하지 못한다(PoC4 이후 과제).
+    코드가 있는 항목이 하나도 없으면 API가 비었을 때와 동일하게 fail-open으로
+    통과시킨다(checked=False) — 정규식이 못 찾았다고 무단으로 탈락시키지 않는다.
+    """
+    groups: list[LicenseGroup] = []
+    missing: list[LicenseGroup] = []
+
+    for i, item in enumerate(items, start=1):
+        codes = _extract_candidate_codes(item)
+        if not codes:
+            continue
+        group = LicenseGroup(group_no=f"텍스트{i}", allowed_names=codes)
+        groups.append(group)
+        if not any(code in held_industry_codes or code in held_product_codes for code in codes):
+            missing.append(group)
+
+    if not groups:
+        return QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False)
+
+    return QualificationResult(
+        total_groups=len(groups),
+        missing_groups=missing,
+        passes=len(missing) <= MAX_ALLOWED_MISSING_QUALIFICATIONS,
+        checked=True,
+        source="첨부파일 텍스트",
+    )
 
 
 def fetch_license_groups(

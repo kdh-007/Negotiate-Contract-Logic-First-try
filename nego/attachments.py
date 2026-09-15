@@ -26,6 +26,7 @@ import requests
 if TYPE_CHECKING:
     from .models import Notice
     from .pipeline import Candidate
+    from .qualify import QualificationResult
 
 log = logging.getLogger(__name__)
 
@@ -166,34 +167,44 @@ def save_attachment_texts(
     return stats
 
 
-def fetch_missing_qualification_notes(
+def resolve_missing_qualifications(
     candidates: list["Candidate"],
+    held_industry_codes: set[str],
+    held_product_codes: set[str],
     timeout: float = 30.0,
     session: requests.Session | None = None,
-) -> dict[str, str]:
-    """면허제한정보 API에 데이터가 없는 후보만 골라 첨부파일에서 참가자격 절을 찾는다.
+) -> dict[str, "QualificationResult"]:
+    """면허제한정보 API에 데이터가 없는 후보만 골라 첨부파일에서 자격을 대신 판정한다.
 
     이건 부가 기능이 아니라 수집의 핵심 줄기다 — API가 비어 있다고 "자격정보
-    없음"으로만 두면, 발주기관이 구조화 등록을 안 했을 뿐 첨부파일엔 참가자격이
-    버젓이 적혀 있는 공고(실측: 부안청자박물관 R26BK01719858)를 사람이 놓치기
-    쉽다. `--fetch-attachment-text` 플래그 없이도 매 실행마다 자동으로 돈다.
+    없음"으로 사람이 매번 원문을 열어봐야 한다면 자동 수집의 의미가 없다.
+    발주기관이 구조화 등록을 안 했을 뿐 첨부파일엔 참가자격이 업종코드까지
+    명시돼 있는 공고가 흔하다(실측: 부안청자박물관 R26BK01719858 등). 그래서
+    절을 찾는 데서 그치지 않고, 항목 안의 업종코드/세부품명번호를 뽑아 보유
+    목록과 직접 대조해 실제 충족/미충족까지 판정한다(`qualify.evaluate_from_text_items`).
+    `--fetch-attachment-text` 플래그 없이도 매 실행마다 자동으로 돈다.
 
-    자동으로 합격/불합격을 정하지는 않는다 — 절을 찾았다는 사실과 항목 수만
-    `QualificationResult.attachment_note`에 담아 리포트에 노출하고, 사람이
-    원문을 확인하도록 안내한다. API에 이미 데이터가 있는 후보는 건드리지
-    않는다(불필요한 다운로드를 피하기 위함). 첨부파일 하나가 실패해도 다음
-    첨부파일/다음 후보로 계속 진행한다.
+    코드가 아예 없는 항목(실적·신용평가등급처럼 아직 자동 판정 못 하는
+    요건, 실측: PoC4)만 있는 공고는 판정을 못 하므로, 절을 찾았다는 사실과
+    항목 수만 `QualificationResult.attachment_note`에 담아 사람이 원문을
+    확인하도록 안내한다(fail-open — 정규식이 못 찾았다고 임의로 탈락시키지
+    않는다). API에 이미 데이터가 있는 후보는 건드리지 않는다(불필요한
+    다운로드를 피하기 위함). 첨부파일 하나가 실패해도 다음 첨부파일/다음
+    후보로 계속 진행한다.
     """
     from .qualification_text import find_qualification_section
+    from .qualify import QualificationResult, evaluate_from_text_items
 
     session = session or requests.Session()
-    notes: dict[str, str] = {}
+    resolved: dict[str, QualificationResult] = {}
 
     for candidate in candidates:
         if candidate.qualification.checked:
             continue
 
         notice = candidate.notice
+        fallback_note: str | None = None
+
         for att in notice.attachments:
             ext = (att.get("ext") or "").lower()
             if ext not in SUPPORTED_EXTENSIONS or not att.get("url"):
@@ -208,11 +219,22 @@ def fetch_missing_qualification_notes(
                 continue
 
             section = find_qualification_section(text)
-            if section is not None:
-                notes[notice.notice_no] = f"{section.heading} — {len(section.items)}개 항목 (원문 확인 필요)"
-                break  # 이 공고는 됐다. 나머지 첨부파일까지 볼 필요 없다
+            if section is None:
+                continue
 
-    return notes
+            result = evaluate_from_text_items(section.items, held_industry_codes, held_product_codes)
+            if result.checked:
+                resolved[notice.notice_no] = result
+                break  # 코드 기반으로 판정 끝 — 나머지 첨부파일까지 볼 필요 없다
+            if fallback_note is None:
+                fallback_note = f"{section.heading} — {len(section.items)}개 항목 (원문 확인 필요)"
+
+        if notice.notice_no not in resolved and fallback_note is not None:
+            resolved[notice.notice_no] = QualificationResult(
+                total_groups=0, missing_groups=[], passes=True, checked=False, attachment_note=fallback_note
+            )
+
+    return resolved
 
 
 # ── PDF ──────────────────────────────────────────────────────────
