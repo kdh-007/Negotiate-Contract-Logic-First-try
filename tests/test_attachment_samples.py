@@ -69,5 +69,22 @@ class TestRealPdfSample(unittest.TestCase):
             self.assertIn(_normalize("세종특별자치시"), text)
 
 
+class TestPersonalContactsRedacted(unittest.TestCase):
+    """이 샘플들은 실제 발주기관 담당자 연락처를 담고 있던 공개공고 원문이다.
+
+    커밋 전에 nego/attachments.redact_personal_contacts()로 지웠다 — 회귀 여부를
+    여기서 고정해 둔다 (fixtures/attachments/README.md 참고).
+    """
+
+    _PHONE_RE = re.compile(r"0(?:2|1[016789]|[3-6][1-4]|70)[-.\s]\d{3,4}[-.\s]\d{4}")
+
+    def test_no_fixture_leaks_a_phone_number(self):
+        for path in sorted(FIXTURES_DIR.glob("*")):
+            if path.suffix not in (".hwpx", ".pdf"):
+                continue
+            text = extract_text(path.read_bytes(), path.suffix.lstrip("."))
+            self.assertEqual(self._PHONE_RE.findall(text), [], f"{path.name}에 연락처가 남아있습니다")
+
+
 if __name__ == "__main__":
     unittest.main()
