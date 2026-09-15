@@ -49,6 +49,7 @@ def inspect(notice_no: str, days: int) -> int:
     ]
 
     found_any = False
+    any_call_failed = False
     for label, operation, field_map in targets:
         print(f"── {label} ({operation}) " + "─" * 40)
         try:
@@ -56,7 +57,8 @@ def inspect(notice_no: str, days: int) -> int:
                 F.BID_NOTICE_BASE_URL, operation, {"inqryDiv": "1", "inqryBgnDt": begin, "inqryEndDt": end}, label
             )
         except ApiError as err:
-            print(f"  조회 실패: {err}")
+            print(f"  조회 자체가 실패했습니다 (데이터 유무를 판단할 수 없음): {err}")
+            any_call_failed = True
             continue
 
         print(f"  기간 내 전체 수신: {len(raw_items)}건")
@@ -78,9 +80,15 @@ def inspect(notice_no: str, days: int) -> int:
                 print(json.dumps(item, ensure_ascii=False, indent=2))
         print()
 
+    if any_call_failed:
+        print(
+            "결론: 판단 불가 — 위에서 최소 한 API 호출 자체가 실패했습니다 (네트워크/타임아웃).\n"
+            "이 상태에서 '데이터 없음'이라고 단정하면 안 됩니다. API가 정상 응답할 때 다시 실행해야 합니다."
+        )
+        return 2
     if not found_any:
         print(
-            "결론: 두 API 모두, 값 전체를 뒤져봐도 이 공고번호가 전혀 없습니다.\n"
+            "결론: 두 API 모두 정상 응답했고, 값 전체를 뒤져봐도 이 공고번호가 전혀 없습니다.\n"
             "→ 필드명 드리프트가 아니라, 발주기관이 이 공고에 대해 구조화된 "
             "면허제한/지역제한 정보를 나라장터에 등록하지 않은 것으로 보입니다."
         )
