@@ -4,7 +4,8 @@
 (`matching/matchEngine.ts`, `keywordMatcher.ts`, `codeMatcher.ts`).
 
   - 제목에 "한국관"이 있으면 무조건 제외 (국내 공고만 다루기로 한 방침,
-    2026-09-15 결정 — excludeKeywords와는 별개로 코드에 직접 둔다)
+    2026-09-15 결정 — excludeKeywords와는 별개로 코드에 직접 둔다). 단
+    "몽골"이 제목에 있으면 예외(사업 확장 범위에 포함, 2026-09-15 결정)
   - 제외키워드가 제목에 하나라도 있으면 무조건 제외
   - 예산이 확인되는 공고 중 minBudgetAmount 미만이면 제외 (예산 미상은 통과)
   - 세부품명번호(물품)는 정확일치 → 단독으로도 인정
@@ -64,9 +65,16 @@ class ScreenResult:
 # 제각각이라 포기했다.
 _OVERSEAS_PAVILION_WORD = "한국관"
 
+# 사업 확장 범위에 몽골이 들어가면서(2026-09-15 결정), 몽골 관련 공고는
+# "한국관"이 있어도 해외공고로 제외하지 않는다 — 국가 단위 예외.
+_SCOPE_EXPANSION_COUNTRIES = ("몽골",)
+
 
 def _is_overseas_pavilion(notice: Notice) -> bool:
-    return _OVERSEAS_PAVILION_WORD in _squash(notice.title)
+    haystack = _squash(notice.title)
+    if any(country in haystack for country in _SCOPE_EXPANSION_COUNTRIES):
+        return False
+    return _OVERSEAS_PAVILION_WORD in haystack
 
 
 def _match_exclude(notice: Notice, exclude_keywords: list[str]) -> str | None:

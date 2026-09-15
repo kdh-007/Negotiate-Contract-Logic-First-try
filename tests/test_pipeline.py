@@ -335,6 +335,13 @@ class TestScreen(unittest.TestCase):
         result = self._screen(fixtures.notice("X", title="한국관광공사 ○○센터 전시관 리모델링 용역"))
         self.assertEqual(result.excluded_by, "해외공고")
 
+    def test_mongolia_is_exempt_from_overseas_pavilion_exclusion(self):
+        """사업 확장 범위에 몽골이 들어감(2026-09-15) — '한국관'이 있어도 몽골이면 제외하지 않는다."""
+        result = self._screen(
+            fixtures.notice("X", title="2026 몽골 울란바토르 국제전시회 한국관 전시디자인설치공사")
+        )
+        self.assertNotEqual(result.excluded_by, "해외공고")
+
 
 class TestSchedule(unittest.TestCase):
     def test_earliest_deadline_is_chosen(self):
