@@ -3,8 +3,8 @@
 키워드·제외키워드·최소예산·코드 매칭 규칙은 **기존 시스템과 동일하게 유지한다**
 (`matching/matchEngine.ts`, `keywordMatcher.ts`, `codeMatcher.ts`).
 
-  - 해외 전시회 "한국관"/"단체관" 설치 공고는 무조건 제외 (국내 공고만 다루기로
-    한 방침, 2026-09-15 결정 — excludeKeywords와는 별개로 코드에 직접 둔다)
+  - 제목에 "한국관"이 있으면 무조건 제외 (국내 공고만 다루기로 한 방침,
+    2026-09-15 결정 — excludeKeywords와는 별개로 코드에 직접 둔다)
   - 제외키워드가 제목에 하나라도 있으면 무조건 제외
   - 예산이 확인되는 공고 중 minBudgetAmount 미만이면 제외 (예산 미상은 통과)
   - 세부품명번호(물품)는 정확일치 → 단독으로도 인정
@@ -47,32 +47,26 @@ class ScreenResult:
     excluded_reason: str | None = None
 
 
-# 해외 전시회 참가용 "한국관"/"단체관" 설치 공고 제외 — 국내 공고만 다루기로 한
+# 해외 전시회 참가용 "한국관" 설치 공고 제외 — 국내 공고만 다루기로 한
 # 방침(2026-09-15 결정)에 따른 것. `config/keywords.json`의 excludeKeywords는
 # "회사가 정한 사업 판단, 임의로 안 바꾼다" 정책 하에 있어서 건드리지 않고
 # 코드에 별도로 둔다.
 #
-# "한국관"/"단체관" 단독으로는 "한국관광공사" 같은 국내 기관명과 겹칠 위험이
-# 있어서(부분일치라 "한국관광공사"도 "한국관"을 포함한다), 제목에 전시 행사를
-# 뜻하는 단어가 함께 있을 때만 해외 파빌리온 설치로 판단한다.
+# "한국관" 하나만 본다 — 사용자 요청으로 단순화함. 원래는 "전시회/박람회/
+# 엑스포" 같은 전시 행사 단어가 같이 있어야만 걸리게 했었는데(부분일치라
+# "한국관광공사" 같은 국내 기관명과 겹칠 위험 때문), 실측 데이터(Supabase
+# 협상계약 전체)를 뒤져봐도 "한국관광"이 제목에 들어간 공고가 0건이라 이
+# 위험은 이론상으로만 존재한다고 보고 단순화했다.
 #
-# 처음엔 "전시회"만 봤는데, 실측으로 같은 유형 공고를 더 뽑아보니 "박람회"/
-# "엑스포"도 동의어로 흔히 쓰여서("베오그라드엑스포", "이스탄불 국제식품박람회")
-# 그것만 보면 8건 중 4건을 놓쳤다 — 세 단어를 모두 포함하도록 넓혔다.
-# (발주기관 유형(협동조합/협회 등)으로 걸러보는 것도 검토했으나, 실측 기관명이
-# "진흥원"/"공사"/"협동조합"/"협회"로 제각각이라 포기함.)
-#
-# 그래도 "HLTH USA"처럼 박람회 고유명사만 쓰고 일반 단어(전시회/박람회/엑스포)
-# 자체가 없는 제목은 구조적으로 못 잡는다 — 알려진 한계로 남겨 둔다.
-_EXHIBITION_WORDS = ("전시회", "박람회", "엑스포")
-_OVERSEAS_PAVILION_WORDS = ("한국관", "단체관")
+# 알려진 트레이드오프: "단체관"만 쓰고 "한국관"은 안 쓰는 공고(실측: 홍콩
+# 코스모프로프 뷰티 전시회 단체관)는 이제 못 잡는다. 발주기관 유형으로
+# 거르는 것도 검토했으나 실측 기관명이 "진흥원"/"공사"/"협동조합"/"협회"로
+# 제각각이라 포기했다.
+_OVERSEAS_PAVILION_WORD = "한국관"
 
 
 def _is_overseas_pavilion(notice: Notice) -> bool:
-    haystack = _squash(notice.title)
-    if not any(word in haystack for word in _EXHIBITION_WORDS):
-        return False
-    return any(word in haystack for word in _OVERSEAS_PAVILION_WORDS)
+    return _OVERSEAS_PAVILION_WORD in _squash(notice.title)
 
 
 def _match_exclude(notice: Notice, exclude_keywords: list[str]) -> str | None:

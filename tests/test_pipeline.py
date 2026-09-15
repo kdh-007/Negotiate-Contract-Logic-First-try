@@ -307,23 +307,10 @@ class TestScreen(unittest.TestCase):
         self.assertTrue(result.matched)
 
     def test_overseas_korea_pavilion_is_excluded(self):
-        """국내 공고만 다루기로 한 방침(2026-09-15) — 실측: UAE 두바이/미국 뉴욕 한국관 설치 공고."""
-        result = self._screen(
-            fixtures.notice("X", title="2027 UAE 두바이 의료기기전시회 한국관 전시디자인설치공사 입찰")
-        )
-        self.assertFalse(result.matched)
-        self.assertEqual(result.excluded_by, "해외공고")
-
-    def test_overseas_group_pavilion_is_excluded(self):
-        result = self._screen(
-            fixtures.notice("X", title="2026 홍콩 코스모프로프 뷰티 전시회 단체관 전시디자인 및 설치용역")
-        )
-        self.assertFalse(result.matched)
-        self.assertEqual(result.excluded_by, "해외공고")
-
-    def test_overseas_expo_pavilion_is_excluded(self):
-        """실측 회귀: '전시회'만 보면 '엑스포'/'박람회' 동의어를 쓰는 공고를 놓친다."""
+        """국내 공고만 다루기로 한 방침(2026-09-15) — 실측: UAE 두바이/미국 뉴욕/베오그라드/이스탄불 한국관 설치 공고."""
         for title in (
+            "2027 UAE 두바이 의료기기전시회 한국관 전시디자인설치공사 입찰",
+            "2026 미국 뉴욕 치과 전시회 한국관 전시디자인설치공사",
             "2027 베오그라드엑스포 한국관 참가사업 원가 검토 용역",
             "2026년 이스탄불 국제식품박람회(WFI) 한국관 장치 용역",
         ):
@@ -331,10 +318,22 @@ class TestScreen(unittest.TestCase):
             self.assertFalse(result.matched, title)
             self.assertEqual(result.excluded_by, "해외공고", title)
 
-    def test_institution_name_containing_hanguk_gwan_is_not_falsely_excluded(self):
-        """'한국관광공사'가 제목에 있어도 전시 행사 단어가 없으면 해외공고로 오판하면 안 된다."""
-        result = self._screen(fixtures.notice("X", title="한국관광공사 ○○센터 전시관 리모델링 용역"))
+    def test_group_pavilion_without_korea_hall_word_is_a_known_gap(self):
+        """사용자 요청으로 '한국관' 단독 체크로 단순화 — '단체관'만 쓰는 공고(실측: 홍콩 뷰티 전시회)는 이제 못 잡는다."""
+        result = self._screen(
+            fixtures.notice("X", title="2026 홍콩 코스모프로프 뷰티 전시회 단체관 전시디자인 및 설치용역")
+        )
         self.assertNotEqual(result.excluded_by, "해외공고")
+
+    def test_institution_name_containing_hanguk_gwan_is_a_known_accepted_risk(self):
+        """'한국관광공사'는 부분일치로 '한국관'을 포함해 같이 걸린다.
+
+        실측(Supabase 협상계약 전체)으로 "한국관광"이 제목에 들어간 공고가
+        0건이라 이론상 위험으로만 보고 단순화를 택했다 — 실제로 이런 공고가
+        나오면 이 테스트가 그 사실을 알려주는 신호가 된다.
+        """
+        result = self._screen(fixtures.notice("X", title="한국관광공사 ○○센터 전시관 리모델링 용역"))
+        self.assertEqual(result.excluded_by, "해외공고")
 
 
 class TestSchedule(unittest.TestCase):
