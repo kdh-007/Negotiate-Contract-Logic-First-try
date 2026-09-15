@@ -1,0 +1,36 @@
+name: 첨부파일 참가자격 인식 진단
+
+# "자격정보 없음"으로 뜨는 공고가 실제로 첨부파일 텍스트 추출·참가자격 절
+# 인식이 잘 되는지 직접 확인하는 1회성 진단.
+on:
+  workflow_dispatch:
+    inputs:
+      notice_no:
+        description: "공고번호 (bidNtceNo)"
+        required: true
+      days:
+        description: "조회 기간(일)"
+        required: false
+        default: "30"
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: 진단 실행
+        env:
+          NARA_SERVICE_KEY: ${{ secrets.NARA_SERVICE_KEY }}
+        run: python scripts/inspect_attachment_qualification.py "${{ github.event.inputs.notice_no }}" --days "${{ github.event.inputs.days }}"
