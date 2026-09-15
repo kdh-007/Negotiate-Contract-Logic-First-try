@@ -66,39 +66,16 @@ def download_bytes(session: requests.Session, url: str, timeout: float = 30.0) -
     return res.content
 
 
-# ── 개인정보(발주기관 담당자) 마스킹 ────────────────────────────────
-#
-# API 응답의 담당자 이름·전화·이메일은 fields.PERSONAL_FIELDS가 저장 전에
-# 제거한다. 첨부파일 본문에도 문의처로 적힌 같은 종류의 정보가 자유 텍스트로
-# 섞여 있어 같은 원칙으로 여기서도 지운다.
-#
-# 전화번호는 국번(02/010~019/031~069/070)과 구분자(-.공백)가 있는 패턴만
-# 매칭한다 — 세부품명번호·업종코드처럼 구분자 없이 붙은 숫자열은 건드리지
-# 않기 위해서다(실측 문서로 확인함). 이름은 일반 단어와 구분이 안 돼 오탐
-# 위험이 크므로(예: "확인(전화번호)"에서 "확인"을 이름으로 착각) 마스킹
-# 대상에서 뺀다 — 실제로 연락 가능하게 만드는 건 번호/이메일이지 이름 단독이
-# 아니므로 이 선으로도 충분하다고 본다.
-_KR_PHONE_RE = re.compile(r"0(?:2|1[016789]|[3-6][1-4]|70)[-.\s]\d{3,4}[-.\s]\d{4}")
-_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-
-
-def redact_personal_contacts(text: str) -> str:
-    text = _KR_PHONE_RE.sub("(연락처 비공개)", text)
-    text = _EMAIL_RE.sub("(이메일 비공개)", text)
-    return text
-
-
 def extract_text(data: bytes, ext: str) -> str:
     ext = ext.lower().lstrip(".")
     if ext == "pdf":
-        text = _extract_pdf_text(data)
+        return _extract_pdf_text(data)
     elif ext == "hwpx":
-        text = _extract_hwpx_text(data)
+        return _extract_hwpx_text(data)
     elif ext == "hwp":
-        text = _extract_hwp_text(data)
+        return _extract_hwp_text(data)
     else:
         raise AttachmentError(f"지원하지 않는 형식입니다: .{ext or '(확장자 없음)'}")
-    return redact_personal_contacts(text)
 
 
 def fetch_attachment_text(

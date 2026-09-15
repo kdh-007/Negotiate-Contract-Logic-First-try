@@ -22,7 +22,6 @@ from nego.attachments import (  # noqa: E402
     _hwpx_section_text,
     extract_text,
     fetch_attachment_text,
-    redact_personal_contacts,
     save_attachment_texts,
 )
 from nego.models import notice_from_raw  # noqa: E402
@@ -324,46 +323,6 @@ class TestHwpxExtraction(unittest.TestCase):
         # 표 안 문단이 별도 문단으로 중복되지 않아야 한다.
         self.assertEqual(text.count("구분"), 1)
         self.assertEqual(text.count("수행경험"), 1)
-
-    def test_extract_text_redacts_phone_and_email(self):
-        """extract_text()는 형식과 무관하게 담당자 연락처를 자동으로 지운다."""
-        data = _build_hwpx(["국립경주박물관 기획운영과 유아름(Tel: 054-740-7520)", "문의: nego@example.go.kr"])
-        text = extract_text(data, "hwpx")
-        self.assertNotIn("054-740-7520", text)
-        self.assertNotIn("nego@example.go.kr", text)
-        self.assertIn("유아름", text)  # 이름 자체는 남긴다 (오탐 위험 때문)
-
-
-class TestRedactPersonalContacts(unittest.TestCase):
-    def test_masks_labeled_phone_number(self):
-        text = redact_personal_contacts("담당자(Tel: 054-740-7520)에게 문의")
-        self.assertNotIn("054-740-7520", text)
-        self.assertIn("담당자", text)
-
-    def test_masks_bare_phone_in_parens_without_label(self):
-        text = redact_personal_contacts("우리기관 시설팀(054-740-7520)에 문의하여 주시기 바랍니다")
-        self.assertNotIn("054-740-7520", text)
-
-    def test_masks_email(self):
-        text = redact_personal_contacts("문의: nego@example.go.kr 로 보내주세요")
-        self.assertNotIn("nego@example.go.kr", text)
-
-    def test_does_not_touch_product_classification_codes(self):
-        """세부품명번호·업종코드처럼 구분자 없이 붙은 숫자열은 전화번호가 아니다."""
-        text = "실물모형 및 전시물(세부품명번호 6010989901)"
-        self.assertEqual(redact_personal_contacts(text), text)
-
-    def test_does_not_touch_general_hotline_number(self):
-        """1588-0800처럼 지역/휴대폰 국번이 아닌 대표번호는 개인 연락처가 아니라 남긴다."""
-        text = "조달청 전자조달 콜센터(☎ 1588-0800)"
-        self.assertEqual(redact_personal_contacts(text), text)
-
-    def test_does_not_corrupt_surrounding_sentence(self):
-        """이름이 아닌 일반 단어(예: '확인')를 이름으로 오인해 문장을 깨면 안 된다."""
-        text = redact_personal_contacts("전화로 접수 여부를 확인(☎033-560-2342)하여야 하며")
-        self.assertIn("확인", text)
-        self.assertNotIn("033-560-2342", text)
-
 
 class TestHwpRecordParsing(unittest.TestCase):
     """OLE 컨테이너 없이, 압축 해제된 레코드 스트림 파싱만 검증한다.
