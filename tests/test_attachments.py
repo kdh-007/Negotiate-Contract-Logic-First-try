@@ -9,6 +9,7 @@ import io
 import sys
 import tempfile
 import unittest
+import unittest.mock
 import zipfile
 from pathlib import Path
 
@@ -40,6 +41,123 @@ def _build_pdf(text: str) -> bytes:
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream",
     ]
+
+    out = io.BytesIO()
+    out.write(b"%PDF-1.4\n")
+    offsets = [0]
+    for i, body in enumerate(objs, start=1):
+        offsets.append(out.tell())
+        out.write(f"{i} 0 obj".encode() + b"\n" + body + b"\nendobj\n")
+    xref_offset = out.tell()
+    n = len(objs) + 1
+    out.write(f"xref\n0 {n}\n".encode())
+    out.write(b"0000000000 65535 f \n")
+    for off in offsets[1:]:
+        out.write(f"{off:010d} 00000 n \n".encode())
+    out.write(b"trailer\n<< /Size " + str(n).encode() + b" /Root 1 0 R >>\n")
+    out.write(b"startxref\n" + str(xref_offset).encode() + b"\n%%EOF")
+    return out.getvalue()
+
+
+def _build_pdf_pages(texts: list[str]) -> bytes:
+    """여러 페이지짜리 최소 PDF. 한 페이지 추출 실패 시 나머지 보존 테스트용."""
+    objs: list[bytes] = []
+
+    def add(body: bytes) -> int:
+        objs.append(body)
+        return len(objs)
+
+    catalog_num = add(b"")  # 자리만 예약, 아래서 채움
+    pages_num = add(b"")
+    font_num = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+
+    page_nums = []
+    for text in texts:
+        content = f"BT /F1 24 Tf 10 100 Td ({text}) Tj ET".encode("latin-1")
+        content_num = add(b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream")
+        page_num = add(
+            b"<< /Type /Page /Parent "
+            + str(pages_num).encode()
+            + b" 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 "
+            + str(font_num).encode()
+            + b" 0 R >> >> /Contents "
+            + str(content_num).encode()
+            + b" 0 R >>"
+        )
+        page_nums.append(page_num)
+
+    objs[catalog_num - 1] = b"<< /Type /Catalog /Pages " + str(pages_num).encode() + b" 0 R >>"
+    kids = " ".join(f"{n} 0 R" for n in page_nums).encode()
+    objs[pages_num - 1] = b"<< /Type /Pages /Kids [" + kids + b"] /Count " + str(len(page_nums)).encode() + b" >>"
+
+    out = io.BytesIO()
+    out.write(b"%PDF-1.4\n")
+    offsets = [0]
+    for i, body in enumerate(objs, start=1):
+        offsets.append(out.tell())
+        out.write(f"{i} 0 obj".encode() + b"\n" + body + b"\nendobj\n")
+    xref_offset = out.tell()
+    n = len(objs) + 1
+    out.write(f"xref\n0 {n}\n".encode())
+    out.write(b"0000000000 65535 f \n")
+    for off in offsets[1:]:
+        out.write(f"{off:010d} 00000 n \n".encode())
+    out.write(b"trailer\n<< /Size " + str(n).encode() + b" /Root 1 0 R >>\n")
+    out.write(b"startxref\n" + str(xref_offset).encode() + b"\n%%EOF")
+    return out.getvalue()
+
+
+def _build_pdf_with_broken_cid_font() -> bytes:
+    """실측 pypdf 버그를 그대로 재현한 3페이지 PDF.
+
+    1페이지: 정상 Helvetica. 2페이지: /Subtype이 /Type0인데 /DescendantFonts가
+    없는 비정상 폰트(ToUnicode CMap으로 "AB"를 인코딩) — pypdf가 이 폰트를
+    만나면 KeyError('/DescendantFonts')를 던진다(_font.py). 3페이지: 다시
+    정상 Helvetica. 세 페이지 모두 성공적으로 뽑혀야 실제 버그가 고쳐진 것이다
+    (건너뛰는 게 아니라 진짜로 파싱됨).
+    """
+    cmap_stream = (
+        b"/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
+        b"1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n"
+        b"2 beginbfchar\n<0041> <0041>\n<0042> <0042>\nendbfchar\nendcmap\nend\nend\n"
+    )
+
+    objs: list[bytes] = []
+
+    def add(body: bytes) -> int:
+        objs.append(body)
+        return len(objs)
+
+    catalog_num = add(b"")
+    pages_num = add(b"")
+    helvetica_num = add(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    cmap_num = add(b"<< /Length " + str(len(cmap_stream)).encode() + b" >>\nstream\n" + cmap_stream + b"\nendstream")
+    # 실측 버그의 핵심: Type0인데 /DescendantFonts가 없다.
+    broken_font_num = add(
+        b"<< /Type /Font /Subtype /Type0 /BaseFont /BrokenCID /Encoding /Identity-H /ToUnicode "
+        + str(cmap_num).encode()
+        + b" 0 R >>"
+    )
+
+    def add_page(font_num: int, content: bytes) -> int:
+        content_num = add(b"<< /Length " + str(len(content)).encode() + b" >>\nstream\n" + content + b"\nendstream")
+        return add(
+            b"<< /Type /Page /Parent "
+            + str(pages_num).encode()
+            + b" 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 "
+            + str(font_num).encode()
+            + b" 0 R >> >> /Contents "
+            + str(content_num).encode()
+            + b" 0 R >>"
+        )
+
+    page1 = add_page(helvetica_num, b"BT /F1 24 Tf 10 100 Td (Region limit page) Tj ET")
+    page2 = add_page(broken_font_num, b"BT /F1 24 Tf 10 100 Td <00410042> Tj ET")
+    page3 = add_page(helvetica_num, b"BT /F1 24 Tf 10 100 Td (Joint supply page) Tj ET")
+
+    objs[catalog_num - 1] = b"<< /Type /Catalog /Pages " + str(pages_num).encode() + b" 0 R >>"
+    kids = f"{page1} 0 R {page2} 0 R {page3} 0 R".encode()
+    objs[pages_num - 1] = b"<< /Type /Pages /Kids [" + kids + b"] /Count 3 >>"
 
     out = io.BytesIO()
     out.write(b"%PDF-1.4\n")
@@ -110,6 +228,47 @@ class TestPdfExtraction(unittest.TestCase):
     def test_broken_pdf_raises_attachment_error(self):
         with self.assertRaises(AttachmentError):
             extract_text(b"not a pdf", "pdf")
+
+    def test_recovers_real_text_from_font_missing_descendant_fonts(self):
+        """실측 버그의 근본 수정 검증 (건너뛰기가 아니라 실제 파싱).
+
+        pypdf(_font.py)는 Type1/TrueType/Type3가 아닌 폰트는 무조건
+        /DescendantFonts가 있다고 가정하고 바로 인덱싱한다 — 나라장터 첨부
+        PDF 일부가 이 키 없는 Type0 폰트를 써서 KeyError로 문서 전체가
+        실패했었다. `_patch_missing_descendant_fonts`가 빈 배열을 채워
+        넣으면, 그 정보는 글자 폭(레이아웃) 계산에만 쓰이므로 실제
+        텍스트(ToUnicode CMap으로 디코딩된 "AB")는 정상적으로 뽑혀야 한다.
+        """
+        data = _build_pdf_with_broken_cid_font()
+        text = extract_text(data, "pdf")
+
+        self.assertIn("Region limit page", text)
+        self.assertIn("AB", text)  # 깨진 폰트 페이지도 실제로 파싱됨 — 건너뛴 게 아님
+        self.assertIn("Joint supply page", text)
+        self.assertNotIn("텍스트 추출 실패", text)
+
+    def test_unexpected_per_page_failure_is_shown_not_silently_dropped(self):
+        """패치로도 못 살리는 다른 원인의 실패는, 조용히 빼지 않고 표시만 남긴다."""
+        data = _build_pdf_pages(["Region limit page", "Broken page", "Joint supply page"])
+        with unittest.mock.patch(
+            "pypdf._page.PageObject.extract_text",
+            side_effect=["Region limit page", RuntimeError("무언가 다른 원인"), "Joint supply page"],
+        ):
+            text = extract_text(data, "pdf")
+
+        self.assertIn("Region limit page", text)
+        self.assertIn("Joint supply page", text)
+        self.assertIn("2페이지 텍스트 추출 실패", text)
+        self.assertIn("원본 파일에서 직접 확인", text)
+
+    def test_all_pages_failing_raises_attachment_error(self):
+        data = _build_pdf_pages(["Page one", "Page two"])
+        with unittest.mock.patch(
+            "pypdf._page.PageObject.extract_text",
+            side_effect=RuntimeError("무언가 다른 원인"),
+        ):
+            with self.assertRaises(AttachmentError):
+                extract_text(data, "pdf")
 
 
 class TestHwpxExtraction(unittest.TestCase):

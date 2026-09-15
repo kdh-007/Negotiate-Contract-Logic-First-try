@@ -192,15 +192,72 @@ def save_attachment_texts(
 # ── PDF ──────────────────────────────────────────────────────────
 
 def _extract_pdf_text(data: bytes) -> str:
+    """페이지별로 추출한다. 그 전에 알려진 pypdf 결함을 먼저 패치해서
+
+    실제로 텍스트가 뽑히게 만든다 (`_patch_missing_descendant_fonts` 참고).
+    그래도 남는 예외는(다른 원인일 수 있으니) 조용히 건너뛰지 않고, 그
+    페이지 자리에 "추출 실패, 원본 확인 필요" 표시를 남긴다 — 지역제한 같은
+    중요 정보가 하필 그 페이지에 있었을 수 있으니 사람이 놓치면 안 된다.
+    """
     from pypdf import PdfReader
     from pypdf.errors import PdfReadError
 
     try:
         reader = PdfReader(io.BytesIO(data))
-        pages = [page.extract_text() or "" for page in reader.pages]
     except PdfReadError as err:
         raise AttachmentError(f"PDF 파싱 실패: {err}") from err
+
+    _patch_missing_descendant_fonts(reader)
+
+    total = len(reader.pages)
+    pages: list[str] = []
+    failed = 0
+    for i, page in enumerate(reader.pages):
+        try:
+            pages.append(page.extract_text() or "")
+        except Exception as err:  # pypdf가 던지는 예외 타입이 일정하지 않다 (KeyError 등)
+            log.warning("PDF %d/%d페이지 텍스트 추출 실패: %s", i + 1, total, err)
+            pages.append(f"[※ {i + 1}페이지 텍스트 추출 실패 — 이 페이지는 원본 파일에서 직접 확인해야 합니다]")
+            failed += 1
+
+    if failed and failed == total:
+        raise AttachmentError(f"PDF 모든 페이지({total}개) 텍스트 추출 실패")
+
     return "\n\n".join(pages).strip()
+
+
+def _patch_missing_descendant_fonts(reader) -> int:
+    """Type0류 폰트인데 /DescendantFonts가 없으면 빈 배열을 채운다.
+
+    실측 원인: pypdf(`_font.py Font.from_font_resource`)는 폰트가
+    Type1/MMType1/TrueType/Type3가 아니면 무조건 합성(Type0/CID) 폰트로 보고
+    `pdf_font_dict["/DescendantFonts"]`를 바로 인덱싱한다 — 이 키가 없는
+    비정상 폰트(실측: 나라장터 첨부 PDF 일부)를 만나면 KeyError로 죽는다.
+
+    하지만 텍스트를 실제 문자로 바꾸는 작업(인코딩/ToUnicode CMap 해석)은
+    이 코드보다 **먼저** 끝나 있고 `/DescendantFonts`와 무관하다 — 이 값은
+    글자 폭(레이아웃 계산)에만 쓰인다. 그래서 빈 배열을 채워 넣으면 폭
+    정보만 기본값으로 빠지고 실제 텍스트는 정상 추출된다 (합성 PDF로
+    직접 재현·검증함: 패치 전 KeyError, 패치 후 원문 그대로 추출).
+    """
+    from pypdf.generic import ArrayObject, NameObject
+
+    patched = 0
+    for page in reader.pages:
+        resources = page.get("/Resources")
+        if resources is None:
+            continue
+        fonts = resources.get_object().get("/Font")
+        if fonts is None:
+            continue
+        for font_ref in fonts.get_object().values():
+            font_dict = font_ref.get_object()
+            if font_dict.get("/Subtype") in ("/Type1", "/MMType1", "/TrueType", "/Type3"):
+                continue
+            if "/DescendantFonts" not in font_dict:
+                font_dict[NameObject("/DescendantFonts")] = ArrayObject()
+                patched += 1
+    return patched
 
 
 # ── HWPX (zip + xml, 2020년 이후 신형식) ───────────────────────────
