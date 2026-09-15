@@ -4,6 +4,7 @@
     python -m nego --days 7           # 기간 지정
     python -m nego --from-store       # API 호출 없이 저장된 원문으로 재필터링
     python -m nego --verify           # 응답 필드명 진단 (필드가 비어 보일 때)
+    python -m nego --fetch-attachment-text  # 후보 공고 첨부파일 텍스트 추출(원문 대조용)
 """
 
 from __future__ import annotations
@@ -96,6 +97,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Supabase 저장을 건너뛴다 (환경변수가 있어도)",
     )
+    parser.add_argument(
+        "--fetch-attachment-text",
+        action="store_true",
+        help="후보 공고의 첨부파일(HWP/HWPX/PDF)을 내려받아 텍스트를 추출한다 (지역제한/면허제한/공동수급 원문 대조용)",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -151,6 +157,16 @@ def main(argv: list[str] | None = None) -> int:
     paths = save_reports(candidates, stats, config.output_dir, now)
     for kind, path in paths.items():
         print(f"{kind.upper()} 저장: {path}")
+
+    if args.fetch_attachment_text:
+        from .attachments import save_attachment_texts
+
+        att_stats = save_attachment_texts(candidates, config.output_dir)
+        print(
+            f"첨부파일 텍스트 추출: 시도 {att_stats['attempted']}건 "
+            f"→ 성공 {att_stats['ok']} / 실패 {att_stats['failed']}"
+            f" (저장 위치: {config.output_dir / 'attachment_text'})"
+        )
 
     # 일부 조회가 실패했으면 종료코드 2로 구분한다 (CI에서 성공/부분성공 구분).
     return 2 if stats.failed_operations else 0
