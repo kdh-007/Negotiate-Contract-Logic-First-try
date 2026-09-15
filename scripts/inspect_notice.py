@@ -8,7 +8,11 @@
 바뀌어도 값 자체에 공고번호가 남아있으면 여기서 잡힌다.
 
 사용법:
-    NARA_SERVICE_KEY=... python scripts/inspect_notice.py R26BK01719858 [--days 180]
+    NARA_SERVICE_KEY=... python scripts/inspect_notice.py R26BK01719858 [--days 30]
+
+주의: 면허제한정보/참가가능지역 API는 조회기간이 너무 길면
+resultCode=07("입력범위값 초과 에러")을 낸다. 실측상 30일은 되고 180일은
+막힌다 — 정확한 상한은 모르니 --days를 30 근처에서만 올려가며 확인할 것.
 """
 
 from __future__ import annotations
@@ -101,7 +105,9 @@ def inspect(notice_no: str, days: int) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("notice_no", help="공고번호 (bidNtceNo), 예: R26BK01719858")
-    parser.add_argument("--days", type=int, default=180, help="조회 기간(일, 기본 180일)")
+    parser.add_argument(
+        "--days", type=int, default=30, help="조회 기간(일, 기본 30일 — 너무 길면 API가 resultCode=07로 거부함)"
+    )
     args = parser.parse_args()
     return inspect(args.notice_no, args.days)
 

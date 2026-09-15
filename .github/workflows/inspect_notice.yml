@@ -10,9 +10,9 @@ on:
         description: "공고번호 (bidNtceNo), 예: R26BK01719858"
         required: true
       days:
-        description: "조회 기간(일)"
+        description: "조회 기간(일) — 30일 근처까지만. 너무 길면 API가 resultCode=07(입력범위값 초과)로 거부함"
         required: false
-        default: "180"
+        default: "30"
 
 jobs:
   inspect:
