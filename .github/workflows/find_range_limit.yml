@@ -1,0 +1,33 @@
+name: 면허/지역 API 조회기간 상한 탐색
+
+# 면허제한정보/참가가능지역 API가 허용하는 최대 조회기간을 찾는 1회성 진단.
+# 실측: 30일은 통과, 180일은 resultCode=07(입력범위값 초과)로 거부됨.
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "쉼표로 구분한 후보 일수 목록"
+        required: false
+        default: "15,30,45,60,75,90,120,150,180"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: 상한 탐색 실행
+        env:
+          NARA_SERVICE_KEY: ${{ secrets.NARA_SERVICE_KEY }}
+        run: python scripts/find_range_limit.py --days "${{ github.event.inputs.days }}"
