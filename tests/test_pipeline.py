@@ -321,8 +321,18 @@ class TestScreen(unittest.TestCase):
         self.assertFalse(result.matched)
         self.assertEqual(result.excluded_by, "해외공고")
 
+    def test_overseas_expo_pavilion_is_excluded(self):
+        """실측 회귀: '전시회'만 보면 '엑스포'/'박람회' 동의어를 쓰는 공고를 놓친다."""
+        for title in (
+            "2027 베오그라드엑스포 한국관 참가사업 원가 검토 용역",
+            "2026년 이스탄불 국제식품박람회(WFI) 한국관 장치 용역",
+        ):
+            result = self._screen(fixtures.notice("X", title=title))
+            self.assertFalse(result.matched, title)
+            self.assertEqual(result.excluded_by, "해외공고", title)
+
     def test_institution_name_containing_hanguk_gwan_is_not_falsely_excluded(self):
-        """'한국관광공사'가 제목에 있어도 '전시회'가 없으면 해외공고로 오판하면 안 된다."""
+        """'한국관광공사'가 제목에 있어도 전시 행사 단어가 없으면 해외공고로 오판하면 안 된다."""
         result = self._screen(fixtures.notice("X", title="한국관광공사 ○○센터 전시관 리모델링 용역"))
         self.assertNotEqual(result.excluded_by, "해외공고")
 
