@@ -23,12 +23,12 @@ from urllib.parse import quote
 
 import requests
 
-from .models import Notice
 from .pipeline import Candidate
 
 log = logging.getLogger(__name__)
 
 DEFAULT_TABLE = "협상에의한계약 추출 로직_1차"
+DEFAULT_BUCKET = "nego-attachments"
 
 # upsert 충돌 기준. 테이블의 UNIQUE 제약과 반드시 일치해야 한다.
 CONFLICT_COLUMNS = "work_type,bid_ntce_no,bid_ntce_ord"
@@ -36,26 +36,65 @@ CONFLICT_COLUMNS = "work_type,bid_ntce_no,bid_ntce_ord"
 # 한 번에 보내는 행 수. 너무 크면 요청이 커져 타임아웃이 난다.
 BATCH_SIZE = 100
 
+# PostgREST는 배열로 여러 행을 보낼 때 **모든 객체의 키가 완전히 같아야** 한다.
+# 하나라도 키 구성이 다르면 PGRST102 "All object keys must match" 로 전체가 거부된다.
+# 그래서 모든 행을 이 컬럼 목록으로 맞춘 뒤 전송한다.
+# (id / created_at / updated_at 은 DB가 채우므로 보내지 않는다)
 ROW_COLUMNS = (
-    "work_type", "bid_ntce_no", "bid_ntce_ord", "title",
-    "notice_institution", "demand_institution", "detail_url",
-    "award_method", "award_variant", "contract_method", "bid_method",
-    "notice_kind", "is_re_notice", "change_reason",
-    "estimated_price", "assigned_budget", "budget", "posted_at",
-    "qualification_deadline", "joint_agreement_deadline", "bid_deadline",
-    "earliest_deadline", "earliest_deadline_kind", "days_left",
-    "joint_allowed", "joint_submit_type", "joint_exec_type", "joint_method_name",
-    "qualification_summary", "qualification_total_groups",
-    "qualification_missing_count", "qualification_checked",
-    "regions", "confidence",
-    "matched_keywords", "matched_product_codes", "matched_industry_codes",
-    "attachments", "attachment_count", "raw", "is_candidate", "collected_at",
+    "work_type",
+    "bid_ntce_no",
+    "bid_ntce_ord",
+    "title",
+    "notice_institution",
+    "demand_institution",
+    "detail_url",
+    "award_method",
+    "award_variant",
+    "contract_method",
+    "bid_method",
+    "notice_kind",
+    "is_re_notice",
+    "change_reason",
+    "estimated_price",
+    "assigned_budget",
+    "budget",
+    "posted_at",
+    "qualification_deadline",
+    "joint_agreement_deadline",
+    "bid_deadline",
+    "earliest_deadline",
+    "earliest_deadline_kind",
+    "days_left",
+    "joint_allowed",
+    "joint_submit_type",
+    "joint_exec_type",
+    "joint_method_name",
+    "qualification_summary",
+    "qualification_total_groups",
+    "qualification_missing_count",
+    "qualification_checked",
+    "regions",
+    "confidence",
+    "matched_keywords",
+    "matched_product_codes",
+    "matched_industry_codes",
+    "attachments",
+    "attachment_count",
+    "raw",
+    "is_candidate",
+    "excluded_reason",
+    "collected_at",
 )
 
 
 def align_columns(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """모든 행의 키 구성을 ROW_COLUMNS로 통일한다. 빠진 키는 None."""
+    """모든 행이 ROW_COLUMNS와 똑같은 키 구성을 갖도록 맞춘다.
+
+    빠진 키는 None으로 채우고, 목록에 없는 키는 버린다.
+    이걸 안 하면 후보 행(키 42개)과 제외 행(키 더 적음)이 섞여 PGRST102가 난다.
+    """
     return [{col: row.get(col) for col in ROW_COLUMNS} for row in rows]
+
 
 class SupabaseError(Exception):
     pass
@@ -66,7 +105,12 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def candidate_to_row(candidate: Candidate) -> dict[str, Any]:
-    """Candidate 하나를 테이블 한 행으로 변환한다."""
+    """Candidate 하나를 테이블 한 행으로 변환한다.
+
+    후보와 제외된 공고를 **같은 함수로** 처리한다. 예전에는 제외된 공고를 별도 함수로
+    만들면서 파생 컬럼(마감·공동수급·자격 등)을 안 채웠고, 그래서 CSV로 빼보면
+    후보 몇 줄만 값이 차 있고 나머지 천여 줄이 비어 보였다.
+    """
     notice = candidate.notice
     schedule = candidate.schedule
     earliest = schedule.earliest
@@ -112,39 +156,8 @@ def candidate_to_row(candidate: Candidate) -> dict[str, Any]:
         "attachments": notice.attachments,
         "attachment_count": len(notice.attachments),
         "raw": notice.raw,
-        "is_candidate": True,
-        "collected_at": datetime.now().isoformat(),
-    }
-
-
-def rejected_to_row(notice: Notice, reason: str) -> dict[str, Any]:
-    """후보에서 걸러진 협상 공고도 기록한다.
-
-    왜 저장하는가: 나중에 "이 공고가 왜 안 떴지?"를 확인할 수 있어야 한다.
-    is_candidate=false 로 구분하고, qualification_summary에 제외 사유를 남긴다.
-    """
-    return {
-        "work_type": notice.work_type,
-        "bid_ntce_no": notice.notice_no,
-        "bid_ntce_ord": notice.notice_ord,
-        "title": notice.title,
-        "notice_institution": notice.notice_institution,
-        "demand_institution": notice.demand_institution,
-        "detail_url": notice.detail_url,
-        "award_method": notice.award_method,
-        "contract_method": notice.contract_method,
-        "bid_method": notice.bid_method,
-        "notice_kind": notice.notice_kind,
-        "estimated_price": notice.estimated_price,
-        "assigned_budget": notice.assigned_budget,
-        "budget": notice.budget,
-        "posted_at": notice.posted_at,
-        "joint_method_name": notice.joint_method_name,
-        "qualification_summary": f"제외: {reason}",
-        "attachments": notice.attachments,
-        "attachment_count": len(notice.attachments),
-        "raw": notice.raw,
-        "is_candidate": False,
+        "is_candidate": candidate.is_candidate,
+        "excluded_reason": candidate.excluded_reason,
         "collected_at": datetime.now().isoformat(),
     }
 
@@ -154,15 +167,17 @@ class SupabaseConfig:
     url: str
     service_key: str
     table: str = DEFAULT_TABLE
+    bucket: str = DEFAULT_BUCKET
 
     @classmethod
     def from_env(cls) -> "SupabaseConfig | None":
         url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
         key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip()
         table = os.environ.get("SUPABASE_TABLE", DEFAULT_TABLE).strip() or DEFAULT_TABLE
+        bucket = os.environ.get("SUPABASE_BUCKET", DEFAULT_BUCKET).strip() or DEFAULT_BUCKET
         if not url or not key:
             return None
-        return cls(url=url, service_key=key, table=table)
+        return cls(url=url, service_key=key, table=table, bucket=bucket)
 
 
 class SupabaseRepository:
@@ -189,12 +204,10 @@ class SupabaseRepository:
 
     def upsert_rows(self, rows: list[dict[str, Any]], timeout: float = 60.0) -> int:
         """행을 BATCH_SIZE씩 나눠 upsert 한다."""
-        
-        rows = align_columns(rows)
-
-        saved = 0
         if not rows:
             return 0
+
+        rows = align_columns(rows)
 
         saved = 0
         for start in range(0, len(rows), BATCH_SIZE):
@@ -220,7 +233,53 @@ class SupabaseRepository:
 
         return saved
 
-    def save(self, candidates: Iterable[Candidate], rejected: Iterable[tuple[Notice, str]]) -> int:
+    # ── Storage (첨부파일 보관) ────────────────────────────────
+    #
+    # GitHub Actions는 실행이 끝나면 파일시스템이 사라진다.
+    # 내려받은 첨부를 남기려면 Storage에 올려야 한다.
+
+    def _storage_url(self, path: str, prefix: str = "object") -> str:
+        bucket = quote(self.config.bucket, safe="")
+        # 경로 구분자(/)는 살리고 한글·공백만 인코딩한다.
+        object_path = quote(path, safe="/")
+        return f"{self.config.url}/storage/v1/{prefix}/{bucket}/{object_path}"
+
+    def object_exists(self, path: str, timeout: float = 15.0) -> bool:
+        """Storage에 이미 올라간 파일인지 확인한다. 확인 실패는 False로 본다(그냥 받는다)."""
+        try:
+            res = self.session.get(
+                self._storage_url(path, prefix="object/info"),
+                headers={
+                    "apikey": self.config.service_key,
+                    "Authorization": f"Bearer {self.config.service_key}",
+                },
+                timeout=timeout,
+            )
+        except requests.RequestException:
+            return False
+        return res.status_code == 200
+
+    def upload_file(self, local_path, storage_path: str, content_type: str, timeout: float = 120.0) -> bool:
+        """파일 하나를 Storage에 올린다. 같은 경로가 있으면 덮어쓴다(x-upsert)."""
+        with open(local_path, "rb") as handle:
+            res = self.session.post(
+                self._storage_url(storage_path),
+                headers={
+                    "apikey": self.config.service_key,
+                    "Authorization": f"Bearer {self.config.service_key}",
+                    "Content-Type": content_type,
+                    "x-upsert": "true",
+                },
+                data=handle,
+                timeout=timeout,
+            )
+
+        if res.status_code >= 400:
+            raise SupabaseError(f"Storage 업로드 실패 (HTTP {res.status_code}): {res.text[:200]}")
+        return True
+
+    def save(self, candidates: Iterable[Candidate], rejected: Iterable[Candidate]) -> int:
+        """후보와 제외된 공고를 한 번에 저장한다. 둘 다 Candidate라 변환 함수가 하나면 된다."""
         rows = [candidate_to_row(c) for c in candidates]
-        rows += [rejected_to_row(n, reason) for n, reason in rejected]
+        rows += [candidate_to_row(c) for c in rejected]
         return self.upsert_rows(rows)
