@@ -21,7 +21,7 @@ on:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30  # 첨부파일 다운로드·추출이 추가되어 여유를 늘림
 
     steps:
       - name: 저장소 체크아웃
@@ -47,11 +47,14 @@ jobs:
           SUPABASE_TABLE: ${{ vars.SUPABASE_TABLE }}
           LOOKBACK_DAYS: ${{ github.event.inputs.days || '1' }}
         run: |
+          # 후보 공고 첨부파일(HWP/HWPX/PDF)까지 매일 자동으로 텍스트 추출한다
+          # (지역제한/면허제한/공동수급을 원문과 대조하기 위함). 담당자 연락처는
+          # nego/attachments.py가 저장 전에 마스킹한다.
+          ARGS="--fetch-attachment-text"
           if [ "${{ github.event.inputs.no_supabase }}" = "true" ]; then
-            python -m nego --no-supabase
-          else
-            python -m nego
+            ARGS="$ARGS --no-supabase"
           fi
+          python -m nego $ARGS
 
       # 수집 원문(data/)은 올리지 않는다 — 담당자 연락처가 섞일 수 있다.
       # 리포트(output/)만 아티팩트로 남긴다.
