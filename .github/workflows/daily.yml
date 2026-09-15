@@ -48,8 +48,7 @@ jobs:
           LOOKBACK_DAYS: ${{ github.event.inputs.days || '1' }}
         run: |
           # 후보 공고 첨부파일(HWP/HWPX/PDF)까지 매일 자동으로 텍스트 추출한다
-          # (지역제한/면허제한/공동수급을 원문과 대조하기 위함). 담당자 연락처는
-          # nego/attachments.py가 저장 전에 마스킹한다.
+          # (지역제한/면허제한/공동수급을 원문과 대조하기 위함).
           ARGS="--fetch-attachment-text"
           if [ "${{ github.event.inputs.no_supabase }}" = "true" ]; then
             ARGS="$ARGS --no-supabase"
