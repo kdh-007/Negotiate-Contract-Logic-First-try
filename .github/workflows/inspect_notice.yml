@@ -1,0 +1,37 @@
+name: 공고 자격정보 진단
+
+# 특정 공고 1건의 면허제한정보·참가가능지역 원본 응답을 그대로 찍어본다.
+# "자격정보 없음"이 API에 데이터가 없어서인지, 필드명이 달라서 파싱을 놓친
+# 건지 구분하기 위한 1회성 진단 워크플로.
+on:
+  workflow_dispatch:
+    inputs:
+      notice_no:
+        description: "공고번호 (bidNtceNo), 예: R26BK01719858"
+        required: true
+      days:
+        description: "조회 기간(일)"
+        required: false
+        default: "180"
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Python 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
+      - name: 진단 실행
+        env:
+          NARA_SERVICE_KEY: ${{ secrets.NARA_SERVICE_KEY }}
+        run: python scripts/inspect_notice.py "${{ github.event.inputs.notice_no }}" --days "${{ github.event.inputs.days }}"
