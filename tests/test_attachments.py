@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import sys
+import tempfile
 import unittest
 import zipfile
 from pathlib import Path
@@ -21,7 +22,11 @@ from nego.attachments import (  # noqa: E402
     extract_text,
     fetch_attachment_text,
     redact_personal_contacts,
+    save_attachment_texts,
 )
+from nego.models import notice_from_raw  # noqa: E402
+
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "attachments"
 
 
 def _build_pdf(text: str) -> bytes:
@@ -134,6 +139,33 @@ class TestHwpxExtraction(unittest.TestCase):
         )
         self.assertEqual(_hwpx_section_text(xml), "공동 허용")
 
+    def test_table_renders_as_rows_and_cells_not_a_single_jammed_line(self):
+        """평가기준 배점표 재현: 표는 행=줄바꿈, 셀=' | '로 나와야 한다.
+
+        예전엔 root.iter()로 전부 훑어서 표 안 문단이 상위 문단과 합쳐져
+        구분자 없이 한 줄로 뭉쳐지고, 동시에 독립 문단으로도 다시 잡혀
+        중복까지 됐다 (실제 정선군 제안요청서 배점표에서 발견됨).
+        """
+        xml = (
+            b'<?xml version="1.0"?>'
+            b'<hp:sec xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">'
+            b"<hp:p><hp:run><hp:t>1. \xed\x8f\x89\xea\xb0\x80\xea\xb8\xb0\xec\xa4\x80</hp:t>"
+            b'<hp:tbl><hp:tr>'
+            b"<hp:tc><hp:subList><hp:p><hp:run><hp:t>\xea\xb5\xac\xeb\xb6\x84</hp:t></hp:run></hp:p></hp:subList></hp:tc>"
+            b"<hp:tc><hp:subList><hp:p><hp:run><hp:t>\xeb\xb0\xb0\xec\xa0\x90</hp:t></hp:run></hp:p></hp:subList></hp:tc>"
+            b"</hp:tr><hp:tr>"
+            b"<hp:tc><hp:subList><hp:p><hp:run><hp:t>\xec\x88\x98\xed\x96\x89\xea\xb2\xbd\xed\x97\x98</hp:t></hp:run></hp:p></hp:subList></hp:tc>"
+            b"<hp:tc><hp:subList><hp:p><hp:run><hp:t>5.0</hp:t></hp:run></hp:p></hp:subList></hp:tc>"
+            b"</hp:tr></hp:tbl>"
+            b"</hp:run></hp:p>"
+            b"</hp:sec>"
+        )
+        text = _hwpx_section_text(xml)
+        self.assertEqual(text, "1. 평가기준\n구분 | 배점\n수행경험 | 5.0")
+        # 표 안 문단이 별도 문단으로 중복되지 않아야 한다.
+        self.assertEqual(text.count("구분"), 1)
+        self.assertEqual(text.count("수행경험"), 1)
+
     def test_extract_text_redacts_phone_and_email(self):
         """extract_text()는 형식과 무관하게 담당자 연락처를 자동으로 지운다."""
         data = _build_hwpx(["국립경주박물관 기획운영과 유아름(Tel: 054-740-7520)", "문의: nego@example.go.kr"])
@@ -237,6 +269,62 @@ class TestFetchAttachmentText(unittest.TestCase):
         result = fetch_attachment_text(FakeSession(b"", status_code=404), att)
         self.assertFalse(result.ok)
         self.assertIn("404", result.error)
+
+
+class _FakeCandidate:
+    """save_attachment_texts는 candidate.notice만 본다 — pipeline.Candidate 전체를 안 만들어도 된다."""
+
+    def __init__(self, notice):
+        self.notice = notice
+
+
+class TestSaveAttachmentTexts(unittest.TestCase):
+    def test_writes_text_and_qualification_summary_for_real_fixture(self):
+        fixture = FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx"
+        raw = {
+            "bidNtceNo": "R26TEST0001",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고",
+            "ntceSpecFileNm1": fixture.name,
+            "ntceSpecDocUrl1": f"file://{fixture}",
+        }
+        notice = notice_from_raw(raw, "용역")
+        session = FakeSession(fixture.read_bytes())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            stats = save_attachment_texts([_FakeCandidate(notice)], output_dir, timeout=5.0, session=session)
+
+            self.assertEqual(stats, {"attempted": 1, "ok": 1, "failed": 0, "qualification_found": 1})
+
+            text_dir = output_dir / "attachment_text"
+            written = {p.name for p in text_dir.iterdir()}
+            base = f"R26TEST0001_000_1_{fixture.name}"
+            self.assertIn(f"{base}.txt", written)
+            self.assertIn(f"{base}_참가자격.txt", written)
+
+            summary = (text_dir / f"{base}_참가자격.txt").read_text(encoding="utf-8")
+            self.assertTrue(summary.startswith("5. 입찰 참가자격"))
+            self.assertIn("실내건축공사업", summary)
+
+    def test_no_summary_file_when_no_qualification_section(self):
+        fixture = FIXTURES_DIR / "jeongseon_culture_center_task_order.hwpx"
+        raw = {
+            "bidNtceNo": "R26TEST0002",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고2",
+            "ntceSpecFileNm1": fixture.name,
+            "ntceSpecDocUrl1": f"file://{fixture}",
+        }
+        notice = notice_from_raw(raw, "용역")
+        session = FakeSession(fixture.read_bytes())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            stats = save_attachment_texts([_FakeCandidate(notice)], output_dir, timeout=5.0, session=session)
+            self.assertEqual(stats["qualification_found"], 0)
+            written = {p.name for p in (output_dir / "attachment_text").iterdir()}
+            self.assertEqual(len(written), 1)  # .txt만, _참가자격.txt는 없음
 
 
 if __name__ == "__main__":

@@ -146,18 +146,29 @@ def _safe_filename(name: str) -> str:
 
 
 def save_attachment_texts(
-    candidates: list["Candidate"], output_dir: Path, timeout: float = 30.0
+    candidates: list["Candidate"],
+    output_dir: Path,
+    timeout: float = 30.0,
+    session: requests.Session | None = None,
 ) -> dict[str, int]:
     """후보 공고의 첨부파일을 내려받아 텍스트를 `output_dir/attachment_text/`에 저장한다.
 
     지역제한/면허제한/공동수급을 원문과 대조해볼 수 있도록 평문만 남기는
-    용도다 (오늘 범위). 첨부파일 하나가 실패해도 나머지 처리는 계속한다.
+    용도다. 첨부파일 하나가 실패해도 나머지 처리는 계속한다.
+
+    텍스트 안에서 "입찰 참가자격" 절을 찾으면(`qualification_text` 참고)
+    `<...>_참가자격.txt`로 항목별 요약도 같이 남긴다 — API의 면허제한정보가
+    비어 있는 공고(발주기관이 구조화 등록을 안 한 경우, 실측: 부안청자박물관
+    R26BK01719858)를 사람이 원문 전체를 뒤지지 않고 바로 확인하기 위함이다.
+    절을 못 찾아도 실패로 세지 않는다 — 애초에 없는 문서가 대부분이다.
     """
+    from .qualification_text import find_qualification_section
+
     text_dir = output_dir / "attachment_text"
     text_dir.mkdir(parents=True, exist_ok=True)
-    session = requests.Session()
+    session = session or requests.Session()
 
-    stats = {"attempted": 0, "ok": 0, "failed": 0}
+    stats = {"attempted": 0, "ok": 0, "failed": 0, "qualification_found": 0}
     for candidate in candidates:
         notice = candidate.notice
         for result in collect_notice_attachment_texts(session, notice, timeout=timeout):
@@ -169,6 +180,12 @@ def save_attachment_texts(
             stats["ok"] += 1
             base = _safe_filename(f"{notice.notice_no}_{notice.notice_ord}_{result.seq}_{result.file_name}")
             (text_dir / f"{base}.txt").write_text(result.text, encoding="utf-8")
+
+            section = find_qualification_section(result.text)
+            if section is not None:
+                stats["qualification_found"] += 1
+                summary = section.heading + "\n\n" + "\n\n".join(section.items)
+                (text_dir / f"{base}_참가자격.txt").write_text(summary, encoding="utf-8")
     return stats
 
 
@@ -206,20 +223,59 @@ def _extract_hwpx_text(data: bytes) -> str:
 
 
 def _hwpx_section_text(xml_bytes: bytes) -> str:
-    """<hp:p> 문단 단위로 <hp:t> 조각을 이어붙인다. 문단 사이는 줄바꿈으로 구분한다."""
+    """<hp:sec>의 최상위 <hp:p> 문단만 순회한다 (문단 사이는 줄바꿈으로 구분).
+
+    표(<hp:tbl>)는 문단의 <hp:run> 안에 인라인으로 끼워져 있고, 그 표의 각 셀
+    (<hp:tc>)도 내부에 자기 문단(<hp:p>)을 갖는다. `root.iter()`로 태그만 보고
+    전부 훑으면 표 안 문단이 상위 문단의 텍스트에 한 번(구분자 없이 뭉쳐서),
+    그리고 독립된 문단으로 또 한 번, 총 두 번 잡혀서 배점표 같은 표가
+    깨지고 중복된다 — 그래서 최상위 문단만 돌고, 표를 만나면
+    `_render_table`이 행/열 구조를 살려서 재귀적으로 처리한다.
+    """
     try:
         root = ET.fromstring(xml_bytes)
     except ET.ParseError as err:
         raise AttachmentError(f"HWPX 섹션 XML 파싱 실패: {err}") from err
 
-    paragraphs = []
-    for p in root.iter():
-        if not p.tag.endswith("}p"):
+    paragraphs = [_render_paragraph(p) for p in root if p.tag.endswith("}p")]
+    return "\n".join(t for t in paragraphs if t)
+
+
+def _render_paragraph(p: ET.Element) -> str:
+    """문단 하나의 텍스트. 런 안에 표가 끼어 있으면 표도 이어서 렌더링한다."""
+    parts = []
+    for run in p:
+        if not run.tag.endswith("}run"):
             continue
-        text = "".join(t.text or "" for t in p.iter() if t.tag.endswith("}t"))
-        if text:
-            paragraphs.append(text)
-    return "\n".join(paragraphs)
+        for child in run:
+            if child.tag.endswith("}t"):
+                if child.text:
+                    parts.append(child.text)
+            elif child.tag.endswith("}tbl"):
+                table_text = _render_table(child)
+                if table_text:
+                    parts.append("\n" + table_text)
+    return "".join(parts)
+
+
+def _render_table(tbl: ET.Element) -> str:
+    """행은 줄바꿈, 같은 행의 셀은 ' | '로 구분한다 (평가기준 배점표 등)."""
+    rows = []
+    for tr in tbl:
+        if not tr.tag.endswith("}tr"):
+            continue
+        cells = [_render_cell(tc) for tc in tr if tc.tag.endswith("}tc")]
+        rows.append(" | ".join(cells))
+    return "\n".join(rows)
+
+
+def _render_cell(tc: ET.Element) -> str:
+    paragraphs = []
+    for sub_list in tc:
+        if not sub_list.tag.endswith("}subList"):
+            continue
+        paragraphs.extend(_render_paragraph(p) for p in sub_list if p.tag.endswith("}p"))
+    return " ".join(t for t in paragraphs if t)
 
 
 # ── HWP (OLE 복합문서 + 구 바이너리 포맷) ────────────────────────────

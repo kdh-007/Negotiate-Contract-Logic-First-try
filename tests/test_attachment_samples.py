@@ -47,6 +47,14 @@ class TestRealHwpxSamples(unittest.TestCase):
         self.assertIn(_normalize("평가기준"), text)
         self.assertIn(_normalize("정량평가"), text)
 
+    def test_rfp_evaluation_table_has_row_and_cell_structure(self):
+        """평가기준 배점표가 행/열 구분 없이 한 줄로 뭉치던 문제의 회귀 테스트."""
+        text = _extract("jeongseon_culture_center_rfp.hwpx")
+        header = "구분 | 평가 항목 | 평가요소 | 평가기준 | 배점 | 비고"
+        self.assertIn(header, text)
+        # 헤더 셀 이름이 표 밖 어딘가에 또(중복으로) 나오면 안 된다.
+        self.assertEqual(text.count(header), 1)
+
     def test_sejong_hwpx_contains_region_limit(self):
         text = _normalize(_extract("sejong_labor_relations_bid_explanation.hwpx"))
         self.assertIn(_normalize("지역제한"), text)

@@ -22,10 +22,10 @@
 
 ## 알려진 한계
 
-`jeongseon_culture_center_rfp.hwpx`의 평가기준 배점표는 텍스트 자체는 정확히
-추출되지만, 표의 행/열 구분 없이 한 줄로 이어붙는다 (문단 단위 추출의 한계).
-표 구조를 살린 파싱은 다음 단계 작업이다.
-
 `.hwp`(구버전 바이너리) 형식 샘플은 아직 없다 — `_extract_hwp_text`는 레코드
 파싱 로직만 단위 테스트(`tests/test_attachments.py`)했고, 실제 파일로는
 검증되지 않았다.
+
+(과거 한계였던 "HWPX 표가 행/열 구분 없이 한 줄로 이어붙는 문제"는
+`_render_table`로 표 구조(행=줄바꿈, 셀=` | `)를 살리도록 고쳐서 해결했다.
+`jeongseon_culture_center_rfp.hwpx`의 평가기준 배점표로 검증함.)
