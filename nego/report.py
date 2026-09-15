@@ -87,7 +87,8 @@ def render_console(candidates: list[Candidate], stats: RunStats) -> str:
     )
     lines.append(
         f"  (취소공고 제외 {stats.cancelled} / 협상 아님 {stats.not_negotiated} / "
-        f"이전 차수 {stats.old_ordinal} / 자격 미달 {stats.gate_excluded})"
+        f"이전 차수 {stats.old_ordinal} / 자격 미달 {stats.gate_excluded} / "
+        f"재공고 통합 {stats.duplicate_projects})"
     )
     if stats.screened_out:
         detail = " · ".join(f"{k} {v}" for k, v in sorted(stats.screened_out.items()))
@@ -183,7 +184,8 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
         f"수집 <b>{stats.fetched}</b>건 → 협상 <b>{stats.negotiated}</b>건 → "
         f"업역 <b>{stats.screened_in}</b>건 → 후보 <b>{stats.candidates}</b>건<br>"
         f"취소공고 제외 {stats.cancelled} · 협상 아님 {stats.not_negotiated} · "
-        f"이전 차수 {stats.old_ordinal} · 자격 미달 {stats.gate_excluded}"
+        f"이전 차수 {stats.old_ordinal} · 자격 미달 {stats.gate_excluded} · "
+        f"재공고 통합 {stats.duplicate_projects}"
         f"{warn}</div>"
     )
 

@@ -17,7 +17,7 @@ from nego.config import load_config  # noqa: E402
 from nego.fields import PERSONAL_FIELDS  # noqa: E402
 from nego.http_client import parse_response_body  # noqa: E402
 from nego.models import notice_from_raw  # noqa: E402
-from nego.pipeline import RunStats, build_candidates  # noqa: E402
+from nego.pipeline import RunStats, build_candidates, group_candidates  # noqa: E402
 from tests import fixtures  # noqa: E402
 
 NOW = datetime(2026, 9, 14, 9, 0)
@@ -97,6 +97,44 @@ class TestScope(unittest.TestCase):
         ]
         result = scope.apply_scope([notice_from_raw(r, "용역") for r in raws])
         self.assertEqual([n.notice_no for n in result.kept], [])
+
+
+class TestGroupProjects(unittest.TestCase):
+    """재공고는 공고번호가 달라 차수 정리로는 안 묶여서, 발주기관+제목 유사도로 묶는다."""
+
+    def test_re_notice_with_new_notice_no_is_grouped_with_original(self):
+        """실측 패턴: 재공고는 제목이 그대로라 유사도 1.0으로 잡힌다."""
+        raws = [
+            fixtures.notice("R26ORIG", title="하남역사박물관 상설전 고려실Ⅱ 개편 전시 용역"),
+            fixtures.notice("R26REPOST", title="하남역사박물관 상설전 고려실Ⅱ 개편 전시 용역", kind="재공고", reNtceYn="Y"),
+        ]
+        notices = [notice_from_raw(r, "용역") for r in raws]
+        groups = scope.group_projects(notices)
+        self.assertEqual(len(groups), 1)
+        self.assertEqual({n.notice_no for n in groups[0]}, {"R26ORIG", "R26REPOST"})
+
+    def test_same_institution_and_budget_but_different_title_is_not_grouped(self):
+        """회귀 테스트: 같은 발주기관+같은 예산이라는 이유만으로 다른 사업을 묶으면 안 된다.
+
+        실측(테스트 픽스처 전체가 같은 기관·같은 기본예산을 씀)으로 발견된 버그의
+        회귀 테스트 — 예산 일치만으로 묶던 예전 조건을 지웠다.
+        """
+        raws = [
+            fixtures.notice("R26A", title="○○과학관 전시물 제작 및 설치"),
+            fixtures.notice("R26B", title="△△박물관 전시디자인"),
+        ]
+        notices = [notice_from_raw(r, "용역") for r in raws]
+        groups = scope.group_projects(notices)
+        self.assertEqual(len(groups), 2, "제목이 다르면 예산이 같아도 별개 사업으로 남아야 한다")
+
+    def test_different_institution_is_never_grouped(self):
+        raws = [
+            fixtures.notice("R26A", title="같은 제목 공고", ntceInsttNm="기관A"),
+            fixtures.notice("R26B", title="같은 제목 공고", ntceInsttNm="기관B"),
+        ]
+        notices = [notice_from_raw(r, "용역") for r in raws]
+        groups = scope.group_projects(notices)
+        self.assertEqual(len(groups), 2)
 
 
 class TestJointSupply(unittest.TestCase):
@@ -342,6 +380,60 @@ class TestEndToEnd(unittest.TestCase):
         candidates = build_candidates(_notices(), config, {}, {}, NOW, stats)
         days = [c.days_left if c.days_left is not None else 9999 for c in candidates]
         self.assertEqual(days, sorted(days), "마감 임박 순으로 정렬되어야 한다")
+
+    def test_re_notice_does_not_duplicate_in_final_candidates(self):
+        """실측 사례: 하남역사박물관/고삼호수가 원공고+재공고로 각각 2번씩 리포트에 뜨던 문제."""
+        config = load_config()
+        config.screen.keywords = ["박물관"]
+        raws = [
+            fixtures.notice("R26ORIG", title="○○박물관 상설전 개편 전시 용역", bidNtceDt="2026-08-01 10:00:00"),
+            fixtures.notice(
+                "R26REPOST",
+                title="○○박물관 상설전 개편 전시 용역",
+                kind="재공고",
+                reNtceYn="Y",
+                bidNtceDt="2026-08-20 10:00:00",
+            ),
+        ]
+        notices = [notice_from_raw(r, "용역") for r in raws]
+        stats = RunStats()
+
+        candidates = build_candidates(notices, config, {}, {}, NOW, stats)
+
+        self.assertEqual(len(candidates), 1, "같은 사업은 한 번만 후보로 남아야 한다")
+        self.assertEqual(candidates[0].notice.notice_no, "R26REPOST", "더 최근에 게시된 쪽이 대표로 남아야 한다")
+        self.assertEqual(stats.duplicate_projects, 1)
+
+        superseded = [c for c in stats.rejected if c.notice.notice_no == "R26ORIG"]
+        self.assertEqual(len(superseded), 1)
+        self.assertFalse(superseded[0].is_candidate)
+        self.assertIn("R26REPOST", superseded[0].excluded_reason)
+
+
+class TestGroupCandidates(unittest.TestCase):
+    def _candidate(self, notice_no: str, posted_at: str) -> "Candidate":
+        from nego.pipeline import Candidate
+
+        raw = fixtures.notice(notice_no, title="○○박물관 상설전 개편 전시 용역", bidNtceDt=posted_at)
+        n = notice_from_raw(raw, "용역")
+        return Candidate(
+            notice=n,
+            screen_result=screen.ScreenResult(matched=True, confidence="참고용"),
+            qualification=qualify.QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False),
+            joint=qualify.parse_joint_supply(None),
+            schedule=screen.build_schedule(n),
+        )
+
+    def test_keeps_the_most_recently_posted_candidate(self):
+        older = self._candidate("R26OLD", "2026-08-01 10:00:00")
+        newer = self._candidate("R26NEW", "2026-08-20 10:00:00")
+
+        kept, superseded = group_candidates([older, newer])
+
+        self.assertEqual([c.notice.notice_no for c in kept], ["R26NEW"])
+        self.assertEqual([c.notice.notice_no for c in superseded], ["R26OLD"])
+        self.assertFalse(older.is_candidate)
+        self.assertIn("R26NEW", older.excluded_reason)
 
 
 if __name__ == "__main__":

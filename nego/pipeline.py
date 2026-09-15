@@ -73,6 +73,8 @@ class RunStats:
     # 부가 API가 실제로 몇 건을 돌려줬는지. 0이면 "제한 없음"이 아니라 "정보 없음"이다.
     license_rows: int = 0
     region_rows: int = 0
+    # 재공고라 공고번호는 다르지만 같은 사업으로 묶여서 후보에서 빠진 건수.
+    duplicate_projects: int = 0
 
 
 def _api_window(now: datetime, lookback_days: int) -> tuple[str, str]:
@@ -163,9 +165,49 @@ def build_candidates(
 
         candidates.append(record)
 
+    candidates, superseded = group_candidates(candidates)
+    stats.duplicate_projects = len(superseded)
+    stats.rejected.extend(superseded)
+
     candidates.sort(key=lambda c: c.sort_key)
     stats.candidates = len(candidates)
     return candidates
+
+
+def group_candidates(candidates: list[Candidate]) -> tuple[list[Candidate], list[Candidate]]:
+    """같은 사업(재공고 포함)을 대표 후보 하나로 묶는다.
+
+    재공고는 나라장터에서 새 공고번호를 받기 때문에 차수 정리(scope.latest_ordinals)로는
+    안 묶인다 — 그대로 두면 같은 사업이 리포트에 여러 번 중복으로 뜬다
+    (실측: 하남역사박물관, 고삼호수 문화공원이 원공고+재공고로 각각 2번씩 노출됨).
+
+    발주기관+예산/제목 유사도로 묶는 `scope.group_projects()`를 그대로 쓴다. 그룹
+    안에서는 가장 최근에 게시된 공고(posted_at 최신)만 대표로 남기고, 나머지는
+    지우지 않고 "대체됨" 사유를 달아 `stats.rejected`로 옮긴다 — 완전히 없애면
+    나중에 "이 공고가 왜 안 보이지?"를 확인할 수 없기 때문이다(기존 원칙과 동일).
+
+    한계: `scope.group_projects()`는 같은 발주기관에서 예산이 우연히 똑같은
+    서로 다른 사업까지 하나로 묶을 수 있다(제목 유사도 없이 예산 일치만으로도
+    묶는 조건이 있음) — 실제 데이터로는 아직 그런 오탐이 발견되지 않았지만,
+    알려진 한계로 남겨 둔다.
+    """
+    by_notice_no = {c.notice.notice_no: c for c in candidates}
+    groups = scope.group_projects([c.notice for c in candidates])
+
+    kept: list[Candidate] = []
+    superseded: list[Candidate] = []
+    for group in groups:
+        members = [by_notice_no[n.notice_no] for n in group]
+        primary = max(members, key=lambda c: (c.notice.posted_at or "", c.notice.notice_no))
+        kept.append(primary)
+        for member in members:
+            if member is primary:
+                continue
+            member.is_candidate = False
+            member.excluded_reason = f"같은 사업의 최신 공고로 대체됨 ({primary.notice.notice_no})"
+            superseded.append(member)
+
+    return kept, superseded
 
 
 def run(config: AppConfig, now: datetime | None = None) -> tuple[list[Candidate], RunStats, list[Notice]]:

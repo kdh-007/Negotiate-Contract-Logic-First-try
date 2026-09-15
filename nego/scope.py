@@ -139,7 +139,14 @@ def _similarity(a: str, b: str) -> float:
 
 
 def group_projects(notices: list[Notice], threshold: float = 0.75) -> list[list[Notice]]:
-    """같은 사업으로 보이는 공고를 묶는다 (재공고는 공고번호가 달라 차수로는 안 묶인다)."""
+    """같은 사업으로 보이는 공고를 묶는다 (재공고는 공고번호가 달라 차수로는 안 묶인다).
+
+    발주기관이 같고 제목 유사도가 threshold 이상이면 같은 사업으로 본다. 예산은
+    참고만 하고(재공고에서도 보통 그대로라 신호는 되지만), 예산 일치만으로는
+    묶지 않는다 — 실측(테스트 픽스처)으로 같은 발주기관에서 예산이 우연히 같은
+    서로 다른 사업이 병합돼버리는 걸 확인해서 뺐다. 재공고는 제목이 거의 그대로
+    유지되는 경우가 대부분이라(유사도 1.0에 가까움) 제목만으로도 충분히 잡힌다.
+    """
     groups: list[list[Notice]] = []
 
     for notice in sorted(notices, key=lambda n: (n.notice_institution or "", n.title)):
@@ -148,8 +155,7 @@ def group_projects(notices: list[Notice], threshold: float = 0.75) -> list[list[
         for group in groups:
             head = group[0]
             same_institution = (head.notice_institution or "") == (notice.notice_institution or "")
-            same_budget = head.budget == notice.budget
-            if same_institution and (same_budget or _similarity(signature, title_signature(head.title)) >= threshold):
+            if same_institution and _similarity(signature, title_signature(head.title)) >= threshold:
                 group.append(notice)
                 placed = True
                 break
