@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from nego.config import load_config  # noqa: E402
 from nego.models import notice_from_raw  # noqa: E402
 from nego.pipeline import RunStats, build_candidates  # noqa: E402
-from nego.report import _fmt_kr_date, _fmt_kr_datetime, _fmt_money, render_html  # noqa: E402
+from nego.report import _fmt_kr_date, _fmt_kr_datetime, _fmt_kr_deadline, _fmt_money, render_html  # noqa: E402
 from tests import fixtures  # noqa: E402
 
 NOW = datetime(2026, 8, 31, 0, 1, 13)
@@ -37,6 +37,15 @@ class TestFormatters(unittest.TestCase):
 
     def test_fmt_kr_datetime_noon_is_pm_12(self):
         self.assertEqual(_fmt_kr_datetime(datetime(2026, 8, 31, 12, 0, 0)), "2026. 8. 31. PM 12:00:00")
+
+    def test_fmt_kr_deadline_uses_24_hour_format(self):
+        self.assertEqual(_fmt_kr_deadline(datetime(2026, 9, 20, 18, 0, 0)), "2026년 09월 20일 18시")
+
+    def test_fmt_kr_deadline_pads_single_digit_month_day_hour(self):
+        self.assertEqual(_fmt_kr_deadline(datetime(2026, 1, 5, 9, 30, 0)), "2026년 01월 05일 09시")
+
+    def test_fmt_kr_deadline_none_is_empty(self):
+        self.assertEqual(_fmt_kr_deadline(None), "")
 
 
 class TestRenderHtml(unittest.TestCase):

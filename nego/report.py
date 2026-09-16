@@ -56,6 +56,11 @@ def _fmt_kr_datetime(value: datetime | None) -> str:
     return f"{_fmt_kr_date(value)} {ampm} {hour}:{value.minute:02d}:{value.second:02d}"
 
 
+def _fmt_kr_deadline(value: datetime | None) -> str:
+    """'2026년 09월 20일 18시' 형태(24시간 기준) — 카드의 '마감/일정' 표시용."""
+    return f"{value.year}년 {value.month:02d}월 {value.day:02d}일 {value.hour:02d}시" if value else ""
+
+
 def _qualification_label(q) -> str:
     """HTML 카드의 '자격판정' 줄에 쓰는 짧은 표시. 미보유 자격명은 이 옆에
     박스(태그)로 따로 붙이므로 여기엔 넣지 않는다 — CSV/콘솔용 전체 문장은
@@ -281,7 +286,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 '<div class="fields">'
                 f'<div><span class="label">기관:</span> {esc(c.notice.notice_institution) or "미상"}</div>'
                 f'<div><span class="label">예산:</span> {esc(_fmt_money(c.notice.budget)) or "미상"}</div>'
-                f'<div><span class="label">마감/일정:</span> {esc(_fmt_dt(earliest[1])) if earliest else "일정 미상"}</div>'
+                f'<div><span class="label">마감/일정:</span> {esc(_fmt_kr_deadline(earliest[1])) if earliest else "일정 미상"}</div>'
                 f'<div class="qual-row"><span class="label">자격판정:</span> {qualification_html}</div>'
                 f'<div><span class="label">공고번호:</span> {esc(c.notice.notice_no)}</div>'
                 "</div>"
