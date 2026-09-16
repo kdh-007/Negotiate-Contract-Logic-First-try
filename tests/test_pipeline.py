@@ -233,6 +233,51 @@ class TestQualification(unittest.TestCase):
         result = qualify.evaluate_attachment_text(items, held_codes={"4990"})
         self.assertFalse(result.checked, "코드가 명시된 항목이 하나도 없으면 판정하지 않는다")
 
+    def test_extract_code_requirements_finds_all_codes_sharing_one_paren(self):
+        """실측 오류 재현: "세부품명번호 10자리(코드1 이름1, 코드2 이름2, 코드3 이름3)"처럼
+        프리픽스 하나 뒤에 괄호 하나를 공유하는 코드 여러 개가 있으면, 기존 정규식은
+        프리픽스당 코드 하나만 잡아 나머지가 조용히 빠졌다 — 보유하지 않은 코드가
+        빠진 채로 "자격 충족"이라고 잘못 표시되는 원인이었다(단양군 미디어아트 공고문)."""
+        item = (
+            "1) 국가종합전자조달시스템 입찰참가자격 등록규정에 따라 반드시 입찰(개찰) 전일까지 "
+            "나라장터(G2B)에 세부품명번호 10자리(4511161601 비디오프로젝터, 3911160501 LED경관조명기구, "
+            "3912110702 조명용제어장치) 제조 또는 공급으로 입찰참가 등록한 업체로 입찰일(낙찰자는 "
+            "계약체결일)까지 당해 자격을 계속 유지하여야 합니다."
+        )
+        requirements = qualify._extract_code_requirements(item)
+        self.assertEqual(
+            [code for code, _ in requirements], ["4511161601", "3911160501", "3912110702"]
+        )
+
+        result = qualify.evaluate_attachment_text([item], held_codes={"4511161601", "3911160501"})
+        self.assertIn("자격 미달", result.summary, "코드 하나(3912110702)가 없으면 미달이어야 한다")
+        self.assertIn("조명용제어장치(3912110702)", result.summary)
+
+    def test_extract_code_requirements_finds_bracket_codes_without_keyword(self):
+        """실측 오류 재현: 직접생산확인증명서 항목이 "업종코드"/"세부품명번호" 키워드 없이
+        "[코드, 이름]" 대괄호만 쓰면 코드가 하나도 안 잡혔다(위와 같은 공고문의 2번 항목)."""
+        item = (
+            "2) 「중소기업제품 구매촉진 및 판로지원에 관한 법률」제9조 및 같은 법 시행령 제10조에 "
+            "의한 직접생산확인증명서[3911160501, LED경관조명기구], [3912110702, 조명용제어장치]를 "
+            "소지한 업체"
+        )
+        requirements = qualify._extract_code_requirements(item)
+        self.assertEqual([code for code, _ in requirements], ["3911160501", "3912110702"])
+
+        result = qualify.evaluate_attachment_text([item], held_codes={"3911160501"})
+        self.assertIn("자격 미달", result.summary)
+        self.assertIn("조명용제어장치(3912110702)", result.summary)
+
+    def test_summary_deduplicates_same_missing_label_across_groups(self):
+        """단양군 공고문처럼 항목 여러 개가 같은 미보유 코드를 요구하면, 같은
+        이름표가 그대로 두 번 표시되지 않고 한 번만 나와야 한다."""
+        items = [
+            "1) 세부품명번호 10자리(4511161601 비디오프로젝터, 3912110702 조명용제어장치) 제조 업체",
+            "2) 직접생산확인증명서[3912110702, 조명용제어장치]를 소지한 업체",
+        ]
+        result = qualify.evaluate_attachment_text(items, held_codes={"4511161601"})
+        self.assertEqual(result.summary, "자격 미달(조명용제어장치(3912110702))")
+
     def test_summary_is_plain_pass_when_all_groups_satisfied(self):
         groups = qualify.group_license_rows(fixtures.license_rows())["R26TEST00002"]
         result = qualify.evaluate(groups, self.held)

@@ -54,7 +54,10 @@ class QualificationResult:
             return "자격정보 없음 (판정 보류, 통과)"
         if self.missing_count == 0:
             return "자격 충족"
-        missing_names = ", ".join("/".join(g.allowed_names) for g in self.missing_groups)
+        # 같은 자격이 여러 그룹에서 각각 미충족으로 걸리면(예: 첨부문서 항목
+        # 여러 개가 같은 코드를 요구) 이름표가 그대로 중복 표시된다 — 중복 제거.
+        names = ("/".join(g.allowed_names) for g in self.missing_groups)
+        missing_names = ", ".join(dict.fromkeys(names))
         return f"자격 미달({missing_names})"
 
 
@@ -149,10 +152,32 @@ _CODE_REQUIREMENT_RE = re.compile(
     r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?(?P<code>[0-9]{4,10})"
     r"|\((?P<bare_code>[0-9]{10})\)"
 )
+# "세부품명번호 10자리(코드1 이름1, 코드2 이름2, 코드3 이름3)"처럼 프리픽스 하나 뒤에
+# 괄호 하나를 공유하는 코드 여러 개가 콤마로 나열되는 표기(실측: G2B 세부품명번호
+# 등록 안내 문구). 위 `_CODE_REQUIREMENT_RE`는 프리픽스당 코드 하나만 잡아서,
+# 이 형태에서는 첫 코드 말고 나머지가 조용히 빠진다 — 괄호를 통째로 잡아 콤마로
+# 나눠 각 코드를 따로 뽑는다. "이름(업종코드 ####)"처럼 프리픽스가 괄호 *안*에
+# 있는 기존 형태와는 괄호가 프리픽스 *바로 뒤*에 오는지로 구분된다.
+_PREFIXED_GROUP_RE = re.compile(
+    r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?\(([^()]*)\)"
+)
+_GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{4,10}")
+# "[코드, 이름]" 형태(실측: 직접생산확인증명서 항목 — 업종코드/세부품명번호 키워드
+# 없이 대괄호로만 코드를 표기). 키워드가 없어 프리픽스로 코드를 확신할 수 없으므로,
+# 괄호 단독 표기와 같은 이유로 세부품명번호 자릿수(10자리)일 때만 코드로 인정한다.
+_BRACKET_CODE_RE = re.compile(r"\[\s*(?P<code>[0-9]{10})\s*,\s*(?P<name>[^\]]{1,40}?)\s*\]")
 _OR_MARKER_RE = re.compile(r"어느\s*하나")
 # 이름표에서 떼어낼 법령 인용 연결어. 실측 문서마다 표현이 달라 여러 개를 다룬다.
 _LABEL_CONNECTOR_RE = re.compile(r"(?:에\s*따른|에\s*의하여|규정에\s*따라)\s*")
 _MAX_LABEL_LEN = 20
+
+
+def _truncate_label(name: str) -> str:
+    if len(name) > _MAX_LABEL_LEN:
+        name = name[-_MAX_LABEL_LEN:]
+        if " " in name:  # 잘린 앞 단어 조각을 버리고 온전한 단어부터 남긴다
+            name = name.split(" ", 1)[1]
+    return name
 
 
 def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
@@ -165,10 +190,35 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
     (`_MAX_LABEL_LEN`) 뒷부분만 잘라 쓴다 — 문장 전체가 그대로 리포트에
     나오는 것보다는, 한글 문장 특성상 대상 명사가 대개 끝에 오므로 뒷부분만
     잘라도 알아볼 수 있는 경우가 많다.
+
+    프리픽스 공유형("세부품명번호(코드1, 코드2, …)")과 대괄호형("[코드, 이름]")은
+    프리픽스당 코드 하나만 잡는 위 규칙으로는 일부 코드가 누락되므로 별도로
+    먼저 뽑고, 그 구간은 기존 규칙에서 다시 잡지 않게 제외한다.
     """
     results = []
     for line in item.splitlines():
+        consumed: list[tuple[int, int]] = []
+
+        for group_match in _PREFIXED_GROUP_RE.finditer(line):
+            consumed.append(group_match.span())
+            for entry in group_match.group(1).split(","):
+                entry = entry.strip()
+                code_match = _GROUP_ENTRY_CODE_RE.search(entry)
+                if not code_match:
+                    continue
+                code = code_match.group(0)
+                name = _truncate_label(entry[code_match.end():].strip())
+                results.append((code, f"{name}({code})" if name else code))
+
+        for bracket_match in _BRACKET_CODE_RE.finditer(line):
+            consumed.append(bracket_match.span())
+            code = bracket_match.group("code")
+            name = _truncate_label(bracket_match.group("name").strip())
+            results.append((code, f"{name}({code})" if name else code))
+
         for match in _CODE_REQUIREMENT_RE.finditer(line):
+            if any(start <= match.start() < end for start, end in consumed):
+                continue
             code = match.group("code") or match.group("bare_code")
             prefix = line[: match.start()]
             inside_paren = prefix.rsplit("(", 1)[1].strip(" ,") if "(" in prefix else ""
@@ -179,10 +229,7 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
                 before_paren = re.sub(r"^[\s\-·「『]+", "", before_paren)
                 segments = [s for s in _LABEL_CONNECTOR_RE.split(before_paren) if s.strip()]
                 name = (segments[-1] if segments else before_paren).strip()
-                if len(name) > _MAX_LABEL_LEN:
-                    name = name[-_MAX_LABEL_LEN:]
-                    if " " in name:  # 잘린 앞 단어 조각을 버리고 온전한 단어부터 남긴다
-                        name = name.split(" ", 1)[1]
+                name = _truncate_label(name)
             results.append((code, f"{name}({code})" if name else code))
     return results
 
