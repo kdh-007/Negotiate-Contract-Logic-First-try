@@ -161,22 +161,44 @@ class TestQualification(unittest.TestCase):
         self.assertEqual(result.missing_count, 2)
         self.assertFalse(result.passes, "2개 이상 미충족이면 제외 — 기존 규칙")
 
-    def test_match_from_attachment_text_finds_held_name_in_item(self):
-        items = ["가. 「건설산업기본법」에 따른 실내건축공사업 면허 보유업체", "나. 신용평가등급 B등급 이상"]
-        match = qualify.match_from_attachment_text(items, self.held)
-        self.assertIsNotNone(match)
-        self.assertIn("실내건축공사업", match)
+    def test_evaluate_attachment_text_passes_when_all_codes_held(self):
+        items = [
+            "마.「건설산업기본법」 제9조에 따른 실내건축공사업(업종코드 4990)으로 입찰참가 등록한 자",
+            "아. 부정당업자 제재 중에 있지 아니한 자",  # 코드 없음 — 판정 대상에서 제외돼야 함
+        ]
+        result = qualify.evaluate_attachment_text(items, held_codes={"4990"})
+        self.assertTrue(result.checked)
+        self.assertEqual(result.total_groups, 1, "코드 없는 일반 결격사유는 판정 대상이 아니다")
+        self.assertEqual(result.summary, "자격 충족")
 
-    def test_match_from_attachment_text_returns_none_when_no_match(self):
-        items = ["가. 전기공사업 면허 보유업체", "나. 신용평가등급 B등급 이상"]
-        self.assertIsNone(qualify.match_from_attachment_text(items, self.held))
+    def test_evaluate_attachment_text_fails_when_code_missing(self):
+        items = ["마.「건설산업기본법」 제9조에 따른 실내건축공사업(업종코드 4990)으로 입찰참가 등록한 자"]
+        result = qualify.evaluate_attachment_text(items, held_codes={"9999"})
+        self.assertIn("자격 미달", result.summary)
+        self.assertIn("실내건축공사업", result.summary)
 
-    def test_match_from_attachment_text_ignores_whitespace_differences(self):
-        """등록명 "실내건축공사업"과 첨부파일 문구 "실내 건축 공사업"처럼
-        띄어쓰기만 다른 경우도 매칭돼야 한다."""
-        items = ["가. 「건설산업기본법」에 따른 실내 건축 공사업 면허 보유업체"]
-        match = qualify.match_from_attachment_text(items, self.held)
-        self.assertIsNotNone(match)
+    def test_evaluate_attachment_text_or_group_needs_only_one_code(self):
+        items = [
+            "바. 다음 중 어느 하나의 자격으로 입찰참가 등록한 자\n"
+            "    -「산업디자인진흥법」 제9조에 따른 산업디자인전문회사(환경디자인 분야, 업종코드 4442)\n"
+            "    -「공공디자인의 진흥에 관한 법률」 제18조에 따른 공공디자인전문회사(업종코드 6484)"
+        ]
+        result = qualify.evaluate_attachment_text(items, held_codes={"6484"})
+        self.assertEqual(result.summary, "자격 충족", "OR그룹은 코드 하나만 있어도 충족")
+
+    def test_evaluate_attachment_text_and_group_needs_every_code(self):
+        items = [
+            "라. 다음 직접생산확인증명서를 모두 소지한 자이어야 합니다.\n"
+            "    - 실물모형 및 전시물(세부품명번호 6010989901)\n"
+            "    - 책장(세부품명번호 5610150701)"
+        ]
+        result = qualify.evaluate_attachment_text(items, held_codes={"6010989901"})
+        self.assertIn("자격 미달", result.summary, "AND그룹은 하나라도 빠지면 미달")
+
+    def test_evaluate_attachment_text_no_codes_found_stays_unchecked(self):
+        items = ["아. 부정당업자 제재 중에 있지 아니한 자"]
+        result = qualify.evaluate_attachment_text(items, held_codes={"4990"})
+        self.assertFalse(result.checked, "코드가 명시된 항목이 하나도 없으면 판정하지 않는다")
 
     def test_summary_is_plain_pass_when_all_groups_satisfied(self):
         groups = qualify.group_license_rows(fixtures.license_rows())["R26TEST00002"]

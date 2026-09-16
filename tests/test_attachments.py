@@ -438,13 +438,12 @@ class _FakeQualification:
 class _FakeCandidate:
     """save_attachment_texts는 candidate.notice/.qualification만 본다 —
     pipeline.Candidate 전체를 안 만들어도 된다. checked=True가 기본값이라
-    held_names를 넘겨도 (API로 이미 판정됐다고 보고) 대조를 시도하지 않는다.
+    held_codes를 넘겨도 (API로 이미 판정됐다고 보고) 재판정을 시도하지 않는다.
     """
 
     def __init__(self, notice, checked: bool = True):
         self.notice = notice
         self.qualification = _FakeQualification(checked)
-        self.qualification_note: str | None = None
 
 
 class TestSaveAttachmentTexts(unittest.TestCase):
@@ -471,8 +470,7 @@ class TestSaveAttachmentTexts(unittest.TestCase):
                     "ok": 1,
                     "failed": 0,
                     "qualification_found": 1,
-                    "qualification_matched": 0,
-                    "qualification_manual_check": 0,
+                    "qualification_determined": 0,
                 },
             )
 
@@ -505,9 +503,10 @@ class TestSaveAttachmentTexts(unittest.TestCase):
             written = {p.name for p in (output_dir / "attachment_text").iterdir()}
             self.assertEqual(len(written), 1)  # .txt만, _참가자격.txt는 없음
 
-    def test_notes_match_when_held_name_appears_in_qualification_section(self):
-        """API 자격정보가 없는(checked=False) 공고는 첨부파일 참가자격 절과
-        보유 명단을 대조해 candidate.qualification_note에 확인됨을 남긴다."""
+    def test_replaces_qualification_with_pass_when_all_codes_held(self):
+        """API 자격정보가 없는(checked=False) 공고는 첨부파일 참가자격 절의
+        업종코드/세부품명번호를 보유 명단과 대조해 candidate.qualification 자체를
+        갈아끼운다 — 다른 공고와 똑같이 '자격 충족'/'자격 미달(이름)'로 보이도록."""
         fixture = FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx"
         raw = {
             "bidNtceNo": "R26TEST0001",
@@ -519,18 +518,17 @@ class TestSaveAttachmentTexts(unittest.TestCase):
         notice = notice_from_raw(raw, "용역")
         session = FakeSession(fixture.read_bytes())
         candidate = _FakeCandidate(notice, checked=False)
+        # 실측 문서(정선군 복합문화센터)가 요구하는 코드 전부를 보유했다고 가정.
+        held_codes = {"6010989901", "5610150701", "5611210501", "4990", "4442", "4444", "6484", "1469"}
 
         with tempfile.TemporaryDirectory() as tmp:
-            stats = save_attachment_texts(
-                [candidate], Path(tmp), timeout=5.0, session=session, held_names=["실내건축공사업"]
-            )
+            stats = save_attachment_texts([candidate], Path(tmp), timeout=5.0, session=session, held_codes=held_codes)
 
-        self.assertEqual(stats["qualification_matched"], 1)
-        self.assertIsNotNone(candidate.qualification_note)
-        self.assertIn("실내건축공사업", candidate.qualification_note)
-        self.assertIn("확인됨", candidate.qualification_note)
+        self.assertEqual(stats["qualification_determined"], 1)
+        self.assertTrue(candidate.qualification.checked)
+        self.assertEqual(candidate.qualification.summary, "자격 충족")
 
-    def test_notes_manual_check_needed_when_no_held_name_matches(self):
+    def test_replaces_qualification_with_fail_when_a_code_missing(self):
         fixture = FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx"
         raw = {
             "bidNtceNo": "R26TEST0001",
@@ -542,18 +540,18 @@ class TestSaveAttachmentTexts(unittest.TestCase):
         notice = notice_from_raw(raw, "용역")
         session = FakeSession(fixture.read_bytes())
         candidate = _FakeCandidate(notice, checked=False)
+        # 실내건축공사업(4990)만 빠뜨린 명단.
+        held_codes = {"6010989901", "5610150701", "5611210501", "4442", "4444", "6484", "1469"}
 
         with tempfile.TemporaryDirectory() as tmp:
-            stats = save_attachment_texts(
-                [candidate], Path(tmp), timeout=5.0, session=session, held_names=["전기공사업"]
-            )
+            stats = save_attachment_texts([candidate], Path(tmp), timeout=5.0, session=session, held_codes=held_codes)
 
-        self.assertEqual(stats["qualification_matched"], 0)
-        self.assertIsNotNone(candidate.qualification_note)
-        self.assertIn("직접 확인 필요", candidate.qualification_note)
+        self.assertEqual(stats["qualification_determined"], 1)
+        self.assertIn("자격 미달", candidate.qualification.summary)
+        self.assertIn("실내건축공사업", candidate.qualification.summary)
 
-    def test_no_note_when_already_checked_by_api(self):
-        """API에서 이미 자격정보를 받은(checked=True) 공고는 대조를 건너뛴다."""
+    def test_qualification_untouched_when_already_checked_by_api(self):
+        """API에서 이미 자격정보를 받은(checked=True) 공고는 재판정을 건너뛴다."""
         fixture = FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx"
         raw = {
             "bidNtceNo": "R26TEST0001",
@@ -565,18 +563,18 @@ class TestSaveAttachmentTexts(unittest.TestCase):
         notice = notice_from_raw(raw, "용역")
         session = FakeSession(fixture.read_bytes())
         candidate = _FakeCandidate(notice, checked=True)
+        original_qualification = candidate.qualification
 
         with tempfile.TemporaryDirectory() as tmp:
             stats = save_attachment_texts(
-                [candidate], Path(tmp), timeout=5.0, session=session, held_names=["실내건축공사업"]
+                [candidate], Path(tmp), timeout=5.0, session=session, held_codes={"4990"}
             )
 
-        self.assertEqual(stats["qualification_matched"], 0)
-        self.assertIsNone(candidate.qualification_note)
+        self.assertEqual(stats["qualification_determined"], 0)
+        self.assertIs(candidate.qualification, original_qualification)
 
-    def test_notes_manual_check_when_no_qualification_section_found(self):
-        """첨부파일은 정상 처리됐지만 참가자격 절 자체가 없는 문서(과업지시서 등)도
-        '직접 확인 필요'로 남긴다 — 조용히 넘어가면 사람이 놓칠 수 있다."""
+    def test_qualification_untouched_when_no_qualification_section_found(self):
+        """참가자격 절 자체가 없는 문서(과업지시서 등)는 판정 근거가 없으니 손대지 않는다."""
         fixture = FIXTURES_DIR / "jeongseon_culture_center_task_order.hwpx"
         raw = {
             "bidNtceNo": "R26TEST0002",
@@ -588,17 +586,17 @@ class TestSaveAttachmentTexts(unittest.TestCase):
         notice = notice_from_raw(raw, "용역")
         session = FakeSession(fixture.read_bytes())
         candidate = _FakeCandidate(notice, checked=False)
+        original_qualification = candidate.qualification
 
         with tempfile.TemporaryDirectory() as tmp:
             stats = save_attachment_texts(
-                [candidate], Path(tmp), timeout=5.0, session=session, held_names=["실내건축공사업"]
+                [candidate], Path(tmp), timeout=5.0, session=session, held_codes={"4990"}
             )
 
-        self.assertEqual(stats["qualification_manual_check"], 1)
-        self.assertIn("참가자격 절을 찾지 못함", candidate.qualification_note)
-        self.assertIn("직접 확인 필요", candidate.qualification_note)
+        self.assertEqual(stats["qualification_determined"], 0)
+        self.assertIs(candidate.qualification, original_qualification)
 
-    def test_notes_manual_check_when_download_fails(self):
+    def test_qualification_untouched_when_download_fails(self):
         att = {"seq": "1", "file_name": "a.hwpx", "url": "https://example.com/a.hwpx", "ext": "hwpx"}
         raw = {
             "bidNtceNo": "R26TEST0003",
@@ -610,29 +608,15 @@ class TestSaveAttachmentTexts(unittest.TestCase):
         notice = notice_from_raw(raw, "용역")
         session = FakeSession(b"", status_code=404)
         candidate = _FakeCandidate(notice, checked=False)
+        original_qualification = candidate.qualification
 
         with tempfile.TemporaryDirectory() as tmp:
             stats = save_attachment_texts(
-                [candidate], Path(tmp), timeout=5.0, session=session, held_names=["실내건축공사업"]
+                [candidate], Path(tmp), timeout=5.0, session=session, held_codes={"4990"}
             )
 
-        self.assertEqual(stats["qualification_manual_check"], 1)
-        self.assertIn("다운로드/파싱 실패", candidate.qualification_note)
-        self.assertIn("직접 확인 필요", candidate.qualification_note)
-
-    def test_notes_manual_check_when_no_attachments(self):
-        raw = {"bidNtceNo": "R26TEST0004", "bidNtceOrd": "000", "bidNtceNm": "테스트 공고4"}
-        notice = notice_from_raw(raw, "용역")
-        candidate = _FakeCandidate(notice, checked=False)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            stats = save_attachment_texts(
-                [candidate], Path(tmp), timeout=5.0, session=FakeSession(b""), held_names=["실내건축공사업"]
-            )
-
-        self.assertEqual(stats["qualification_manual_check"], 1)
-        self.assertIn("첨부파일이 없음", candidate.qualification_note)
-        self.assertIn("직접 확인 필요", candidate.qualification_note)
+        self.assertEqual(stats["qualification_determined"], 0)
+        self.assertIs(candidate.qualification, original_qualification)
 
 
 if __name__ == "__main__":

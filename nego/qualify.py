@@ -9,6 +9,12 @@
   - 조회 실패 / 정보 없음이면 걸러내지 않고 통과 (fail-open)
 
 공동수급·지역은 **판정에 개입하지 않고 정보로만** 수집한다.
+
+API 면허제한정보가 비어 있는 공고는 `evaluate_attachment_text`가 첨부파일
+참가자격 절에서 뽑은 업종코드·세부품명번호로 같은 형태의 판정을 만든다
+(`attachments.save_attachment_texts`가 호출). 이 판정은 표시만 갱신하고
+후보 목록 자체(포함/제외)는 바꾸지 않는다 — 이미 API 기반 1차 판정이 끝난
+뒤에 붙는 보조 재판정이기 때문이다.
 """
 
 from __future__ import annotations
@@ -128,25 +134,81 @@ def evaluate(groups: list[LicenseGroup], held_names: list[str]) -> Qualification
     )
 
 
-def match_from_attachment_text(items: list[str], held_names: list[str]) -> str | None:
-    """첨부파일에서 뽑은 참가자격 항목 중 보유 명단과 일치하는 것을 찾는다.
+# "(업종코드 4990)" / "(세부품명번호 6010989901)" / "(디지털콘텐츠개발서비스사업,
+# 업종코드 1469)" — 참가자격 문서가 실측상 이 표기로 업종·품목을 명시한다.
+# held_qualifications.json의 code와 그대로 비교할 수 있다.
+_CODE_REQUIREMENT_RE = re.compile(r"(?:업종코드|세부품명번호)\s*([0-9]+)")
+_OR_MARKER_RE = re.compile(r"어느\s*하나")
 
-    API 면허제한정보가 비어 있어(`checked=False`) 판정을 못 한 공고를 사람이 원문
-    전체를 열어 확인하는 수고를 줄이기 위한 보조 확인이다. 자유 텍스트라 그룹(OR)
-    구조를 알 수 없으므로 이 결과로 **제외 판정을 내리지는 않는다** — 일치하는
-    항목을 찾으면 그 문장을 반환해 확인됐음을 알리고, 못 찾으면 None을 반환해
-    (제외가 아니라) 원문 확인이 필요함을 알리는 용도로만 쓴다.
 
-    비교 전에 공백을 지운다 — 등록명과 첨부파일 문구의 띄어쓰기가 다를 수 있어서다
-    (예: 보유 명단 "실내건축공사업" vs 첨부파일 "실내 건축 공사업").
+def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
+    """항목 한 줄에서 코드 표기가 붙은 요건을 [(코드, 코드 앞 이름표)]로 뽑는다.
+
+    이름표는 두 가지 표기 관행을 다룬다 — "이름(업종코드 ####)"(괄호 앞이 이름)와
+    "(설명, 업종코드 ####)"(괄호 안 콤마 앞이 이름). 후자는 콤마 앞 텍스트를,
+    전자는 괄호 앞 구절에서 "…법 제n조에 따른" 같은 인용부를 떼고 남은 마지막
+    구절을 이름표로 쓴다.
     """
-    for item in items:
-        squashed_item = re.sub(r"\s+", "", item)
-        for held in held_names:
-            squashed_held = re.sub(r"\s+", "", held) if held else ""
-            if squashed_held and squashed_held in squashed_item:
-                return item
-    return None
+    results = []
+    for line in item.splitlines():
+        for match in _CODE_REQUIREMENT_RE.finditer(line):
+            code = match.group(1)
+            prefix = line[: match.start()]
+            inside_paren = prefix.rsplit("(", 1)[1].strip(" ,") if "(" in prefix else ""
+            if inside_paren:
+                label = inside_paren
+            else:
+                before_paren = prefix.rsplit("(", 1)[0] if "(" in prefix else prefix
+                before_paren = re.sub(r"^[\s\-·「『]+", "", before_paren)
+                label = re.split(r"에\s*따른\s*", before_paren)[-1].strip()
+            results.append((code, label or code))
+    return results
+
+
+def evaluate_attachment_text(items: list[str], held_codes: set[str]) -> QualificationResult:
+    """첨부파일 참가자격 절에서 업종코드·세부품명번호가 명시된 항목만 뽑아,
+    API 판정(`evaluate`)과 같은 형태의 결과를 만든다 — 리포트에서 "자격 충족" /
+    "자격 미달(이름)"로 API 기반 판정과 똑같이 보이게 하기 위함이다.
+
+    코드가 안 붙은 일반 결격사유(나라장터 등록 여부, 부정당업자 여부, 공동수급
+    구성 방식 등)는 판정 대상에서 뺀다 — 문장만 보고 "이게 자격요건이다"를
+    추정하면 오탈락 위험이 크지만, 코드는 문서에 명시된 값 그대로라 비교가
+    정확하다. "다음 중 어느 하나"가 있으면 그 항목 안 코드 중 하나만 있어도
+    충족(OR), 없으면 나열된 코드를 전부 가지고 있어야 충족(AND)으로 본다
+    (실측: 정선군 복합문화센터 공고문 — "라"항은 품목 3개를 모두 소지해야
+    하고, "바"항은 "다음 중 어느 하나"로 명시됨).
+    """
+    groups: list[LicenseGroup] = []
+    missing: list[LicenseGroup] = []
+
+    for idx, item in enumerate(items):
+        requirements = _extract_code_requirements(item)
+        if not requirements:
+            continue
+
+        group_no = str(idx)
+        groups.append(LicenseGroup(group_no=group_no, allowed_names=[label for _, label in requirements]))
+
+        is_or = bool(_OR_MARKER_RE.search(item))
+        held_flags = [code in held_codes for code, _ in requirements]
+        satisfied = any(held_flags) if is_or else all(held_flags)
+        if not satisfied:
+            missing_labels = (
+                [label for _, label in requirements]
+                if is_or
+                else [label for (_, label), ok in zip(requirements, held_flags) if not ok]
+            )
+            missing.append(LicenseGroup(group_no=group_no, allowed_names=missing_labels))
+
+    if not groups:
+        return QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False)
+
+    return QualificationResult(
+        total_groups=len(groups),
+        missing_groups=missing,
+        passes=len(missing) <= MAX_ALLOWED_MISSING_QUALIFICATIONS,
+        checked=True,
+    )
 
 
 def load_held_names(held_config: dict) -> list[str]:
@@ -157,6 +219,16 @@ def load_held_names(held_config: dict) -> list[str]:
             if name:
                 names.append(name)
     return names
+
+
+def load_held_codes(held_config: dict) -> set[str]:
+    codes: set[str] = set()
+    for key in ("heldProducts", "heldIndustries"):
+        for entry in held_config.get(key, []):
+            code = str(entry.get("code", "")).strip()
+            if code:
+                codes.add(code)
+    return codes
 
 
 def fetch_license_groups(
