@@ -150,7 +150,7 @@ def save_attachment_texts(
     output_dir: Path,
     timeout: float = 30.0,
     session: requests.Session | None = None,
-    held_names: list[str] | None = None,
+    held_codes: set[str] | None = None,
 ) -> dict[str, int]:
     """후보 공고의 첨부파일을 내려받아 텍스트를 `output_dir/attachment_text/`에 저장한다.
 
@@ -163,48 +163,34 @@ def save_attachment_texts(
     R26BK01719858)를 사람이 원문 전체를 뒤지지 않고 바로 확인하기 위함이다.
     절을 못 찾아도 실패로 세지 않는다 — 애초에 없는 문서가 대부분이다.
 
-    `held_names`를 주면, API 자격정보가 없는 공고(`candidate.qualification.checked
-    is False`)에 한해 찾은 참가자격 항목을 보유 명단과 대조해
-    `candidate.qualification_note`에 결과를 남긴다 — 매일 사람이 일일이
-    "자격정보 없음"인 공고를 열어 대조하던 수고를 줄이기 위함이다. 자유 텍스트라
-    판정(제외)까지는 하지 않는다: 일치하면 확인됨을 남기고, 그 외의 모든
-    경우 — 절은 찾았지만 안 맞음 / 절 자체를 못 찾음 / 첨부파일 다운로드·파싱
-    실패 / 첨부파일이 아예 없음 — 는 전부 "직접 확인 필요"로 남긴다. 사람이
-    "왜 확인이 필요한지" 구분할 수 있게 사유만 다르게 적는다
-    (`qualify.match_from_attachment_text` 참고).
+    `held_codes`를 주면, API 자격정보가 없는 공고(`candidate.qualification.checked
+    is False`)에 한해 찾은 참가자격 항목으로 `qualify.evaluate_attachment_text`를
+    돌려 **API와 똑같은 형태의 판정 결과로 `candidate.qualification`을 갈아끼운다**
+    — 리포트에는 다른 공고와 동일하게 "자격 충족" / "자격 미달(이름)"로 표시된다.
+    판정 근거를 찾지 못하면(코드가 명시된 항목이 없음) 손대지 않고 그대로
+    "자격정보 없음"으로 남긴다. 이 판정은 표시용일 뿐 후보 목록 자체는 바꾸지
+    않는다 — 후보/제외는 이미 API 기반 1차 판정에서 끝난 뒤이기 때문이다.
     """
     from .qualification_text import find_qualification_section
-    from .qualify import match_from_attachment_text
+    from .qualify import evaluate_attachment_text
 
     text_dir = output_dir / "attachment_text"
     text_dir.mkdir(parents=True, exist_ok=True)
     session = session or requests.Session()
 
-    stats = {
-        "attempted": 0,
-        "ok": 0,
-        "failed": 0,
-        "qualification_found": 0,
-        "qualification_matched": 0,
-        "qualification_manual_check": 0,
-    }
+    stats = {"attempted": 0, "ok": 0, "failed": 0, "qualification_found": 0, "qualification_determined": 0}
     for candidate in candidates:
         notice = candidate.notice
         qualification = getattr(candidate, "qualification", None)
-        needs_check = held_names is not None and qualification is not None and not qualification.checked
-        section_found = False
-        matched_text: str | None = None
-        any_attempted = False
-        any_extracted_ok = False
+        needs_check = held_codes is not None and qualification is not None and not qualification.checked
+        all_items: list[str] = []
 
         for result in collect_notice_attachment_texts(session, notice, timeout=timeout):
-            any_attempted = True
             stats["attempted"] += 1
             if not result.ok:
                 log.warning("첨부파일 추출 실패 [%s] %s: %s", notice.notice_no, result.file_name, result.error)
                 stats["failed"] += 1
                 continue
-            any_extracted_ok = True
             stats["ok"] += 1
             base = _safe_filename(f"{notice.notice_no}_{notice.notice_ord}_{result.seq}_{result.file_name}")
             (text_dir / f"{base}.txt").write_text(result.text, encoding="utf-8")
@@ -212,33 +198,17 @@ def save_attachment_texts(
             section = find_qualification_section(result.text)
             if section is not None:
                 stats["qualification_found"] += 1
-                section_found = True
                 summary = section.heading + "\n\n" + "\n\n".join(section.items)
                 (text_dir / f"{base}_참가자격.txt").write_text(summary, encoding="utf-8")
+                all_items.extend(section.items)
 
-                if needs_check and matched_text is None:
-                    matched_text = match_from_attachment_text(section.items, held_names)
-
-        if not needs_check:
+        if not needs_check or not all_items:
             continue
 
-        if matched_text:
-            candidate.qualification_note = f"첨부파일에서 자격 확인됨 — \"{matched_text.strip()[:100]}\""
-            stats["qualification_matched"] += 1
-        elif section_found:
-            candidate.qualification_note = (
-                "⚠ 첨부파일에 참가자격 조건이 있으나 보유 명단과 자동 대조 안 됨 — 원문 직접 확인 필요"
-            )
-            stats["qualification_manual_check"] += 1
-        elif not any_attempted:
-            candidate.qualification_note = "⚠ 첨부파일이 없음 — 직접 확인 필요"
-            stats["qualification_manual_check"] += 1
-        elif not any_extracted_ok:
-            candidate.qualification_note = "⚠ 첨부파일 다운로드/파싱 실패 — 직접 확인 필요"
-            stats["qualification_manual_check"] += 1
-        else:
-            candidate.qualification_note = "⚠ 첨부파일에서 참가자격 절을 찾지 못함 — 직접 확인 필요"
-            stats["qualification_manual_check"] += 1
+        result = evaluate_attachment_text(all_items, held_codes)
+        if result.checked:
+            candidate.qualification = result
+            stats["qualification_determined"] += 1
     return stats
 
 

@@ -23,7 +23,6 @@ CSV_COLUMNS = [
     "재공고",
     "공동수급",
     "자격판정",
-    "첨부파일 자격확인",
     "참가가능지역",
     "첨부파일수",
     "공고번호",
@@ -72,7 +71,6 @@ def _row(index: int, c: Candidate) -> dict[str, str]:
         "재공고": "Y" if c.is_re_notice else "",
         "공동수급": c.joint.label,
         "자격판정": c.qualification.summary,
-        "첨부파일 자격확인": c.qualification_note or "",
         "참가가능지역": ", ".join(c.regions),
         "첨부파일수": str(len(c.notice.attachments)),
         "공고번호": c.notice.notice_no,
@@ -138,8 +136,6 @@ def render_console(candidates: list[Candidate], stats: RunStats) -> str:
         )
         if flags:
             lines.append(f"     {' · '.join(flags)}")
-        if c.qualification_note:
-            lines.append(f"     {c.qualification_note}")
         if c.qualification.missing_groups:
             names = c.qualification.missing_groups[0].allowed_names[:3]
             lines.append(f"     미충족 그룹 예: {', '.join(names)}")
@@ -227,8 +223,6 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 f'<div><span class="label">공고번호:</span> {esc(c.notice.notice_no)}</div>'
                 "</div>"
             )
-            if c.qualification_note:
-                parts.append(f'<div class="fields"><div>{esc(c.qualification_note)}</div></div>')
 
             if c.screen_result.matched_keywords:
                 kwtags = "".join(f'<span class="kwtag">키워드:{esc(k)}</span>' for k in c.screen_result.matched_keywords)

@@ -150,18 +150,18 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.fetch_attachment_text:
-        # 리포트/Supabase 저장보다 먼저 실행한다 — 여기서 채워지는
-        # candidate.qualification_note(자격정보 없음 공고의 첨부파일 대조 결과)가
+        # 리포트/Supabase 저장보다 먼저 실행한다 — 여기서 갈아끼워지는
+        # candidate.qualification(자격정보 없음 공고를 첨부파일로 재판정한 결과)이
         # 리포트와 Supabase 저장 내용에 반영되어야 하기 때문이다.
         from .attachments import save_attachment_texts
 
-        att_stats = save_attachment_texts(candidates, config.output_dir, held_names=config.held_names)
+        held_codes = qualify.load_held_codes(config.held_raw)
+        att_stats = save_attachment_texts(candidates, config.output_dir, held_codes=held_codes)
         print(
             f"첨부파일 텍스트 추출: 시도 {att_stats['attempted']}건 "
             f"→ 성공 {att_stats['ok']} / 실패 {att_stats['failed']}"
             f" · 참가자격 절 발견 {att_stats['qualification_found']}건"
-            f" · 보유 명단과 자동 대조 확인 {att_stats['qualification_matched']}건"
-            f" · 직접 확인 필요 {att_stats['qualification_manual_check']}건"
+            f" · 자격정보 없음 → 첨부파일로 재판정 {att_stats['qualification_determined']}건"
             f" (저장 위치: {config.output_dir / 'attachment_text'})"
         )
 
