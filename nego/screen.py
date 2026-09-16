@@ -202,6 +202,10 @@ class Schedule:
     qualification_deadline: datetime | None
     joint_agreement_deadline: datetime | None
     bid_deadline: datetime | None
+    # API 세 필드가 전부 비었을 때만 쓰는 최후 수단 — 첨부파일 원문에서 뽑은
+    # 제출기한(`attachments.save_attachment_texts` → `schedule_text.extract_deadline`).
+    # API 값이 하나라도 있으면 이 필드는 아예 안 쓰인다.
+    attachment_deadline: datetime | None = None
 
     @property
     def earliest(self) -> tuple[str, datetime] | None:
@@ -211,9 +215,11 @@ class Schedule:
             ("입찰 마감", self.bid_deadline),
         ]
         valid = [(label, dt) for label, dt in candidates if dt is not None]
-        if not valid:
-            return None
-        return min(valid, key=lambda pair: pair[1])
+        if valid:
+            return min(valid, key=lambda pair: pair[1])
+        if self.attachment_deadline is not None:
+            return ("첨부파일 제출기한", self.attachment_deadline)
+        return None
 
     def days_left(self, now: datetime) -> int | None:
         earliest = self.earliest

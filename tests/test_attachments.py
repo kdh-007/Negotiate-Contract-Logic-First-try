@@ -11,6 +11,7 @@ import tempfile
 import unittest
 import unittest.mock
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -27,6 +28,7 @@ from nego.attachments import (  # noqa: E402
     save_attachment_texts,
 )
 from nego.models import notice_from_raw  # noqa: E402
+from nego.screen import Schedule  # noqa: E402
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "attachments"
 
@@ -467,14 +469,17 @@ class _FakeQualification:
 
 
 class _FakeCandidate:
-    """save_attachment_texts는 candidate.notice/.qualification만 본다 —
-    pipeline.Candidate 전체를 안 만들어도 된다. checked=True가 기본값이라
+    """save_attachment_texts는 candidate.notice/.qualification/.schedule[/.days_left]만
+    본다 — pipeline.Candidate 전체를 안 만들어도 된다. checked=True가 기본값이라
     held_codes를 넘겨도 (API로 이미 판정됐다고 보고) 재판정을 시도하지 않는다.
-    """
+    schedule을 안 주면(getattr 기본값 None) 일정 보충도 시도하지 않는다. days_left는
+    인스턴스에 직접 세팅해야만(hasattr) 일정 보충 후 다시 계산해 넣는다."""
 
-    def __init__(self, notice, checked: bool = True):
+    def __init__(self, notice, checked: bool = True, schedule=None):
         self.notice = notice
         self.qualification = _FakeQualification(checked)
+        if schedule is not None:
+            self.schedule = schedule
 
 
 class TestSaveAttachmentTexts(unittest.TestCase):
@@ -502,6 +507,7 @@ class TestSaveAttachmentTexts(unittest.TestCase):
                     "failed": 0,
                     "qualification_found": 1,
                     "qualification_determined": 0,
+                    "deadline_determined": 0,
                 },
             )
 
@@ -648,6 +654,107 @@ class TestSaveAttachmentTexts(unittest.TestCase):
 
         self.assertEqual(stats["qualification_determined"], 0)
         self.assertIs(candidate.qualification, original_qualification)
+
+    def test_fills_attachment_deadline_when_api_schedule_fully_empty(self):
+        """API의 마감 세 필드가 전부 비어 '일정 미상'인 공고는 첨부파일에서 찾은
+        제출기한으로 schedule.attachment_deadline을 채운다(실측: 경상남도관광재단
+        「K-거상」공고 R26BK01707504 — 세 필드 모두 없지만 첨부 제안요청서에
+        "제출기간 : 2026. 9. 14.(월) 9:00~18:00"가 명시돼 있었다)."""
+        data = _build_hwpx(
+            [
+                "2. 입찰관련 일시 및 장소",
+                "다. 기본서류 및 제안서 제출일시(반드시 방문제출)",
+                "- 제출기간 : 2026. 9. 14.(월) 9:00~18:00 (점심시간 12:00~13:00 접수 불가)",
+            ]
+        )
+        raw = {
+            "bidNtceNo": "R26TEST0004",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고4",
+            "ntceSpecFileNm1": "a.hwpx",
+            "ntceSpecDocUrl1": "https://example.com/a.hwpx",
+        }
+        notice = notice_from_raw(raw, "용역")
+        session = FakeSession(data)
+        schedule = Schedule(qualification_deadline=None, joint_agreement_deadline=None, bid_deadline=None)
+        candidate = _FakeCandidate(notice, schedule=schedule)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = save_attachment_texts([candidate], Path(tmp), timeout=5.0, session=session)
+
+        self.assertEqual(stats["deadline_determined"], 1)
+        self.assertEqual(schedule.attachment_deadline, datetime(2026, 9, 14, 18, 0))
+        self.assertEqual(schedule.earliest, ("첨부파일 제출기한", datetime(2026, 9, 14, 18, 0)))
+
+    def test_days_left_recomputed_after_attachment_deadline_filled(self):
+        """days_left는 후보 산출 시점에 미리 계산돼 있어(원래 일정 미상이라 None) —
+        attachment_deadline을 채운 뒤 다시 계산하지 않으면 '마감/일정'엔 새 날짜가
+        뜨는데 '잔여일수'는 여전히 빈 채로 어긋난다."""
+        data = _build_hwpx(["- 제출기한 : 2026. 9. 14.(월) 18:00"])
+        raw = {
+            "bidNtceNo": "R26TEST0007",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고7",
+            "ntceSpecFileNm1": "a.hwpx",
+            "ntceSpecDocUrl1": "https://example.com/a.hwpx",
+        }
+        notice = notice_from_raw(raw, "용역")
+        session = FakeSession(data)
+        schedule = Schedule(qualification_deadline=None, joint_agreement_deadline=None, bid_deadline=None)
+        candidate = _FakeCandidate(notice, schedule=schedule)
+        candidate.days_left = None  # 산출 시점엔 '일정 미상'이라 None이었다고 가정
+
+        with tempfile.TemporaryDirectory() as tmp:
+            save_attachment_texts(
+                [candidate], Path(tmp), timeout=5.0, session=session, now=datetime(2026, 9, 10)
+            )
+
+        self.assertEqual(candidate.days_left, 4)
+
+    def test_attachment_deadline_untouched_when_api_schedule_already_known(self):
+        """API가 이미 마감일자를 하나라도 준 공고는 첨부파일 원문을 뒤지지 않는다."""
+        data = _build_hwpx(["- 제출기간 : 2026. 9. 14.(월) 9:00~18:00"])
+        raw = {
+            "bidNtceNo": "R26TEST0005",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고5",
+            "ntceSpecFileNm1": "a.hwpx",
+            "ntceSpecDocUrl1": "https://example.com/a.hwpx",
+        }
+        notice = notice_from_raw(raw, "용역")
+        session = FakeSession(data)
+        schedule = Schedule(
+            qualification_deadline=None,
+            joint_agreement_deadline=None,
+            bid_deadline=datetime(2026, 9, 20, 18, 0),
+        )
+        candidate = _FakeCandidate(notice, schedule=schedule)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = save_attachment_texts([candidate], Path(tmp), timeout=5.0, session=session)
+
+        self.assertEqual(stats["deadline_determined"], 0)
+        self.assertIsNone(schedule.attachment_deadline)
+
+    def test_attachment_deadline_stays_none_when_no_deadline_text_found(self):
+        data = _build_hwpx(["과업 내용은 별첨 과업지시서를 참조합니다."])
+        raw = {
+            "bidNtceNo": "R26TEST0006",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고6",
+            "ntceSpecFileNm1": "a.hwpx",
+            "ntceSpecDocUrl1": "https://example.com/a.hwpx",
+        }
+        notice = notice_from_raw(raw, "용역")
+        session = FakeSession(data)
+        schedule = Schedule(qualification_deadline=None, joint_agreement_deadline=None, bid_deadline=None)
+        candidate = _FakeCandidate(notice, schedule=schedule)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = save_attachment_texts([candidate], Path(tmp), timeout=5.0, session=session)
+
+        self.assertEqual(stats["deadline_determined"], 0)
+        self.assertIsNone(schedule.attachment_deadline)
 
 
 if __name__ == "__main__":
