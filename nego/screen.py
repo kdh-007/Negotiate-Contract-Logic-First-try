@@ -10,6 +10,15 @@
     함께 있을 때만 인정 (단독 매칭은 결과에서 제외)
   - 코드+키워드 둘 다 → '강력추천', 하나만 → '참고용'
   - 키워드 비교 시 공백은 무시 ("운영 용역" == "운영용역")
+
+**해외 전시회 한국관/단체관 판별** — 기존 시스템에는 없던 신규 규칙(2026-09
+결정). "한국관"이라는 단어만 보고 국내 공고로 오인하기 쉽다(실측:
+R26BK01717819 UAE 두바이 의료기기전시회, R26BK01714892 두바이 — 둘 다
+해외 개최인데 "한국관" 제목 때문에 국내로 오인됨). "전시회/박람회/엑스포"
++ "한국관/단체관"이 제목에 같이 있으면 해외 부스 설치 공고로 보고 자동
+제외한다. 단, 회사가 실제로 확장 중인 몽골만 예외 — 자동 제외 대신
+플래그(🌐)만 남겨 담당자가 직접 확인하게 한다(이땐 통상적인 키워드/코드
+불일치 제외도 건너뛴다 — 플래그가 붙는데 조용히 빠지면 안 되므로).
 """
 
 from __future__ import annotations
@@ -43,6 +52,8 @@ class ScreenResult:
     matched_industry_codes: list[str] = field(default_factory=list)
     excluded_by: str | None = None
     excluded_reason: str | None = None
+    # 해외 전시회 한국관/단체관인데 개최지가 몽골이라 자동 제외 대신 통과시킨 경우.
+    overseas_flag: bool = False
 
 
 def _match_exclude(notice: Notice, exclude_keywords: list[str]) -> str | None:
@@ -56,6 +67,23 @@ def _match_exclude(notice: Notice, exclude_keywords: list[str]) -> str | None:
 def _match_keywords(notice: Notice, keywords: list[str]) -> list[str]:
     haystack = _squash(notice.title) + _squash(notice.product_class_name)
     return [w for w in keywords if _squash(w) and _squash(w) in haystack]
+
+
+_OVERSEAS_EVENT_RE = re.compile(r"전시회|박람회|엑스포")
+_KOREA_PAVILION_RE = re.compile(r"한국관|단체관")
+_MONGOLIA_RE = re.compile(r"몽골")
+
+
+def _is_overseas_exhibition_booth(notice: Notice) -> bool:
+    """해외 전시회·박람회·엑스포에 한국 기업이 참가할 때 짓는 한국관/단체관
+    부스 설치 공고인지 제목으로 판별한다."""
+    haystack = _squash(notice.title) + _squash(notice.product_class_name)
+    return bool(_OVERSEAS_EVENT_RE.search(haystack) and _KOREA_PAVILION_RE.search(haystack))
+
+
+def _is_mongolia(notice: Notice) -> bool:
+    haystack = _squash(notice.title) + _squash(notice.product_class_name)
+    return bool(_MONGOLIA_RE.search(haystack))
 
 
 def _match_codes(notice: Notice, config: ScreenConfig) -> tuple[list[str], list[str]]:
@@ -83,6 +111,16 @@ def screen(notice: Notice, config: ScreenConfig) -> ScreenResult:
             excluded_reason=excluded_word,
         )
 
+    overseas_booth = _is_overseas_exhibition_booth(notice)
+    mongolia = overseas_booth and _is_mongolia(notice)
+    if overseas_booth and not mongolia:
+        return ScreenResult(
+            matched=False,
+            confidence=None,
+            excluded_by="해외개최",
+            excluded_reason="해외 전시회·박람회·엑스포 한국관/단체관 — 국내 공고 아님",
+        )
+
     budget = notice.budget
     if config.min_budget_amount is not None and budget is not None and budget < config.min_budget_amount:
         return ScreenResult(
@@ -95,8 +133,10 @@ def screen(notice: Notice, config: ScreenConfig) -> ScreenResult:
     product_hits, industry_hits = _match_codes(notice, config)
     keyword_hits = _match_keywords(notice, config.keywords)
 
-    # 업종코드 단독 매칭은 결과에 포함하지 않는다 (기존 정책).
-    if not product_hits and not keyword_hits:
+    # 업종코드 단독 매칭은 결과에 포함하지 않는다 (기존 정책). 단, 몽골 해외관은
+    # 키워드·코드가 하나도 안 맞아도 조용히 빼지 않는다 — 플래그를 달아 사람이
+    # 보게 하는 게 목적이라 "미매칭"으로 걸러지면 그 목적 자체가 무산된다.
+    if not product_hits and not keyword_hits and not mongolia:
         return ScreenResult(
             matched=False,
             confidence=None,
@@ -111,6 +151,7 @@ def screen(notice: Notice, config: ScreenConfig) -> ScreenResult:
         matched_keywords=keyword_hits,
         matched_product_codes=product_hits,
         matched_industry_codes=industry_hits,
+        overseas_flag=mongolia,
     )
 
 

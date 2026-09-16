@@ -278,6 +278,41 @@ class TestScreen(unittest.TestCase):
         result = self._screen(fixtures.notice("X", title="○○ 과 학 관 전시물"))
         self.assertTrue(result.matched)
 
+    def test_overseas_exhibition_korea_pavilion_is_excluded(self):
+        """실측: R26BK01717819(UAE 두바이 의료기기전시회), R26BK01714892(두바이) —
+        둘 다 "한국관" 때문에 국내 공고로 오인됐지만 실제로는 해외 개최다."""
+        result = self._screen(
+            fixtures.notice("X", title="2027 UAE 두바이 의료기기전시회 한국관 전시디자인설치공사 입찰")
+        )
+        self.assertFalse(result.matched)
+        self.assertEqual(result.excluded_by, "해외개최")
+
+    def test_overseas_exhibition_without_korea_pavilion_is_unaffected(self):
+        """"전시회/박람회/엑스포"만으로는 안 걸린다 — "한국관/단체관"이 같이 있어야 한다."""
+        result = self._screen(fixtures.notice("X", title="○○과학관 특별전시회 운영 박람회 홍보"))
+        self.assertNotEqual(result.excluded_by, "해외개최")
+
+    def test_domestic_exhibition_design_notice_is_unaffected(self):
+        """일반 국내 전시디자인 공고는 "한국관/단체관" 문구가 없으니 그대로 통과해야 한다."""
+        result = self._screen(fixtures.notice("X", title="○○박물관 상설전시관 전시디자인 제작 설치"))
+        self.assertTrue(result.matched)
+        self.assertFalse(result.overseas_flag)
+
+    def test_mongolia_korea_pavilion_is_flagged_not_excluded(self):
+        """회사가 실제로 확장 중인 몽골은 예외 — 배제하지 않고 플래그만 남긴다."""
+        result = self._screen(fixtures.notice("X", title="2026 몽골 울란바토르 국제산업박람회 한국관 조성"))
+        self.assertTrue(result.matched, "몽골은 키워드/코드 불일치로도 배제되면 안 된다")
+        self.assertTrue(result.overseas_flag)
+        self.assertIsNone(result.excluded_by)
+
+    def test_mongolia_korea_pavilion_with_no_other_match_is_still_surfaced(self):
+        """몽골 해외관은 등록된 업무 키워드가 하나도 없어도(=원래는 '미매칭'으로
+        걸러질 상황) 플래그를 위해 강제로 통과시킨다."""
+        result = self._screen(fixtures.notice("X", title="2026 몽골 울란바토르 산업박람회 단체관 설치"))
+        self.assertTrue(result.matched)
+        self.assertTrue(result.overseas_flag)
+        self.assertEqual(result.matched_keywords, [])
+
 
 class TestSchedule(unittest.TestCase):
     def test_earliest_deadline_is_chosen(self):
