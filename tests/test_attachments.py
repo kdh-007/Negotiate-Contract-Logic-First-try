@@ -466,7 +466,14 @@ class TestSaveAttachmentTexts(unittest.TestCase):
 
             self.assertEqual(
                 stats,
-                {"attempted": 1, "ok": 1, "failed": 0, "qualification_found": 1, "qualification_matched": 0},
+                {
+                    "attempted": 1,
+                    "ok": 1,
+                    "failed": 0,
+                    "qualification_found": 1,
+                    "qualification_matched": 0,
+                    "qualification_manual_check": 0,
+                },
             )
 
             text_dir = output_dir / "attachment_text"
@@ -566,6 +573,66 @@ class TestSaveAttachmentTexts(unittest.TestCase):
 
         self.assertEqual(stats["qualification_matched"], 0)
         self.assertIsNone(candidate.qualification_note)
+
+    def test_notes_manual_check_when_no_qualification_section_found(self):
+        """첨부파일은 정상 처리됐지만 참가자격 절 자체가 없는 문서(과업지시서 등)도
+        '직접 확인 필요'로 남긴다 — 조용히 넘어가면 사람이 놓칠 수 있다."""
+        fixture = FIXTURES_DIR / "jeongseon_culture_center_task_order.hwpx"
+        raw = {
+            "bidNtceNo": "R26TEST0002",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고2",
+            "ntceSpecFileNm1": fixture.name,
+            "ntceSpecDocUrl1": f"file://{fixture}",
+        }
+        notice = notice_from_raw(raw, "용역")
+        session = FakeSession(fixture.read_bytes())
+        candidate = _FakeCandidate(notice, checked=False)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = save_attachment_texts(
+                [candidate], Path(tmp), timeout=5.0, session=session, held_names=["실내건축공사업"]
+            )
+
+        self.assertEqual(stats["qualification_manual_check"], 1)
+        self.assertIn("참가자격 절을 찾지 못함", candidate.qualification_note)
+        self.assertIn("직접 확인 필요", candidate.qualification_note)
+
+    def test_notes_manual_check_when_download_fails(self):
+        att = {"seq": "1", "file_name": "a.hwpx", "url": "https://example.com/a.hwpx", "ext": "hwpx"}
+        raw = {
+            "bidNtceNo": "R26TEST0003",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고3",
+            "ntceSpecFileNm1": att["file_name"],
+            "ntceSpecDocUrl1": att["url"],
+        }
+        notice = notice_from_raw(raw, "용역")
+        session = FakeSession(b"", status_code=404)
+        candidate = _FakeCandidate(notice, checked=False)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = save_attachment_texts(
+                [candidate], Path(tmp), timeout=5.0, session=session, held_names=["실내건축공사업"]
+            )
+
+        self.assertEqual(stats["qualification_manual_check"], 1)
+        self.assertIn("다운로드/파싱 실패", candidate.qualification_note)
+        self.assertIn("직접 확인 필요", candidate.qualification_note)
+
+    def test_notes_manual_check_when_no_attachments(self):
+        raw = {"bidNtceNo": "R26TEST0004", "bidNtceOrd": "000", "bidNtceNm": "테스트 공고4"}
+        notice = notice_from_raw(raw, "용역")
+        candidate = _FakeCandidate(notice, checked=False)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = save_attachment_texts(
+                [candidate], Path(tmp), timeout=5.0, session=FakeSession(b""), held_names=["실내건축공사업"]
+            )
+
+        self.assertEqual(stats["qualification_manual_check"], 1)
+        self.assertIn("첨부파일이 없음", candidate.qualification_note)
+        self.assertIn("직접 확인 필요", candidate.qualification_note)
 
 
 if __name__ == "__main__":

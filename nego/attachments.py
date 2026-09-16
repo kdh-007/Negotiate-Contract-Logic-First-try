@@ -167,8 +167,11 @@ def save_attachment_texts(
     is False`)에 한해 찾은 참가자격 항목을 보유 명단과 대조해
     `candidate.qualification_note`에 결과를 남긴다 — 매일 사람이 일일이
     "자격정보 없음"인 공고를 열어 대조하던 수고를 줄이기 위함이다. 자유 텍스트라
-    판정(제외)까지는 하지 않는다: 일치하면 확인됨을, 못 찾으면 직접 확인이
-    필요함을 남긴다(`qualify.match_from_attachment_text` 참고).
+    판정(제외)까지는 하지 않는다: 일치하면 확인됨을 남기고, 그 외의 모든
+    경우 — 절은 찾았지만 안 맞음 / 절 자체를 못 찾음 / 첨부파일 다운로드·파싱
+    실패 / 첨부파일이 아예 없음 — 는 전부 "직접 확인 필요"로 남긴다. 사람이
+    "왜 확인이 필요한지" 구분할 수 있게 사유만 다르게 적는다
+    (`qualify.match_from_attachment_text` 참고).
     """
     from .qualification_text import find_qualification_section
     from .qualify import match_from_attachment_text
@@ -177,20 +180,31 @@ def save_attachment_texts(
     text_dir.mkdir(parents=True, exist_ok=True)
     session = session or requests.Session()
 
-    stats = {"attempted": 0, "ok": 0, "failed": 0, "qualification_found": 0, "qualification_matched": 0}
+    stats = {
+        "attempted": 0,
+        "ok": 0,
+        "failed": 0,
+        "qualification_found": 0,
+        "qualification_matched": 0,
+        "qualification_manual_check": 0,
+    }
     for candidate in candidates:
         notice = candidate.notice
         qualification = getattr(candidate, "qualification", None)
         needs_check = held_names is not None and qualification is not None and not qualification.checked
         section_found = False
         matched_text: str | None = None
+        any_attempted = False
+        any_extracted_ok = False
 
         for result in collect_notice_attachment_texts(session, notice, timeout=timeout):
+            any_attempted = True
             stats["attempted"] += 1
             if not result.ok:
                 log.warning("첨부파일 추출 실패 [%s] %s: %s", notice.notice_no, result.file_name, result.error)
                 stats["failed"] += 1
                 continue
+            any_extracted_ok = True
             stats["ok"] += 1
             base = _safe_filename(f"{notice.notice_no}_{notice.notice_ord}_{result.seq}_{result.file_name}")
             (text_dir / f"{base}.txt").write_text(result.text, encoding="utf-8")
@@ -205,14 +219,26 @@ def save_attachment_texts(
                 if needs_check and matched_text is None:
                     matched_text = match_from_attachment_text(section.items, held_names)
 
-        if needs_check:
-            if matched_text:
-                candidate.qualification_note = f"첨부파일에서 자격 확인됨 — \"{matched_text.strip()[:100]}\""
-                stats["qualification_matched"] += 1
-            elif section_found:
-                candidate.qualification_note = (
-                    "⚠ 첨부파일에 참가자격 조건이 있으나 보유 명단과 자동 대조 안 됨 — 원문 직접 확인 필요"
-                )
+        if not needs_check:
+            continue
+
+        if matched_text:
+            candidate.qualification_note = f"첨부파일에서 자격 확인됨 — \"{matched_text.strip()[:100]}\""
+            stats["qualification_matched"] += 1
+        elif section_found:
+            candidate.qualification_note = (
+                "⚠ 첨부파일에 참가자격 조건이 있으나 보유 명단과 자동 대조 안 됨 — 원문 직접 확인 필요"
+            )
+            stats["qualification_manual_check"] += 1
+        elif not any_attempted:
+            candidate.qualification_note = "⚠ 첨부파일이 없음 — 직접 확인 필요"
+            stats["qualification_manual_check"] += 1
+        elif not any_extracted_ok:
+            candidate.qualification_note = "⚠ 첨부파일 다운로드/파싱 실패 — 직접 확인 필요"
+            stats["qualification_manual_check"] += 1
+        else:
+            candidate.qualification_note = "⚠ 첨부파일에서 참가자격 절을 찾지 못함 — 직접 확인 필요"
+            stats["qualification_manual_check"] += 1
     return stats
 
 

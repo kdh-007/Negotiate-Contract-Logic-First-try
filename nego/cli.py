@@ -161,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
             f"→ 성공 {att_stats['ok']} / 실패 {att_stats['failed']}"
             f" · 참가자격 절 발견 {att_stats['qualification_found']}건"
             f" · 보유 명단과 자동 대조 확인 {att_stats['qualification_matched']}건"
+            f" · 직접 확인 필요 {att_stats['qualification_manual_check']}건"
             f" (저장 위치: {config.output_dir / 'attachment_text'})"
         )
 
