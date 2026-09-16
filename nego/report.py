@@ -23,6 +23,7 @@ CSV_COLUMNS = [
     "재공고",
     "공동수급",
     "자격판정",
+    "첨부파일 자격확인",
     "참가가능지역",
     "첨부파일수",
     "공고번호",
@@ -59,6 +60,7 @@ def _row(index: int, c: Candidate) -> dict[str, str]:
         "재공고": "Y" if c.is_re_notice else "",
         "공동수급": c.joint.label,
         "자격판정": c.qualification.summary,
+        "첨부파일 자격확인": c.qualification_note or "",
         "참가가능지역": ", ".join(c.regions),
         "첨부파일수": str(len(c.notice.attachments)),
         "공고번호": c.notice.notice_no,
@@ -124,6 +126,8 @@ def render_console(candidates: list[Candidate], stats: RunStats) -> str:
         )
         if flags:
             lines.append(f"     {' · '.join(flags)}")
+        if c.qualification_note:
+            lines.append(f"     {c.qualification_note}")
         if c.qualification.missing_groups:
             names = c.qualification.missing_groups[0].allowed_names[:3]
             lines.append(f"     미충족 그룹 예: {', '.join(names)}")
@@ -207,6 +211,9 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 tags.append('<span class="tag">직찰(비전자)</span>')
             if not c.joint.allowed:
                 tags.append('<span class="tag">공동수급 불허</span>')
+            if c.qualification_note:
+                cls = "s" if "확인됨" in c.qualification_note else "d"
+                tags.append(f'<span class="tag {cls}">{esc(c.qualification_note)}</span>')
 
             parts.append('<div class="card">')
             parts.append(f"<h2>{title}</h2>")

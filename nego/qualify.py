@@ -125,6 +125,22 @@ def evaluate(groups: list[LicenseGroup], held_names: list[str]) -> Qualification
     )
 
 
+def match_from_attachment_text(items: list[str], held_names: list[str]) -> str | None:
+    """첨부파일에서 뽑은 참가자격 항목 중 보유 명단과 일치하는 것을 찾는다.
+
+    API 면허제한정보가 비어 있어(`checked=False`) 판정을 못 한 공고를 사람이 원문
+    전체를 열어 확인하는 수고를 줄이기 위한 보조 확인이다. 자유 텍스트라 그룹(OR)
+    구조를 알 수 없으므로 이 결과로 **제외 판정을 내리지는 않는다** — 일치하는
+    항목을 찾으면 그 문장을 반환해 확인됐음을 알리고, 못 찾으면 None을 반환해
+    (제외가 아니라) 원문 확인이 필요함을 알리는 용도로만 쓴다.
+    """
+    for item in items:
+        for held in held_names:
+            if held and held in item:
+                return item
+    return None
+
+
 def load_held_names(held_config: dict) -> list[str]:
     names: list[str] = []
     for key in ("heldProducts", "heldIndustries"):

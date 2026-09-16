@@ -161,6 +161,16 @@ class TestQualification(unittest.TestCase):
         self.assertEqual(result.missing_count, 2)
         self.assertFalse(result.passes, "2개 이상 미충족이면 제외 — 기존 규칙")
 
+    def test_match_from_attachment_text_finds_held_name_in_item(self):
+        items = ["가. 「건설산업기본법」에 따른 실내건축공사업 면허 보유업체", "나. 신용평가등급 B등급 이상"]
+        match = qualify.match_from_attachment_text(items, self.held)
+        self.assertIsNotNone(match)
+        self.assertIn("실내건축공사업", match)
+
+    def test_match_from_attachment_text_returns_none_when_no_match(self):
+        items = ["가. 전기공사업 면허 보유업체", "나. 신용평가등급 B등급 이상"]
+        self.assertIsNone(qualify.match_from_attachment_text(items, self.held))
+
 
 class TestScreen(unittest.TestCase):
     config = screen.ScreenConfig(

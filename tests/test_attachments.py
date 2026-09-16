@@ -430,11 +430,21 @@ class TestFetchAttachmentText(unittest.TestCase):
         self.assertIn("404", result.error)
 
 
-class _FakeCandidate:
-    """save_attachment_texts는 candidate.notice만 본다 — pipeline.Candidate 전체를 안 만들어도 된다."""
+class _FakeQualification:
+    def __init__(self, checked: bool):
+        self.checked = checked
 
-    def __init__(self, notice):
+
+class _FakeCandidate:
+    """save_attachment_texts는 candidate.notice/.qualification만 본다 —
+    pipeline.Candidate 전체를 안 만들어도 된다. checked=True가 기본값이라
+    held_names를 넘겨도 (API로 이미 판정됐다고 보고) 대조를 시도하지 않는다.
+    """
+
+    def __init__(self, notice, checked: bool = True):
         self.notice = notice
+        self.qualification = _FakeQualification(checked)
+        self.qualification_note: str | None = None
 
 
 class TestSaveAttachmentTexts(unittest.TestCase):
@@ -454,7 +464,10 @@ class TestSaveAttachmentTexts(unittest.TestCase):
             output_dir = Path(tmp)
             stats = save_attachment_texts([_FakeCandidate(notice)], output_dir, timeout=5.0, session=session)
 
-            self.assertEqual(stats, {"attempted": 1, "ok": 1, "failed": 0, "qualification_found": 1})
+            self.assertEqual(
+                stats,
+                {"attempted": 1, "ok": 1, "failed": 0, "qualification_found": 1, "qualification_matched": 0},
+            )
 
             text_dir = output_dir / "attachment_text"
             written = {p.name for p in text_dir.iterdir()}
@@ -484,6 +497,75 @@ class TestSaveAttachmentTexts(unittest.TestCase):
             self.assertEqual(stats["qualification_found"], 0)
             written = {p.name for p in (output_dir / "attachment_text").iterdir()}
             self.assertEqual(len(written), 1)  # .txt만, _참가자격.txt는 없음
+
+    def test_notes_match_when_held_name_appears_in_qualification_section(self):
+        """API 자격정보가 없는(checked=False) 공고는 첨부파일 참가자격 절과
+        보유 명단을 대조해 candidate.qualification_note에 확인됨을 남긴다."""
+        fixture = FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx"
+        raw = {
+            "bidNtceNo": "R26TEST0001",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고",
+            "ntceSpecFileNm1": fixture.name,
+            "ntceSpecDocUrl1": f"file://{fixture}",
+        }
+        notice = notice_from_raw(raw, "용역")
+        session = FakeSession(fixture.read_bytes())
+        candidate = _FakeCandidate(notice, checked=False)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = save_attachment_texts(
+                [candidate], Path(tmp), timeout=5.0, session=session, held_names=["실내건축공사업"]
+            )
+
+        self.assertEqual(stats["qualification_matched"], 1)
+        self.assertIsNotNone(candidate.qualification_note)
+        self.assertIn("실내건축공사업", candidate.qualification_note)
+        self.assertIn("확인됨", candidate.qualification_note)
+
+    def test_notes_manual_check_needed_when_no_held_name_matches(self):
+        fixture = FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx"
+        raw = {
+            "bidNtceNo": "R26TEST0001",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고",
+            "ntceSpecFileNm1": fixture.name,
+            "ntceSpecDocUrl1": f"file://{fixture}",
+        }
+        notice = notice_from_raw(raw, "용역")
+        session = FakeSession(fixture.read_bytes())
+        candidate = _FakeCandidate(notice, checked=False)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = save_attachment_texts(
+                [candidate], Path(tmp), timeout=5.0, session=session, held_names=["전기공사업"]
+            )
+
+        self.assertEqual(stats["qualification_matched"], 0)
+        self.assertIsNotNone(candidate.qualification_note)
+        self.assertIn("직접 확인 필요", candidate.qualification_note)
+
+    def test_no_note_when_already_checked_by_api(self):
+        """API에서 이미 자격정보를 받은(checked=True) 공고는 대조를 건너뛴다."""
+        fixture = FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx"
+        raw = {
+            "bidNtceNo": "R26TEST0001",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고",
+            "ntceSpecFileNm1": fixture.name,
+            "ntceSpecDocUrl1": f"file://{fixture}",
+        }
+        notice = notice_from_raw(raw, "용역")
+        session = FakeSession(fixture.read_bytes())
+        candidate = _FakeCandidate(notice, checked=True)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = save_attachment_texts(
+                [candidate], Path(tmp), timeout=5.0, session=session, held_names=["실내건축공사업"]
+            )
+
+        self.assertEqual(stats["qualification_matched"], 0)
+        self.assertIsNone(candidate.qualification_note)
 
 
 if __name__ == "__main__":

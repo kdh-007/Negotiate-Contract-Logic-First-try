@@ -40,6 +40,9 @@ class Candidate:
     variant: str | None = None
     is_candidate: bool = True
     excluded_reason: str | None = None
+    # `--fetch-attachment-text`로 API에 자격정보가 없는(qualification.checked=False)
+    # 공고의 첨부파일을 열어봤을 때의 보조 확인 결과. attachments.save_attachment_texts가 채운다.
+    qualification_note: str | None = None
 
     @property
     def gate_passed(self) -> bool:

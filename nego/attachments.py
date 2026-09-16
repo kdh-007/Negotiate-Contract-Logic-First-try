@@ -150,6 +150,7 @@ def save_attachment_texts(
     output_dir: Path,
     timeout: float = 30.0,
     session: requests.Session | None = None,
+    held_names: list[str] | None = None,
 ) -> dict[str, int]:
     """후보 공고의 첨부파일을 내려받아 텍스트를 `output_dir/attachment_text/`에 저장한다.
 
@@ -161,16 +162,29 @@ def save_attachment_texts(
     비어 있는 공고(발주기관이 구조화 등록을 안 한 경우, 실측: 부안청자박물관
     R26BK01719858)를 사람이 원문 전체를 뒤지지 않고 바로 확인하기 위함이다.
     절을 못 찾아도 실패로 세지 않는다 — 애초에 없는 문서가 대부분이다.
+
+    `held_names`를 주면, API 자격정보가 없는 공고(`candidate.qualification.checked
+    is False`)에 한해 찾은 참가자격 항목을 보유 명단과 대조해
+    `candidate.qualification_note`에 결과를 남긴다 — 매일 사람이 일일이
+    "자격정보 없음"인 공고를 열어 대조하던 수고를 줄이기 위함이다. 자유 텍스트라
+    판정(제외)까지는 하지 않는다: 일치하면 확인됨을, 못 찾으면 직접 확인이
+    필요함을 남긴다(`qualify.match_from_attachment_text` 참고).
     """
     from .qualification_text import find_qualification_section
+    from .qualify import match_from_attachment_text
 
     text_dir = output_dir / "attachment_text"
     text_dir.mkdir(parents=True, exist_ok=True)
     session = session or requests.Session()
 
-    stats = {"attempted": 0, "ok": 0, "failed": 0, "qualification_found": 0}
+    stats = {"attempted": 0, "ok": 0, "failed": 0, "qualification_found": 0, "qualification_matched": 0}
     for candidate in candidates:
         notice = candidate.notice
+        qualification = getattr(candidate, "qualification", None)
+        needs_check = held_names is not None and qualification is not None and not qualification.checked
+        section_found = False
+        matched_text: str | None = None
+
         for result in collect_notice_attachment_texts(session, notice, timeout=timeout):
             stats["attempted"] += 1
             if not result.ok:
@@ -184,8 +198,21 @@ def save_attachment_texts(
             section = find_qualification_section(result.text)
             if section is not None:
                 stats["qualification_found"] += 1
+                section_found = True
                 summary = section.heading + "\n\n" + "\n\n".join(section.items)
                 (text_dir / f"{base}_참가자격.txt").write_text(summary, encoding="utf-8")
+
+                if needs_check and matched_text is None:
+                    matched_text = match_from_attachment_text(section.items, held_names)
+
+        if needs_check:
+            if matched_text:
+                candidate.qualification_note = f"첨부파일에서 자격 확인됨 — \"{matched_text.strip()[:100]}\""
+                stats["qualification_matched"] += 1
+            elif section_found:
+                candidate.qualification_note = (
+                    "⚠ 첨부파일에 참가자격 조건이 있으나 보유 명단과 자동 대조 안 됨 — 원문 직접 확인 필요"
+                )
     return stats
 
 
