@@ -140,7 +140,15 @@ def evaluate(groups: list[LicenseGroup], held_names: list[str]) -> Qualification
 # "세부품명번호 10자리, 4924159701"처럼 자릿수 설명을 코드 앞에 끼워 넣는다 —
 # 그 필러를 건너뛰지 않으면 "10"을 코드로 잘못 잡는다. 업종코드 4자리,
 # 세부품명번호 10자리라 4~10자리로 캡처를 제한해 이런 오탐도 같이 막는다.
-_CODE_REQUIREMENT_RE = re.compile(r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?([0-9]{4,10})")
+#
+# 두 번째 대안은 키워드 없이 "이름(코드10자리)"만 쓰는 문서용이다(실측: 두바이
+# 의료기기전시회 한국관 공고문 — "전시부스설치서비스(7215409901)"). 정확히
+# 10자리로 제한해 일반 괄호 안 숫자(연도·조항 번호 등)를 코드로 오인하지
+# 않게 한다.
+_CODE_REQUIREMENT_RE = re.compile(
+    r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?(?P<code>[0-9]{4,10})"
+    r"|\((?P<bare_code>[0-9]{10})\)"
+)
 _OR_MARKER_RE = re.compile(r"어느\s*하나")
 # 이름표에서 떼어낼 법령 인용 연결어. 실측 문서마다 표현이 달라 여러 개를 다룬다.
 _LABEL_CONNECTOR_RE = re.compile(r"(?:에\s*따른|에\s*의하여|규정에\s*따라)\s*")
@@ -161,7 +169,7 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
     results = []
     for line in item.splitlines():
         for match in _CODE_REQUIREMENT_RE.finditer(line):
-            code = match.group(1)
+            code = match.group("code") or match.group("bare_code")
             prefix = line[: match.start()]
             inside_paren = prefix.rsplit("(", 1)[1].strip(" ,") if "(" in prefix else ""
             if inside_paren and len(inside_paren) <= _MAX_LABEL_LEN:
