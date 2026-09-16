@@ -203,6 +203,8 @@ _HTML_HEAD = """<meta charset="utf-8">
            border:1px solid #c9d4e6; background:#eef2f8; color:#2f4f78; }
   .misstag { font-size:0.72rem; padding:2px 9px; border-radius:6px; line-height:1.4;
              border:1px solid #e6b8ae; background:#fdeeea; color:#9a3412; }
+  .passtag { font-size:0.72rem; padding:2px 9px; border-radius:6px; line-height:1.4;
+             border:1px solid #a8c7e6; background:#eaf2fb; color:#1d5a99; }
   .empty { text-align:center; color:var(--muted); padding:48px 0; }
   @media (max-width:520px) { .wrap { padding:20px 16px 48px; } }
 </style>
@@ -262,7 +264,10 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 for g in c.qualification.missing_groups
                 for name in g.allowed_names
             )
-            qualification_html = f"<span>{esc(_qualification_label(c.qualification))}</span>{miss_tags}"
+            label = _qualification_label(c.qualification)
+            label_cls = "passtag" if label == "자격 충족" else None
+            label_html = f'<span class="{label_cls}">{esc(label)}</span>' if label_cls else f"<span>{esc(label)}</span>"
+            qualification_html = f"{label_html}{miss_tags}"
 
             parts.append(f"<h2>{title}</h2>")
             parts.append(
