@@ -200,7 +200,9 @@ MAX_QUERY_DAYS = 30
 class ApiConfig:
     service_key: str
     timeout_sec: float = 30.0
-    max_retries: int = 3
+    # 총 시도 횟수는 max_retries+1. apis.data.go.kr이 간헐적으로 connect timeout을
+    # 내는 게 실측됐고, 이때 재시도로 회복되는 경우가 많아 여유 있게 잡는다.
+    max_retries: int = 9
     retry_delay_sec: float = 1.0
     num_of_rows: int = 999
     max_pages: int = 100
