@@ -51,6 +51,20 @@ class TestFindQualificationSection(unittest.TestCase):
         section = find_qualification_section(text)
         self.assertIn("마지막 절", section.body)
 
+    def test_heading_with_trailing_text_on_same_line_is_matched(self):
+        """실측: 두바이 의료기기전시회 한국관 공고문 — "4. 입찰참가자격 : 안내문"처럼
+        콜론 뒤에 같은 줄로 안내문이 붙어도 절 제목으로 인식해야 한다."""
+        text = (
+            "4. 입찰참가자격 : 아래 자격을 모두 충족하는 경우에만 본 입찰에 참여 가능\n"
+            "o 첫째 요건\n"
+            "o 둘째 요건\n"
+            "5. 다음 절\n여긴 빠져야 함\n"
+        )
+        section = find_qualification_section(text)
+        self.assertIsNotNone(section)
+        self.assertIn("첫째 요건", section.body)
+        self.assertNotIn("빠져야 함", section.body)
+
 
 class TestSplitItems(unittest.TestCase):
     def test_splits_korean_letter_items(self):
@@ -59,6 +73,20 @@ class TestSplitItems(unittest.TestCase):
         self.assertEqual(len(items), 3)
         self.assertTrue(items[0].startswith("가."))
         self.assertTrue(items[1].startswith("나."))
+
+    def test_splits_bullet_items(self):
+        """실측: 두바이 의료기기전시회 한국관 공고문 — "o" 불릿으로 나열된 항목."""
+        body = "o 첫째 요건\no 둘째 요건\no 셋째 요건\n"
+        items = split_items(body)
+        self.assertEqual(len(items), 3)
+        self.assertTrue(items[0].startswith("o 첫째"))
+
+    def test_splits_bullet_items_indented_with_ideographic_space(self):
+        """HWP류 문서는 들여쓰기에 전각 공백(U+3000)을 쓰기도 한다 — 일반
+        공백/탭만 인식하면 이런 문서의 불릿을 통째로 항목 1개로 오인한다."""
+        body = "　o 첫째 요건\n　o 둘째 요건\n"
+        items = split_items(body)
+        self.assertEqual(len(items), 2)
 
     def test_splits_decimal_sub_items(self):
         body = " 3.1. 첫째\n 3.2. 둘째\n"

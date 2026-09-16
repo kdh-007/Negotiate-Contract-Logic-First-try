@@ -193,6 +193,22 @@ class TestQualification(unittest.TestCase):
         self.assertIn("(4924159701)", fail_summary)
         self.assertLess(len(fail_summary), 60, "실측 오류 재현: 문장 전체가 그대로 딸려 나오면 안 된다")
 
+    def test_extract_code_requirements_recognizes_bare_10_digit_code(self):
+        """실측: 두바이 의료기기전시회 한국관 공고문 — "세부품명번호" 키워드 없이
+        "이름(코드)"만 쓴 문서. 정확히 10자리일 때만 코드로 인정해 연도·조항
+        번호 같은 일반 괄호 숫자를 코드로 오인하지 않게 한다."""
+        item = "o 전시부스설치서비스(7215409901) 소지 업체"
+        requirements = qualify._extract_code_requirements(item)
+        self.assertEqual([code for code, _ in requirements], ["7215409901"])
+
+        result = qualify.evaluate_attachment_text([item], held_codes={"7215409901"})
+        self.assertEqual(result.summary, "자격 충족")
+
+    def test_extract_code_requirements_ignores_short_bare_parens(self):
+        """4자리 등 10자리가 아닌 괄호 숫자는(예: 법조문 인용) 코드로 보지 않는다."""
+        item = "o 국가를 당사자로 하는 계약에 관한 법률(2024) 제12조에 따른 자"
+        self.assertEqual(qualify._extract_code_requirements(item), [])
+
     def test_evaluate_attachment_text_or_group_needs_only_one_code(self):
         items = [
             "바. 다음 중 어느 하나의 자격으로 입찰참가 등록한 자\n"
