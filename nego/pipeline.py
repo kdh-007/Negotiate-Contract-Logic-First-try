@@ -86,7 +86,12 @@ def _api_window(now: datetime, lookback_days: int) -> tuple[str, str]:
 def collect_notices(
     client: DataGoKrClient, begin: str, end: str, stats: RunStats
 ) -> list[Notice]:
-    """업무구분 3종을 각각 조회한다. 하나가 실패해도 나머지는 계속 진행한다."""
+    """업무구분 3종을 순서대로 조회한다. 하나라도 재시도를 다 소진해 실패하면
+
+    나머지는 시도하지 않고 즉시 중단한다 — 부분 데이터로 계속 진행하지 않고,
+    위(Actions 워크플로)에서 이 Run을 빨리 실패 처리해 새 Run으로 재시도할 수
+    있게 하기 위함이다.
+    """
     collected: list[Notice] = []
 
     for work_type, operation in F.BID_NOTICE_OPERATIONS.items():
@@ -103,7 +108,7 @@ def collect_notices(
         except ApiError as err:
             log.error("%s 조회 실패: %s", label, err)
             stats.failed_operations.append(label)
-            continue
+            raise
 
         notices = [notice_from_raw(raw, work_type) for raw in raw_items]
         log.info("%s 조회 완료: %d건", label, len(notices))
@@ -183,16 +188,11 @@ def run(config: AppConfig, now: datetime | None = None) -> tuple[list[Candidate]
     stats.period_end = now
     log.info("조회 기간: %s ~ %s", begin, end)
 
+    # collect_notices()가 세 부문 중 하나라도 실패하면 바로 ApiError를 올린다
+    # (부분 데이터로 계속 진행하지 않는다). 여기서 따로 잡지 않고 그대로
+    # cli.py까지 전파해 종료코드 1로 끝나게 둔다 — Actions 워크플로가 그걸 보고
+    # 새 Run으로 재시도한다.
     notices = collect_notices(client, begin, end, stats)
-
-    # 용역/물품/공사 중 하나라도 재시도를 다 소진해 실패하면 부분 데이터로
-    # 리포트를 내지 않고 전체 실행을 실패로 처리한다 — 그래야 위(Actions
-    # 워크플로)에서 이 Run을 중단하고 새 Run으로 재시도할 수 있다.
-    if stats.failed_operations:
-        raise ApiError(
-            "전체조회",
-            f"{', '.join(stats.failed_operations)} 조회가 재시도 끝에 실패했습니다. API 키/네트워크를 확인하세요.",
-        )
 
     license_groups, license_error = qualify.fetch_license_groups(client, begin, end)
     stats.license_error = license_error
