@@ -185,8 +185,14 @@ def run(config: AppConfig, now: datetime | None = None) -> tuple[list[Candidate]
 
     notices = collect_notices(client, begin, end, stats)
 
-    if len(stats.failed_operations) == len(F.BID_NOTICE_OPERATIONS):
-        raise ApiError("전체조회", "업무구분 3종 조회가 모두 실패했습니다. API 키/네트워크를 확인하세요.")
+    # 용역/물품/공사 중 하나라도 재시도를 다 소진해 실패하면 부분 데이터로
+    # 리포트를 내지 않고 전체 실행을 실패로 처리한다 — 그래야 위(Actions
+    # 워크플로)에서 이 Run을 중단하고 새 Run으로 재시도할 수 있다.
+    if stats.failed_operations:
+        raise ApiError(
+            "전체조회",
+            f"{', '.join(stats.failed_operations)} 조회가 재시도 끝에 실패했습니다. API 키/네트워크를 확인하세요.",
+        )
 
     license_groups, license_error = qualify.fetch_license_groups(client, begin, end)
     stats.license_error = license_error

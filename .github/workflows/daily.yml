@@ -17,6 +17,16 @@ on:
         description: "true로 두면 Supabase에 저장하지 않고 리포트만 생성"
         required: false
         default: "false"
+      attempt:
+        description: "재시도 회차 (자동 재시도가 채워넣는 값 — 직접 실행할 땐 비워두면 1)"
+        required: false
+        default: "1"
+
+# 실패 시 같은 워크플로를 workflow_dispatch로 재호출해 새 Run을 큐에 올리려면
+# GITHUB_TOKEN에 actions:write 권한이 있어야 한다.
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   collect:
@@ -42,6 +52,8 @@ jobs:
         run: python -m unittest discover -s tests -t .
 
       - name: 수집 실행
+        id: collect
+        continue-on-error: true
         env:
           NARA_SERVICE_KEY: ${{ secrets.NARA_SERVICE_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -68,3 +80,28 @@ jobs:
           path: output/
           retention-days: 90
           if-no-files-found: ignore
+
+      # 용역/물품/공사 중 하나라도 API 재시도(5회)를 다 소진하면 nego/pipeline.py가
+      # 전체 실행을 실패로 처리한다(부분 데이터로 리포트를 내지 않는다). 그럴 때
+      # 이 Run은 실패로 끝내고, 같은 입력값으로 새 Run을 자동 큐잉해 재시도한다.
+      # attempt를 5회로 제한해 API가 계속 죽어있을 때 무한 재시도하지 않는다.
+      - name: 실패 시 새 Run 재시도 예약
+        if: steps.collect.outcome == 'failure' && fromJSON(github.event.inputs.attempt || '1') < 5
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEXT_ATTEMPT=$(( ${{ github.event.inputs.attempt || '1' }} + 1 ))
+          echo "수집 실패 — ${NEXT_ATTEMPT}번째 시도로 새 Run을 큐에 올립니다."
+          curl -sS -X POST \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/daily.yml/dispatches" \
+            -d "{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"days\":\"${{ github.event.inputs.days || '1' }}\",\"no_supabase\":\"${{ github.event.inputs.no_supabase || 'false' }}\",\"attempt\":\"${NEXT_ATTEMPT}\"}}"
+
+      - name: 재시도 소진 알림
+        if: steps.collect.outcome == 'failure' && !(fromJSON(github.event.inputs.attempt || '1') < 5)
+        run: echo "::error::${{ github.event.inputs.attempt || '1' }}번째 시도에서도 실패 — 최대 재시도(5회) 소진, 자동 재시도를 중단합니다."
+
+      - name: 실패 처리
+        if: steps.collect.outcome == 'failure'
+        run: exit 1
