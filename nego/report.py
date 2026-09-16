@@ -175,7 +175,7 @@ _HTML_HEAD = """<meta charset="utf-8">
   .badge { font-size:0.72rem; padding:2px 10px; border-radius:6px; font-weight:600;
            border:1px solid var(--line); background:#f6f5f2; color:var(--muted); }
   .badge.confidence-strong { border-color:#bfd8c4; background:#eef6f0; color:#2f6b45; }
-  .badge.overseas { border-color:#a8c7e6; background:#eaf2fb; color:#1d5a99; cursor:help;
+  .badge.overseas { border-color:#e6b8ae; background:#fdeeea; color:#9a3412; cursor:help;
                     position:relative; }
   .badge.overseas .tip {
     visibility:hidden; opacity:0; pointer-events:none;
