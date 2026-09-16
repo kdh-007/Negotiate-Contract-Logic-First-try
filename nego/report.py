@@ -55,6 +55,15 @@ def _fmt_kr_datetime(value: datetime | None) -> str:
     return f"{_fmt_kr_date(value)} {ampm} {hour}:{value.minute:02d}:{value.second:02d}"
 
 
+def _qualification_label(q) -> str:
+    """HTML 카드의 '자격판정' 줄에 쓰는 짧은 표시. 미보유 자격명은 이 옆에
+    박스(태그)로 따로 붙이므로 여기엔 넣지 않는다 — CSV/콘솔용 전체 문장은
+    `q.summary`를 그대로 쓴다."""
+    if not q.checked:
+        return q.summary
+    return "자격 충족" if q.missing_count == 0 else "자격 미달"
+
+
 def _row(index: int, c: Candidate) -> dict[str, str]:
     earliest = c.schedule.earliest
     return {
@@ -170,6 +179,9 @@ _HTML_HEAD = """<meta charset="utf-8">
   .kwtags { margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; }
   .kwtag { font-size:0.72rem; padding:2px 9px; border-radius:6px;
            border:1px solid #c9d4e6; background:#eef2f8; color:#2f4f78; }
+  .misstags { display:inline-flex; flex-wrap:wrap; gap:6px; vertical-align:middle; }
+  .misstag { font-size:0.72rem; padding:2px 9px; border-radius:6px;
+             border:1px solid #e6b8ae; background:#fdeeea; color:#9a3412; }
   .empty { text-align:center; color:var(--muted); padding:48px 0; }
   @media (max-width:520px) { .wrap { padding:20px 16px 48px; } }
 </style>
@@ -213,13 +225,22 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 f'<span class="badge">[{esc(c.notice.work_type)}]</span>'
                 "</div>"
             )
+            miss_tags = "".join(
+                f'<span class="misstag">{esc(name)}</span>'
+                for g in c.qualification.missing_groups
+                for name in g.allowed_names
+            )
+            qualification_line = esc(_qualification_label(c.qualification))
+            if miss_tags:
+                qualification_line += f' <span class="misstags">{miss_tags}</span>'
+
             parts.append(f"<h2>{title}</h2>")
             parts.append(
                 '<div class="fields">'
                 f'<div><span class="label">기관:</span> {esc(c.notice.notice_institution) or "미상"}</div>'
                 f'<div><span class="label">예산:</span> {esc(_fmt_money(c.notice.budget)) or "미상"}</div>'
                 f'<div><span class="label">마감/일정:</span> {esc(_fmt_dt(earliest[1])) if earliest else "일정 미상"}</div>'
-                f'<div><span class="label">자격판정:</span> {esc(c.qualification.summary)}</div>'
+                f'<div><span class="label">자격판정:</span> {qualification_line}</div>'
                 f'<div><span class="label">공고번호:</span> {esc(c.notice.notice_no)}</div>'
                 "</div>"
             )
