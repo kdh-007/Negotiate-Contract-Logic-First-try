@@ -17,6 +17,7 @@ import re
 import zipfile
 import zlib
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
@@ -176,6 +177,7 @@ def save_attachment_texts(
     timeout: float = 30.0,
     session: requests.Session | None = None,
     held_codes: set[str] | None = None,
+    now: datetime | None = None,
 ) -> dict[str, int]:
     """후보 공고의 첨부파일을 내려받아 텍스트를 `output_dir/attachment_text/`에 저장한다.
 
@@ -195,20 +197,37 @@ def save_attachment_texts(
     판정 근거를 찾지 못하면(코드가 명시된 항목이 없음) 손대지 않고 그대로
     "자격정보 없음"으로 남긴다. 이 판정은 표시용일 뿐 후보 목록 자체는 바꾸지
     않는다 — 후보/제외는 이미 API 기반 1차 판정에서 끝난 뒤이기 때문이다.
+
+    마감일정도 같은 방식으로 보충한다 — API의 마감 관련 세 필드가 전부 비어
+    `candidate.schedule.earliest`가 None인("일정 미상") 공고에 한해, 첨부파일
+    원문에서 제출기한을 찾아(`schedule_text.extract_deadline`)
+    `candidate.schedule.attachment_deadline`을 채운다.
     """
     from .qualification_text import find_qualification_section
     from .qualify import evaluate_attachment_text
+    from .schedule_text import extract_deadline
 
     text_dir = output_dir / "attachment_text"
     text_dir.mkdir(parents=True, exist_ok=True)
     session = session or requests.Session()
+    now = now or datetime.now()
 
-    stats = {"attempted": 0, "ok": 0, "failed": 0, "qualification_found": 0, "qualification_determined": 0}
+    stats = {
+        "attempted": 0,
+        "ok": 0,
+        "failed": 0,
+        "qualification_found": 0,
+        "qualification_determined": 0,
+        "deadline_determined": 0,
+    }
     for candidate in candidates:
         notice = candidate.notice
         qualification = getattr(candidate, "qualification", None)
         needs_check = held_codes is not None and qualification is not None and not qualification.checked
+        schedule = getattr(candidate, "schedule", None)
+        needs_deadline = schedule is not None and schedule.earliest is None
         all_items: list[str] = []
+        deadline = None
 
         for result in collect_notice_attachment_texts(session, notice, timeout=timeout):
             stats["attempted"] += 1
@@ -226,6 +245,18 @@ def save_attachment_texts(
                 summary = section.heading + "\n\n" + "\n\n".join(section.items)
                 (text_dir / f"{base}_참가자격.txt").write_text(summary, encoding="utf-8")
                 all_items.extend(section.items)
+
+            if needs_deadline and deadline is None:
+                deadline = extract_deadline(result.text)
+
+        if needs_deadline and deadline is not None:
+            schedule.attachment_deadline = deadline
+            stats["deadline_determined"] += 1
+            # candidate.days_left는 후보 산출 시점에 schedule.days_left(now)로
+            # 미리 계산돼 있다 — attachment_deadline을 지금 막 채웠으니 여기서도
+            # 다시 계산해야 "잔여일수"(D-N)가 새로 채운 마감/일정과 어긋나지 않는다.
+            if hasattr(candidate, "days_left"):
+                candidate.days_left = schedule.days_left(now)
 
         if not needs_check or not all_items:
             continue

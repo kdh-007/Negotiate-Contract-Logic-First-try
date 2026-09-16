@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from nego import fields as F  # noqa: E402
-from nego import qualify, scope, screen  # noqa: E402
+from nego import qualify, schedule_text, scope, screen  # noqa: E402
 from nego.config import load_config  # noqa: E402
 from nego.fields import PERSONAL_FIELDS  # noqa: E402
 from nego.http_client import ApiError, parse_response_body  # noqa: E402
@@ -423,6 +423,56 @@ class TestSchedule(unittest.TestCase):
             fixtures.notice("X", bidQlfctRgstDt="", bidClseDt="", cmmnSpldmdAgrmntClseDt=""), "용역"
         )
         self.assertIsNone(screen.build_schedule(n).days_left(NOW))
+
+    def test_attachment_deadline_used_only_when_api_fields_all_empty(self):
+        sched = screen.Schedule(
+            qualification_deadline=None,
+            joint_agreement_deadline=None,
+            bid_deadline=None,
+            attachment_deadline=datetime(2026, 9, 14, 18, 0),
+        )
+        self.assertEqual(sched.earliest, ("첨부파일 제출기한", datetime(2026, 9, 14, 18, 0)))
+
+    def test_attachment_deadline_ignored_when_an_api_field_exists(self):
+        """API 값이 하나라도 있으면 첨부파일 추정치보다 우선한다."""
+        sched = screen.Schedule(
+            qualification_deadline=None,
+            joint_agreement_deadline=None,
+            bid_deadline=datetime(2026, 9, 20, 18, 0),
+            attachment_deadline=datetime(2026, 9, 14, 18, 0),
+        )
+        label, when = sched.earliest
+        self.assertEqual(label, "입찰 마감")
+        self.assertEqual(when, datetime(2026, 9, 20, 18, 0))
+
+
+class TestScheduleTextExtraction(unittest.TestCase):
+    def test_extracts_deadline_with_time_range(self):
+        """실측: 경상남도관광재단 「K-거상」공고 R26BK01707504 — API 마감
+        필드가 전부 비어 있었지만 첨부 제안요청서에는 제출기한이 명시돼
+        있었다. 범위(9:00~18:00)면 종료 시각을 마감으로 본다."""
+        text = (
+            "다. 기본서류 및 제안서 제출일시(반드시 방문제출)\n"
+            "- 제출기간 : 2026. 9. 14.(월) 9:00~18:00 (점심시간 12:00~13:00 접수 불가)\n"
+        )
+        self.assertEqual(schedule_text.extract_deadline(text), datetime(2026, 9, 14, 18, 0))
+
+    def test_defaults_to_end_of_day_when_no_time_given(self):
+        text = "마감일자 : 2026.10.5."
+        self.assertEqual(schedule_text.extract_deadline(text), datetime(2026, 10, 5, 23, 59))
+
+    def test_skips_label_when_date_is_too_far_away(self):
+        """절 제목처럼 라벨만 있고 실제 값은 다른 줄에 있으면 건너뛰고 다음
+        라벨(실제 값이 가까운)로 넘어가야 한다."""
+        text = (
+            "다. 기본서류 및 제안서 제출일시(반드시 방문제출)\n"
+            "    * 아래 접수처로 방문 제출하며 우편 및 온라인 접수는 불가합니다.\n"
+            "- 제출기한 : 2026.11.3.(화) 17:00\n"
+        )
+        self.assertEqual(schedule_text.extract_deadline(text), datetime(2026, 11, 3, 17, 0))
+
+    def test_returns_none_when_no_deadline_text_present(self):
+        self.assertIsNone(schedule_text.extract_deadline("과업 내용은 별첨 과업지시서를 참조합니다."))
 
 
 class TestPersonalDataStripped(unittest.TestCase):
