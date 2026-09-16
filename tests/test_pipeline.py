@@ -278,6 +278,22 @@ class TestQualification(unittest.TestCase):
         result = qualify.evaluate_attachment_text(items, held_codes={"4511161601"})
         self.assertEqual(result.summary, "자격 미달(조명용제어장치(3912110702))")
 
+    def test_extract_code_requirements_handles_semicolon_delimited_group(self):
+        """프리픽스 공유형 괄호는 콤마뿐 아니라 세미콜론 등 다른 구분자를 써도
+        코드를 전부 뽑아야 한다 — 문서마다 구분자가 다를 때마다 정규식을 새로
+        추가하지 않기 위한 일반화."""
+        item = "나.「국가종합전자조달시스템 입찰참가자격등록규정」에 의하여 세부품명번호(1234567890; 9876543210)을 소지한 업체"
+        requirements = qualify._extract_code_requirements(item)
+        self.assertEqual([code for code, _ in requirements], ["1234567890", "9876543210"])
+
+    def test_extract_code_requirements_handles_bare_parens_without_keyword(self):
+        """키워드 없이 괄호(대괄호가 아니라)만으로 코드를 표기해도 잡아야 한다 —
+        지금까지는 대괄호 표기만 지원했는데, 문서마다 괄호/대괄호가 섞여 쓰이므로
+        일반화한다."""
+        item = "직접생산확인증명서(LED경관조명기구 3911160501)를 소지한 업체"
+        requirements = qualify._extract_code_requirements(item)
+        self.assertEqual([code for code, _ in requirements], ["3911160501"])
+
     def test_summary_is_plain_pass_when_all_groups_satisfied(self):
         groups = qualify.group_license_rows(fixtures.license_rows())["R26TEST00002"]
         result = qualify.evaluate(groups, self.held)
