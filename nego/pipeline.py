@@ -76,6 +76,9 @@ class RunStats:
     # 부가 API가 실제로 몇 건을 돌려줬는지. 0이면 "제한 없음"이 아니라 "정보 없음"이다.
     license_rows: int = 0
     region_rows: int = 0
+    # 리포트 헤더의 "조회 기간" 표시용. --from-store처럼 API를 안 부른 실행에서는 None.
+    period_begin: datetime | None = None
+    period_end: datetime | None = None
 
 
 def _api_window(now: datetime, lookback_days: int) -> tuple[str, str]:
@@ -160,7 +163,7 @@ def build_candidates(
         if not qualification.passes:
             stats.gate_excluded += 1
             record.is_candidate = False
-            record.excluded_reason = f"자격 미달 ({qualification.summary})"
+            record.excluded_reason = qualification.summary  # 이미 "자격 미달(...)" 형태다
             stats.rejected.append(record)
             continue
 
@@ -177,6 +180,8 @@ def run(config: AppConfig, now: datetime | None = None) -> tuple[list[Candidate]
     client = DataGoKrClient(config.api)
 
     begin, end = _api_window(now, config.lookback_days)
+    stats.period_begin = now - timedelta(days=config.lookback_days)
+    stats.period_end = now
     log.info("조회 기간: %s ~ %s", begin, end)
 
     notices = collect_notices(client, begin, end, stats)

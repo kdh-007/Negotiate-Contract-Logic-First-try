@@ -171,6 +171,19 @@ class TestQualification(unittest.TestCase):
         items = ["가. 전기공사업 면허 보유업체", "나. 신용평가등급 B등급 이상"]
         self.assertIsNone(qualify.match_from_attachment_text(items, self.held))
 
+    def test_summary_is_plain_pass_when_all_groups_satisfied(self):
+        groups = qualify.group_license_rows(fixtures.license_rows())["R26TEST00002"]
+        result = qualify.evaluate(groups, self.held)
+        self.assertEqual(result.summary, "자격 충족")
+
+    def test_summary_lists_missing_license_names(self):
+        groups = [
+            qualify.LicenseGroup("1", ["실내건축공사업"]),
+            qualify.LicenseGroup("2", ["전기공사업", "정보통신공사업"]),
+        ]
+        result = qualify.evaluate(groups, self.held)
+        self.assertEqual(result.summary, "자격 미달(전기공사업/정보통신공사업)")
+
 
 class TestScreen(unittest.TestCase):
     config = screen.ScreenConfig(

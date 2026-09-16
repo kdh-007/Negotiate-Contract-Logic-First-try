@@ -42,11 +42,14 @@ class QualificationResult:
 
     @property
     def summary(self) -> str:
+        """지일이 요구 자격을 다 가지고 있으면 '자격 충족', 아니면 미보유 자격증 이름을 붙여
+        '자격 미달(이름)'로 표시한다 — 담당자가 그룹/카운트 계산 없이 바로 알아볼 수 있게."""
         if not self.checked:
             return "자격정보 없음 (판정 보류, 통과)"
         if self.missing_count == 0:
-            return f"자격 충족 ({self.total_groups}개 그룹 전부)"
-        return f"미충족 {self.missing_count}/{self.total_groups} 그룹"
+            return "자격 충족"
+        missing_names = ", ".join("/".join(g.allowed_names) for g in self.missing_groups)
+        return f"자격 미달({missing_names})"
 
 
 def split_industry_list(text: str) -> list[str]:
