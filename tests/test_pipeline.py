@@ -316,6 +316,20 @@ class TestScreen(unittest.TestCase):
         self.assertTrue(result.overseas_flag)
         self.assertIsNone(result.excluded_by)
 
+    def test_overseas_flag_carries_hover_tooltip_evidence(self):
+        """리포트 배지의 마우스오버 툴팁에 쓸 근거 문구 — 어떤 단어가
+        매치됐는지와 몽골이라 배제 안 했다는 사실이 같이 들어있어야 한다."""
+        result = self._screen(fixtures.notice("X", title="2026 몽골 울란바토르 국제산업박람회 한국관 조성"))
+        self.assertIsNotNone(result.overseas_evidence)
+        self.assertIn("한국관", result.overseas_evidence)
+        self.assertIn("몽골", result.overseas_evidence)
+
+    def test_excluded_reason_also_carries_evidence(self):
+        result = self._screen(
+            fixtures.notice("X", title="2027 UAE 두바이 의료기기전시회 한국관 전시디자인설치공사 입찰")
+        )
+        self.assertIn("한국관", result.excluded_reason)
+
     def test_mongolia_korea_pavilion_with_no_other_match_is_still_surfaced(self):
         """몽골 해외관은 등록된 업무 키워드가 하나도 없어도(=원래는 '미매칭'으로
         걸러질 상황) 플래그를 위해 강제로 통과시킨다."""

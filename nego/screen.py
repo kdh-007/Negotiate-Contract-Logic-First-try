@@ -56,6 +56,8 @@ class ScreenResult:
     excluded_reason: str | None = None
     # 해외 전시회 한국관/단체관인데 개최지가 몽골이라 자동 제외 대신 통과시킨 경우.
     overseas_flag: bool = False
+    # 위 플래그를 왜 붙였는지 — 리포트에서 배지에 마우스를 올리면 보여줄 근거.
+    overseas_evidence: str | None = None
 
 
 def _match_exclude(notice: Notice, exclude_keywords: list[str]) -> str | None:
@@ -80,13 +82,22 @@ _GROUP_PAVILION_RE = re.compile(r"단체관")
 _MONGOLIA_RE = re.compile(r"몽골")
 
 
-def _is_overseas_exhibition_booth(notice: Notice) -> bool:
+def _overseas_exhibition_evidence(notice: Notice) -> str | None:
     """해외 전시회·박람회·엑스포에 한국 기업이 참가할 때 짓는 한국관/단체관
-    부스 설치 공고인지 제목으로 판별한다."""
+    부스 설치 공고인지 제목으로 판별하고, 맞으면 사람이 알아볼 근거 문구를
+    돌려준다(리포트 배지의 마우스오버 툴팁용). 아니면 None."""
     haystack = _squash(notice.title) + _squash(notice.product_class_name)
-    if _KOREA_PAVILION_STRONG_RE.search(haystack):
-        return True
-    return bool(_OVERSEAS_EVENT_RE.search(haystack) and _GROUP_PAVILION_RE.search(haystack))
+
+    pavilion = _KOREA_PAVILION_STRONG_RE.search(haystack)
+    if pavilion:
+        return f"제목에 '{pavilion.group(0)}' 포함"
+
+    event = _OVERSEAS_EVENT_RE.search(haystack)
+    group_pavilion = _GROUP_PAVILION_RE.search(haystack)
+    if event and group_pavilion:
+        return f"제목에 '{event.group(0)}'와 '{group_pavilion.group(0)}' 포함"
+
+    return None
 
 
 def _is_mongolia(notice: Notice) -> bool:
@@ -119,14 +130,15 @@ def screen(notice: Notice, config: ScreenConfig) -> ScreenResult:
             excluded_reason=excluded_word,
         )
 
-    overseas_booth = _is_overseas_exhibition_booth(notice)
+    overseas_evidence = _overseas_exhibition_evidence(notice)
+    overseas_booth = overseas_evidence is not None
     mongolia = overseas_booth and _is_mongolia(notice)
     if overseas_booth and not mongolia:
         return ScreenResult(
             matched=False,
             confidence=None,
             excluded_by="해외개최",
-            excluded_reason="해외 전시회·박람회·엑스포 한국관/단체관 — 국내 공고 아님",
+            excluded_reason=f"해외 전시회·박람회·엑스포 한국관/단체관 — 국내 공고 아님 ({overseas_evidence})",
         )
 
     budget = notice.budget
@@ -160,6 +172,9 @@ def screen(notice: Notice, config: ScreenConfig) -> ScreenResult:
         matched_product_codes=product_hits,
         matched_industry_codes=industry_hits,
         overseas_flag=mongolia,
+        overseas_evidence=(
+            f"{overseas_evidence} · '몽골' 감지 — 확장 중인 시장이라 자동 배제 대신 표시" if mongolia else None
+        ),
     )
 
 

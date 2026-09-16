@@ -132,7 +132,7 @@ def render_console(candidates: list[Candidate], stats: RunStats) -> str:
         if c.notice.bid_method and "직찰" in c.notice.bid_method:
             flags.append("직찰(비전자)")
         if c.screen_result.overseas_flag:
-            flags.append("🌐 해외개최 의심(몽골) — 직접 확인 필요")
+            flags.append(f"🌐 해외개최 의심(몽골) — 직접 확인 필요 ({c.screen_result.overseas_evidence})")
 
         earliest = c.schedule.earliest
         deadline = f"D-{c.days_left}" if c.days_left is not None else "일정 미상"
@@ -175,7 +175,7 @@ _HTML_HEAD = """<meta charset="utf-8">
   .badge { font-size:0.72rem; padding:2px 10px; border-radius:6px; font-weight:600;
            border:1px solid var(--line); background:#f6f5f2; color:var(--muted); }
   .badge.confidence-strong { border-color:#bfd8c4; background:#eef6f0; color:#2f6b45; }
-  .badge.overseas { border-color:#e6b8ae; background:#fdeeea; color:#9a3412; }
+  .badge.overseas { border-color:#e6b8ae; background:#fdeeea; color:#9a3412; cursor:help; }
   .card h2 { font-size:1.02rem; margin:0 0 10px; font-weight:700; }
   .card h2 a { color:var(--accent); text-decoration:none; }
   .card h2 a:hover { text-decoration:underline; }
@@ -224,7 +224,10 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
             confidence_cls = " confidence-strong" if c.screen_result.confidence == "강력추천" else ""
 
             overseas_badge = (
-                '<span class="badge overseas">🌐 해외개최 의심(몽골)</span>' if c.screen_result.overseas_flag else ""
+                f'<span class="badge overseas" title="{esc(c.screen_result.overseas_evidence)}">'
+                "🌐 해외개최 의심(몽골)</span>"
+                if c.screen_result.overseas_flag
+                else ""
             )
             parts.append('<div class="card">')
             parts.append(
