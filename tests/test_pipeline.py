@@ -384,31 +384,29 @@ class _FailingClient:
 
     def __init__(self, fail_labels: set[str]):
         self.fail_labels = fail_labels
+        self.called_labels: list[str] = []
 
     def fetch_all_pages_chunked(self, base_url, operation, params, begin, end, label):
+        self.called_labels.append(label)
         if label in self.fail_labels:
             raise ApiError(label, "요청 실패: 재시도 소진")
         return []
 
 
 class TestCollectNotices(unittest.TestCase):
-    def test_one_failed_operation_does_not_stop_the_others(self):
-        """한 업무구분이 실패해도 나머지 조회는 계속 진행해야 한다."""
-        stats = RunStats()
-        client = _FailingClient(fail_labels={"본공고/공사"})
-        collect_notices(client, "202601010000", "202601312359", stats)
-        self.assertEqual(stats.failed_operations, ["본공고/공사"])
-
-    def test_run_aborts_when_any_single_operation_fails(self):
-        """용역/물품/공사 중 하나라도 실패하면(전부가 아니어도) 전체 실행을
-        실패로 올려야 한다 — 부분 데이터로 리포트를 내지 않고, Actions에서
-        새 Run으로 재시도할 수 있게 exit code 1로 끝나야 하기 때문이다."""
+    def test_first_failed_operation_stops_the_rest_immediately(self):
+        """용역/물품/공사 중 하나라도 재시도를 소진해 실패하면, 나머지 부문은
+        시도조차 하지 않고 즉시 ApiError를 올려야 한다 — 부분 데이터로 계속
+        진행하지 않고, Actions에서 새 Run으로 빨리 재시도할 수 있어야 하기
+        때문이다."""
         for failing in F.BID_NOTICE_OPERATIONS:
             with self.subTest(failing=failing):
                 stats = RunStats()
                 client = _FailingClient(fail_labels={f"본공고/{failing}"})
-                collect_notices(client, "202601010000", "202601312359", stats)
-                self.assertTrue(stats.failed_operations)
+                with self.assertRaises(ApiError):
+                    collect_notices(client, "202601010000", "202601312359", stats)
+                self.assertEqual(stats.failed_operations, [f"본공고/{failing}"])
+                self.assertEqual(client.called_labels[-1], f"본공고/{failing}", "실패한 부문 이후는 시도하지 않아야 한다")
 
 
 class TestEndToEnd(unittest.TestCase):
