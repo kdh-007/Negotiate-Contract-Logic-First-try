@@ -42,11 +42,14 @@ class QualificationResult:
 
     @property
     def summary(self) -> str:
+        """지일이 요구 자격을 다 가지고 있으면 '자격 충족', 아니면 미보유 자격증 이름을 붙여
+        '자격 미달(이름)'로 표시한다 — 담당자가 그룹/카운트 계산 없이 바로 알아볼 수 있게."""
         if not self.checked:
             return "자격정보 없음 (판정 보류, 통과)"
         if self.missing_count == 0:
-            return f"자격 충족 ({self.total_groups}개 그룹 전부)"
-        return f"미충족 {self.missing_count}/{self.total_groups} 그룹"
+            return "자격 충족"
+        missing_names = ", ".join("/".join(g.allowed_names) for g in self.missing_groups)
+        return f"자격 미달({missing_names})"
 
 
 def split_industry_list(text: str) -> list[str]:
@@ -123,6 +126,27 @@ def evaluate(groups: list[LicenseGroup], held_names: list[str]) -> Qualification
         passes=len(missing) <= MAX_ALLOWED_MISSING_QUALIFICATIONS,
         checked=True,
     )
+
+
+def match_from_attachment_text(items: list[str], held_names: list[str]) -> str | None:
+    """첨부파일에서 뽑은 참가자격 항목 중 보유 명단과 일치하는 것을 찾는다.
+
+    API 면허제한정보가 비어 있어(`checked=False`) 판정을 못 한 공고를 사람이 원문
+    전체를 열어 확인하는 수고를 줄이기 위한 보조 확인이다. 자유 텍스트라 그룹(OR)
+    구조를 알 수 없으므로 이 결과로 **제외 판정을 내리지는 않는다** — 일치하는
+    항목을 찾으면 그 문장을 반환해 확인됐음을 알리고, 못 찾으면 None을 반환해
+    (제외가 아니라) 원문 확인이 필요함을 알리는 용도로만 쓴다.
+
+    비교 전에 공백을 지운다 — 등록명과 첨부파일 문구의 띄어쓰기가 다를 수 있어서다
+    (예: 보유 명단 "실내건축공사업" vs 첨부파일 "실내 건축 공사업").
+    """
+    for item in items:
+        squashed_item = re.sub(r"\s+", "", item)
+        for held in held_names:
+            squashed_held = re.sub(r"\s+", "", held) if held else ""
+            if squashed_held and squashed_held in squashed_item:
+                return item
+    return None
 
 
 def load_held_names(held_config: dict) -> list[str]:
