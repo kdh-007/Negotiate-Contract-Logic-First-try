@@ -106,7 +106,7 @@ python -m nego --verify
 | `NARA_SERVICE_KEY` | — | 입찰공고정보서비스 인증키 (필수) |
 | `LOOKBACK_DAYS` | `1` | 조회 기간(일) |
 | `API_NUM_OF_ROWS` | `999` | 페이지당 건수 |
-| `API_MAX_RETRIES` | `3` | 재시도 횟수 (지수 백오프) |
+| `API_MAX_RETRIES` | `4` | 재시도 횟수 (지수 백오프, 총 시도 5회) |
 | `API_TIMEOUT_SEC` | `30` | 요청 타임아웃 |
 | `API_REQUEST_INTERVAL_SEC` | `0` | 페이지 간 대기. 429가 나면 올리세요 |
 | `OUTPUT_DIR` | `output` | 리포트 출력 폴더 |
