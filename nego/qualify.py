@@ -136,10 +136,15 @@ def match_from_attachment_text(items: list[str], held_names: list[str]) -> str |
     구조를 알 수 없으므로 이 결과로 **제외 판정을 내리지는 않는다** — 일치하는
     항목을 찾으면 그 문장을 반환해 확인됐음을 알리고, 못 찾으면 None을 반환해
     (제외가 아니라) 원문 확인이 필요함을 알리는 용도로만 쓴다.
+
+    비교 전에 공백을 지운다 — 등록명과 첨부파일 문구의 띄어쓰기가 다를 수 있어서다
+    (예: 보유 명단 "실내건축공사업" vs 첨부파일 "실내 건축 공사업").
     """
     for item in items:
+        squashed_item = re.sub(r"\s+", "", item)
         for held in held_names:
-            if held and held in item:
+            squashed_held = re.sub(r"\s+", "", held) if held else ""
+            if squashed_held and squashed_held in squashed_item:
                 return item
     return None
 

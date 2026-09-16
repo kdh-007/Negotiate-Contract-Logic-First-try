@@ -171,6 +171,13 @@ class TestQualification(unittest.TestCase):
         items = ["가. 전기공사업 면허 보유업체", "나. 신용평가등급 B등급 이상"]
         self.assertIsNone(qualify.match_from_attachment_text(items, self.held))
 
+    def test_match_from_attachment_text_ignores_whitespace_differences(self):
+        """등록명 "실내건축공사업"과 첨부파일 문구 "실내 건축 공사업"처럼
+        띄어쓰기만 다른 경우도 매칭돼야 한다."""
+        items = ["가. 「건설산업기본법」에 따른 실내 건축 공사업 면허 보유업체"]
+        match = qualify.match_from_attachment_text(items, self.held)
+        self.assertIsNotNone(match)
+
     def test_summary_is_plain_pass_when_all_groups_satisfied(self):
         groups = qualify.group_license_rows(fixtures.license_rows())["R26TEST00002"]
         result = qualify.evaluate(groups, self.held)
