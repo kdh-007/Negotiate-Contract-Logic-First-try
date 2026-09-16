@@ -210,9 +210,10 @@ def save_attachment_texts(
             candidate.qualification = result
             stats["qualification_determined"] += 1
             if result.missing_groups:
-                # TODO(임시 진단): 실측 문서마다 "업종코드"/"세부품명번호" 표기가 조금씩
-                # 달라 오탐 가능성이 있다 — 원문을 눈으로 대조할 수 있게 잠시 남겨둔다.
-                log.info("첨부파일 재판정 원문 [%s]: %s", notice.notice_no, all_items)
+                # 실측 문서마다 "업종코드"/"세부품명번호" 표기가 조금씩 달라 오탐
+                # 가능성이 있다(예: "세부품명번호 10자리, ####" 필러) — 미달로
+                # 판정된 건은 원문을 눈으로 대조할 수 있게 -v로만 남긴다.
+                log.debug("첨부파일 재판정 원문 [%s]: %s", notice.notice_no, all_items)
     return stats
 
 
