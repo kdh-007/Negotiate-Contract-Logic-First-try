@@ -82,6 +82,17 @@ class TestRenderHtml(unittest.TestCase):
         self.assertNotIn("조회 기간", out)
         self.assertIn("생성 시각", out)
 
+    def test_qualification_pass_is_wrapped_in_blue_box(self):
+        """'자격 충족'도 '자격 미달' 항목처럼 박스(태그)로 표시돼야 한다."""
+        from nego.qualify import QualificationResult
+
+        candidates, stats = self._candidates()
+        candidates[0].qualification = QualificationResult(
+            total_groups=1, missing_groups=[], passes=True, checked=True
+        )
+        out = render_html(candidates, stats, NOW)
+        self.assertIn('<span class="passtag">자격 충족</span>', out)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
