@@ -190,13 +190,15 @@ def save_attachment_texts(
     R26BK01719858)를 사람이 원문 전체를 뒤지지 않고 바로 확인하기 위함이다.
     절을 못 찾아도 실패로 세지 않는다 — 애초에 없는 문서가 대부분이다.
 
-    `held_codes`를 주면, API 자격정보가 없는 공고(`candidate.qualification.checked
-    is False`)에 한해 찾은 참가자격 항목으로 `qualify.evaluate_attachment_text`를
-    돌려 **API와 똑같은 형태의 판정 결과로 `candidate.qualification`을 갈아끼운다**
-    — 리포트에는 다른 공고와 동일하게 "자격 충족" / "자격 미달(이름)"로 표시된다.
-    판정 근거를 찾지 못하면(코드가 명시된 항목이 없음) 손대지 않고 그대로
-    "자격정보 없음"으로 남긴다. 이 판정은 표시용일 뿐 후보 목록 자체는 바꾸지
-    않는다 — 후보/제외는 이미 API 기반 1차 판정에서 끝난 뒤이기 때문이다.
+    `held_codes`를 주면, 찾은 참가자격 항목으로 `qualify.evaluate_attachment_text`를
+    돌려 그 결과를 **API 판정 위에 겹쳐서**(`qualify.merge_results`)
+    `candidate.qualification`에 반영한다 — 리포트에는 다른 공고와 동일하게
+    "자격 충족" / "자격 미달(이름)"로 표시된다. API가 이미 자격정보를 준 공고도
+    건너뛰지 않는다: API 면허제한정보에는 세부품명번호(직접생산확인 품목) 필드가
+    없어서, API만 보면 품목 요건이 통째로 빠지기 때문이다(`merge_results` 참고).
+    판정 근거를 찾지 못하면(코드가 명시된 항목이 없음) 손대지 않는다. 이 판정은
+    표시용일 뿐 후보 목록 자체는 바꾸지 않는다 — 후보/제외는 이미 API 기반 1차
+    판정에서 끝난 뒤이기 때문이다.
 
     마감일정도 같은 방식으로 보충한다 — API의 마감 관련 세 필드가 전부 비어
     `candidate.schedule.earliest`가 None인("일정 미상") 공고에 한해, 첨부파일
@@ -204,7 +206,7 @@ def save_attachment_texts(
     `candidate.schedule.attachment_deadline`을 채운다.
     """
     from .qualification_text import find_qualification_section
-    from .qualify import evaluate_attachment_text
+    from .qualify import evaluate_attachment_text, merge_results
     from .schedule_text import extract_deadline
 
     text_dir = output_dir / "attachment_text"
@@ -223,7 +225,7 @@ def save_attachment_texts(
     for candidate in candidates:
         notice = candidate.notice
         qualification = getattr(candidate, "qualification", None)
-        needs_check = held_codes is not None and qualification is not None and not qualification.checked
+        needs_check = held_codes is not None and qualification is not None
         schedule = getattr(candidate, "schedule", None)
         needs_deadline = schedule is not None and schedule.earliest is None
         all_items: list[str] = []
@@ -263,7 +265,7 @@ def save_attachment_texts(
 
         result = evaluate_attachment_text(all_items, held_codes)
         if result.checked:
-            candidate.qualification = result
+            candidate.qualification = merge_results(qualification, result)
             stats["qualification_determined"] += 1
             if result.missing_groups:
                 # 실측 문서마다 "업종코드"/"세부품명번호" 표기가 조금씩 달라 오탐

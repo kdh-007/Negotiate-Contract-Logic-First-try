@@ -28,6 +28,7 @@ from nego.attachments import (  # noqa: E402
     save_attachment_texts,
 )
 from nego.models import notice_from_raw  # noqa: E402
+from nego.qualify import LicenseGroup, QualificationResult  # noqa: E402
 from nego.screen import Schedule  # noqa: E402
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "attachments"
@@ -463,21 +464,27 @@ class TestFetchAttachmentText(unittest.TestCase):
         self.assertIn("404", result.error)
 
 
-class _FakeQualification:
-    def __init__(self, checked: bool):
-        self.checked = checked
+def _api_qualification(checked: bool = True, missing: list[str] | None = None) -> QualificationResult:
+    """API 면허제한정보 판정 결과를 흉내낸다. checked=False면 API가 자격정보를
+    안 준 공고, missing을 주면 API 기준으로 이미 미충족인 그룹이 있는 공고."""
+    missing_groups = [LicenseGroup(group_no="api", allowed_names=missing)] if missing else []
+    return QualificationResult(
+        total_groups=1 if checked else 0,
+        missing_groups=missing_groups,
+        passes=True,
+        checked=checked,
+    )
 
 
 class _FakeCandidate:
     """save_attachment_texts는 candidate.notice/.qualification/.schedule[/.days_left]만
-    본다 — pipeline.Candidate 전체를 안 만들어도 된다. checked=True가 기본값이라
-    held_codes를 넘겨도 (API로 이미 판정됐다고 보고) 재판정을 시도하지 않는다.
-    schedule을 안 주면(getattr 기본값 None) 일정 보충도 시도하지 않는다. days_left는
-    인스턴스에 직접 세팅해야만(hasattr) 일정 보충 후 다시 계산해 넣는다."""
+    본다 — pipeline.Candidate 전체를 안 만들어도 된다. schedule을 안 주면
+    (getattr 기본값 None) 일정 보충도 시도하지 않는다. days_left는 인스턴스에
+    직접 세팅해야만(hasattr) 일정 보충 후 다시 계산해 넣는다."""
 
-    def __init__(self, notice, checked: bool = True, schedule=None):
+    def __init__(self, notice, checked: bool = True, schedule=None, qualification=None):
         self.notice = notice
-        self.qualification = _FakeQualification(checked)
+        self.qualification = qualification or _api_qualification(checked)
         if schedule is not None:
             self.schedule = schedule
 
@@ -587,8 +594,12 @@ class TestSaveAttachmentTexts(unittest.TestCase):
         self.assertIn("자격 미달", candidate.qualification.summary)
         self.assertIn("실내건축공사업", candidate.qualification.summary)
 
-    def test_qualification_untouched_when_already_checked_by_api(self):
-        """API에서 이미 자격정보를 받은(checked=True) 공고는 재판정을 건너뛴다."""
+    def test_attachment_requirements_apply_even_when_api_already_passed(self):
+        """실측 버그(단양군 미디어아트 R26BK01731335): API 면허제한정보에는
+        세부품명번호 필드가 없어서 품목 요건이 통째로 빠진다. API가 자격정보를
+        줬고(checked=True) 전부 충족이라 해도, 첨부파일이 미보유 코드를 요구하면
+        미달로 뒤집혀야 한다 — 예전에는 API 판정이 있으면 첨부파일을 아예
+        보지 않아 '자격 충족'으로 남았다."""
         fixture = FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx"
         raw = {
             "bidNtceNo": "R26TEST0001",
@@ -599,16 +610,43 @@ class TestSaveAttachmentTexts(unittest.TestCase):
         }
         notice = notice_from_raw(raw, "용역")
         session = FakeSession(fixture.read_bytes())
+        # API는 자격정보를 줬고 미충족 없음 = "자격 충족"인 상태.
         candidate = _FakeCandidate(notice, checked=True)
-        original_qualification = candidate.qualification
+        self.assertEqual(candidate.qualification.summary, "자격 충족")
+        # 첨부파일이 요구하는 코드 중 실내건축공사업(4990)만 미보유.
+        held_codes = {"6010989901", "5610150701", "5611210501", "4442", "4444", "6484", "1469"}
 
         with tempfile.TemporaryDirectory() as tmp:
             stats = save_attachment_texts(
-                [candidate], Path(tmp), timeout=5.0, session=session, held_codes={"4990"}
+                [candidate], Path(tmp), timeout=5.0, session=session, held_codes=held_codes
             )
 
-        self.assertEqual(stats["qualification_determined"], 0)
-        self.assertIs(candidate.qualification, original_qualification)
+        self.assertEqual(stats["qualification_determined"], 1)
+        self.assertIn("자격 미달", candidate.qualification.summary)
+        self.assertIn("실내건축공사업", candidate.qualification.summary)
+
+    def test_api_missing_groups_are_kept_when_merging_attachment_result(self):
+        """API 기준 미충족 그룹은 첨부파일 판정을 겹친 뒤에도 남아 있어야 한다."""
+        fixture = FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx"
+        raw = {
+            "bidNtceNo": "R26TEST0001",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고",
+            "ntceSpecFileNm1": fixture.name,
+            "ntceSpecDocUrl1": f"file://{fixture}",
+        }
+        notice = notice_from_raw(raw, "용역")
+        session = FakeSession(fixture.read_bytes())
+        candidate = _FakeCandidate(notice, qualification=_api_qualification(missing=["전기공사업"]))
+        # 첨부파일 쪽 코드는 전부 보유 — 그래도 API 미충족은 그대로 남아야 한다.
+        held_codes = {"6010989901", "5610150701", "5611210501", "4990", "4442", "4444", "6484", "1469"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            save_attachment_texts(
+                [candidate], Path(tmp), timeout=5.0, session=session, held_codes=held_codes
+            )
+
+        self.assertIn("전기공사업", candidate.qualification.summary)
 
     def test_qualification_untouched_when_no_qualification_section_found(self):
         """참가자격 절 자체가 없는 문서(과업지시서 등)는 판정 근거가 없으니 손대지 않는다."""
