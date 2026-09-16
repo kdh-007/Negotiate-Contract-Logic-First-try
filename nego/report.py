@@ -21,6 +21,7 @@ CSV_COLUMNS = [
     "신뢰도",
     "협상유형",
     "재공고",
+    "해외의심",
     "공동수급",
     "자격판정",
     "참가가능지역",
@@ -78,6 +79,7 @@ def _row(index: int, c: Candidate) -> dict[str, str]:
         "신뢰도": c.screen_result.confidence or "",
         "협상유형": c.variant or "",
         "재공고": "Y" if c.is_re_notice else "",
+        "해외의심": "🌐 몽골" if c.screen_result.overseas_flag else "",
         "공동수급": c.joint.label,
         "자격판정": c.qualification.summary,
         "참가가능지역": ", ".join(c.regions),
@@ -129,6 +131,8 @@ def render_console(candidates: list[Candidate], stats: RunStats) -> str:
             flags.append("재공고")
         if c.notice.bid_method and "직찰" in c.notice.bid_method:
             flags.append("직찰(비전자)")
+        if c.screen_result.overseas_flag:
+            flags.append("🌐 해외개최 의심(몽골) — 직접 확인 필요")
 
         earliest = c.schedule.earliest
         deadline = f"D-{c.days_left}" if c.days_left is not None else "일정 미상"
@@ -171,6 +175,7 @@ _HTML_HEAD = """<meta charset="utf-8">
   .badge { font-size:0.72rem; padding:2px 10px; border-radius:6px; font-weight:600;
            border:1px solid var(--line); background:#f6f5f2; color:var(--muted); }
   .badge.confidence-strong { border-color:#bfd8c4; background:#eef6f0; color:#2f6b45; }
+  .badge.overseas { border-color:#e6b8ae; background:#fdeeea; color:#9a3412; }
   .card h2 { font-size:1.02rem; margin:0 0 10px; font-weight:700; }
   .card h2 a { color:var(--accent); text-decoration:none; }
   .card h2 a:hover { text-decoration:underline; }
@@ -218,11 +223,15 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
 
             confidence_cls = " confidence-strong" if c.screen_result.confidence == "강력추천" else ""
 
+            overseas_badge = (
+                '<span class="badge overseas">🌐 해외개최 의심(몽골)</span>' if c.screen_result.overseas_flag else ""
+            )
             parts.append('<div class="card">')
             parts.append(
                 '<div class="badges">'
                 f'<span class="badge{confidence_cls}">{esc(c.screen_result.confidence)}</span>'
                 f'<span class="badge">[{esc(c.notice.work_type)}]</span>'
+                f"{overseas_badge}"
                 "</div>"
             )
             miss_tags = "".join(
