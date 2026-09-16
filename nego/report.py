@@ -200,13 +200,13 @@ _HTML_HEAD = """<meta charset="utf-8">
   .fields .qual-row { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
   .kwtags { margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; }
   .kwtag { font-size:0.72rem; padding:2px 9px; border-radius:6px;
-           border:1px solid #c9d4e6; background:#eef2f8; color:#2f4f78; }
+           border:1px solid var(--line); background:#f6f5f2; color:var(--muted); }
   .misstag { font-size:0.72rem; padding:2px 9px; border-radius:6px; line-height:1.4;
              border:1px solid #e6b8ae; background:#fdeeea; color:#9a3412; }
   .passtag { font-size:0.72rem; padding:2px 9px; border-radius:6px; line-height:1.4;
              border:1px solid #a8c7e6; background:#eaf2fb; color:#1d5a99; }
   .unchecktag { font-size:0.72rem; padding:2px 9px; border-radius:6px; line-height:1.4;
-                border:1px solid var(--line); background:#f6f5f2; color:var(--muted); }
+                border:1px solid #e3cf8f; background:#fbf3d9; color:#8a6d16; }
   .empty { text-align:center; color:var(--muted); padding:48px 0; }
   @media (max-width:520px) { .wrap { padding:20px 16px 48px; } }
 </style>
