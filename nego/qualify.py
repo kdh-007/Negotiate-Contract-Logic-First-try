@@ -304,6 +304,34 @@ def evaluate_attachment_text(items: list[str], held_codes: set[str]) -> Qualific
     )
 
 
+def merge_results(base: QualificationResult, extra: QualificationResult) -> QualificationResult:
+    """API 판정(`evaluate`) 위에 첨부파일 판정(`evaluate_attachment_text`)을 겹친다.
+
+    **API가 자격정보를 줬다고 해서 그게 요건 전부인 것이 아니다.** 면허제한정보
+    오퍼레이션에는 면허명·허용업종만 있고 세부품명번호(직접생산확인 대상 품목)는
+    필드 자체가 없다(`fields.LICENSE_LIMIT_FIELDS`). 그래서 API 판정만 보면
+    품목 요건이 통째로 빠진다 — 실측: 단양군 미디어아트 공고(R26BK01731335)는
+    API가 업종 4그룹을 주고 전부 충족이라 했지만, 첨부 공고문은 직접생산확인증명서로
+    조명용제어장치(3912110702)를 요구했고 그건 미보유다.
+
+    그래서 첨부파일 판정을 API 판정의 *대체*가 아니라 *추가*로 쓴다. 한쪽이라도
+    미충족이면 미충족이다. 같은 요건이 양쪽에 다 잡히면(업종 항목은 보통 그렇다)
+    그룹 수는 중복 집계되지만, 판정과 표시에 쓰는 건 미충족 목록이라 문제되지 않는다.
+    """
+    if not extra.checked:
+        return base
+    if not base.checked:
+        return extra
+
+    missing = base.missing_groups + extra.missing_groups
+    return QualificationResult(
+        total_groups=base.total_groups + extra.total_groups,
+        missing_groups=missing,
+        passes=len(missing) <= MAX_ALLOWED_MISSING_QUALIFICATIONS,
+        checked=True,
+    )
+
+
 def load_held_names(held_config: dict) -> list[str]:
     names: list[str] = []
     for key in ("heldProducts", "heldIndustries"):

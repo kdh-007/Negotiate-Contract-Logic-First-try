@@ -286,6 +286,38 @@ class TestQualification(unittest.TestCase):
         requirements = qualify._extract_code_requirements(item)
         self.assertEqual([code for code, _ in requirements], ["1234567890", "9876543210"])
 
+    def test_merge_results_flips_api_pass_to_fail_when_attachment_finds_missing_code(self):
+        """실측 버그(단양군 미디어아트 R26BK01731335): API 면허제한정보에는 면허·업종만
+        있고 세부품명번호 필드가 아예 없다(fields.LICENSE_LIMIT_FIELDS). 그래서 API가
+        '업종 4그룹 전부 충족'이라 해도 첨부파일이 요구하는 품목(직접생산확인)이 빠진
+        채로 자격 충족이 돼버렸다. 둘 중 하나라도 미충족이면 미충족이어야 한다."""
+        api = qualify.QualificationResult(
+            total_groups=4, missing_groups=[], passes=True, checked=True
+        )
+        attachment = qualify.evaluate_attachment_text(
+            ["1) 세부품명번호 10자리(4511161601 비디오프로젝터, 3912110702 조명용제어장치) 제조 업체"],
+            held_codes={"4511161601"},
+        )
+        merged = qualify.merge_results(api, attachment)
+        self.assertEqual(merged.summary, "자격 미달(조명용제어장치(3912110702))")
+        self.assertEqual(merged.total_groups, 5, "양쪽 그룹 수를 합산한다")
+
+    def test_merge_results_keeps_api_verdict_when_attachment_has_no_codes(self):
+        api = qualify.QualificationResult(
+            total_groups=4, missing_groups=[], passes=True, checked=True
+        )
+        attachment = qualify.evaluate_attachment_text(["아. 부정당업자 제재 중에 있지 아니한 자"], set())
+        self.assertIs(qualify.merge_results(api, attachment), api)
+
+    def test_merge_results_uses_attachment_when_api_gave_nothing(self):
+        api = qualify.QualificationResult(
+            total_groups=0, missing_groups=[], passes=True, checked=False
+        )
+        attachment = qualify.evaluate_attachment_text(
+            ["마. 실내건축공사업(업종코드 4990)으로 입찰참가 등록한 자"], held_codes={"4990"}
+        )
+        self.assertEqual(qualify.merge_results(api, attachment).summary, "자격 충족")
+
     def test_extract_code_requirements_handles_bare_parens_without_keyword(self):
         """키워드 없이 괄호(대괄호가 아니라)만으로 코드를 표기해도 잡아야 한다 —
         지금까지는 대괄호 표기만 지원했는데, 문서마다 괄호/대괄호가 섞여 쓰이므로
