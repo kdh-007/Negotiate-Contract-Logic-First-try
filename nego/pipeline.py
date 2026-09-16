@@ -92,10 +92,12 @@ def collect_notices(
     for work_type, operation in F.BID_NOTICE_OPERATIONS.items():
         label = f"본공고/{work_type}"
         try:
-            raw_items = client.fetch_all_pages(
+            raw_items = client.fetch_all_pages_chunked(
                 F.BID_NOTICE_BASE_URL,
                 operation,
-                {"inqryDiv": "1", "inqryBgnDt": begin, "inqryEndDt": end},
+                {"inqryDiv": "1"},
+                begin,
+                end,
                 label,
             )
         except ApiError as err:

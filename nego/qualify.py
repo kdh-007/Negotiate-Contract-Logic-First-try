@@ -256,21 +256,25 @@ def load_held_codes(held_config: dict) -> set[str]:
 def fetch_license_groups(
     client: DataGoKrClient, begin: str, end: str
 ) -> tuple[dict[str, list[LicenseGroup]], str | None]:
-    """조회기간 전체의 면허제한정보를 1회 받아 공고번호별로 묶어 반환한다.
+    """조회기간 전체의 면허제한정보를 받아 공고번호별로 묶어 반환한다.
 
     실패해도 예외를 올리지 않는다 — 호출측에서 fail-open으로 처리하기 위함.
 
     주의: 이 오퍼레이션은 조회기간이 너무 길면 resultCode=07(입력범위값 초과)로
-    거부한다. 실측상 30일은 되고 180일은 막힌다 — 정확한 상한은 모른다.
-    실패하면 이 기간 내 **모든** 공고가 "자격정보 없음(판정 보류)"로 처리되므로,
-    LOOKBACK_DAYS를 길게 잡아 수동 실행할 때는 특히 주의할 것
-    (`scripts/inspect_notice.py`로 먼저 범위를 확인해볼 수 있다).
+    거부한다. 실측상 30일은 되고 그 이상(180일은 물론 ~100일도)은 막힌다 —
+    정확한 상한은 모른다. `client.fetch_all_pages_chunked`가 안전한 범위
+    단위로 나눠 호출하므로 LOOKBACK_DAYS를 30일보다 길게 잡아도 된다.
+    그래도 한 청크가 실패하면 이 기간 내 **모든** 공고가 "자격정보
+    없음(판정 보류)"로 처리된다(`scripts/inspect_notice.py`로 먼저 범위를
+    확인해볼 수 있다).
     """
     try:
-        raw_items = client.fetch_all_pages(
+        raw_items = client.fetch_all_pages_chunked(
             F.BID_NOTICE_BASE_URL,
             F.LICENSE_LIMIT_OPERATION,
-            {"inqryDiv": "1", "inqryBgnDt": begin, "inqryEndDt": end},
+            {"inqryDiv": "1"},
+            begin,
+            end,
             "면허제한정보",
         )
     except ApiError as err:
@@ -287,10 +291,12 @@ def fetch_region_limits(
     비어 있는 것이 정상이며, "제한 없음"이 아니라 "정보 없음"으로 다뤄야 한다.
     """
     try:
-        raw_items = client.fetch_all_pages(
+        raw_items = client.fetch_all_pages_chunked(
             F.BID_NOTICE_BASE_URL,
             F.REGION_LIMIT_OPERATION,
-            {"inqryDiv": "1", "inqryBgnDt": begin, "inqryEndDt": end},
+            {"inqryDiv": "1"},
+            begin,
+            end,
             "참가가능지역",
         )
     except ApiError as err:
