@@ -51,7 +51,7 @@ class QualificationResult:
         """지일이 요구 자격을 다 가지고 있으면 '자격 충족', 아니면 미보유 자격증 이름을 붙여
         '자격 미달(이름)'로 표시한다 — 담당자가 그룹/카운트 계산 없이 바로 알아볼 수 있게."""
         if not self.checked:
-            return "자격정보 없음 (판정 보류, 통과)"
+            return "자격정보 미확인 (통과)"
         if self.missing_count == 0:
             return "자격 충족"
         # 같은 자격이 여러 그룹에서 각각 미충족으로 걸리면(예: 첨부문서 항목

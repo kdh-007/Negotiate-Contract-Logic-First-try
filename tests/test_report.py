@@ -93,6 +93,18 @@ class TestRenderHtml(unittest.TestCase):
         out = render_html(candidates, stats, NOW)
         self.assertIn('<span class="passtag">자격 충족</span>', out)
 
+    def test_qualification_unchecked_is_wrapped_in_gray_box(self):
+        """자격정보가 없어 판정을 못 한(통과 처리된) 경우는 회색 박스로,
+        '자격 미달'과 헷갈리지 않는 중립적인 문구로 표시돼야 한다."""
+        from nego.qualify import QualificationResult
+
+        candidates, stats = self._candidates()
+        candidates[0].qualification = QualificationResult(
+            total_groups=0, missing_groups=[], passes=True, checked=False
+        )
+        out = render_html(candidates, stats, NOW)
+        self.assertIn('<span class="unchecktag">자격정보 미확인 (통과)</span>', out)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
