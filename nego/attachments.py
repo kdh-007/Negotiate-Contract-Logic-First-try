@@ -88,8 +88,33 @@ def redact_personal_contacts(text: str) -> str:
     return text
 
 
+# 파일명 확장자와 실제 내용이 다른 첨부파일이 실측됨(예: .hwpx로 등록됐지만
+# 실제로는 구버전 OLE2 .hwp 바이너리 — "File is not a zip file"로 실패).
+# hwp/hwpx/pdf 세 형식은 매직 바이트가 서로 겹치지 않아 내용으로 구분할 수
+# 있다. 확장자 확인은 어차피 먼저 끝난 뒤라(SUPPORTED_EXTENSIONS), 여기서
+# 다른 형식으로 재분류해도 지원 안 하는 형식을 잘못 통과시킬 위험은 없다.
+_OLE_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+_ZIP_MAGIC_PREFIXES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+_PDF_MAGIC = b"%PDF"
+
+
+def _sniff_ext(data: bytes) -> str | None:
+    if data.startswith(_PDF_MAGIC):
+        return "pdf"
+    if data.startswith(_ZIP_MAGIC_PREFIXES):
+        return "hwpx"
+    if data.startswith(_OLE_MAGIC):
+        return "hwp"
+    return None
+
+
 def extract_text(data: bytes, ext: str) -> str:
     ext = ext.lower().lstrip(".")
+    sniffed = _sniff_ext(data)
+    if sniffed and sniffed != ext and sniffed in SUPPORTED_EXTENSIONS:
+        log.info("확장자(.%s)와 실제 파일 내용(.%s)이 달라 실제 내용 기준으로 처리합니다", ext, sniffed)
+        ext = sniffed
+
     if ext == "pdf":
         text = _extract_pdf_text(data)
     elif ext == "hwpx":

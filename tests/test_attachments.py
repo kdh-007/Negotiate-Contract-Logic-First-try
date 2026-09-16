@@ -20,6 +20,7 @@ from nego.attachments import (  # noqa: E402
     _decode_para_text,
     _hwp_section_paragraphs,
     _hwpx_section_text,
+    _sniff_ext,
     extract_text,
     fetch_attachment_text,
     redact_personal_contacts,
@@ -269,6 +270,36 @@ class TestPdfExtraction(unittest.TestCase):
         ):
             with self.assertRaises(AttachmentError):
                 extract_text(data, "pdf")
+
+
+class TestExtensionMismatchSniffing(unittest.TestCase):
+    """실측: 나라장터 첨부파일이 파일명 확장자와 실제 내용이 다른 경우가 있다
+    (.hwpx로 등록됐지만 실제론 구버전 OLE2 .hwp 바이너리 — "File is not a
+    zip file"로 실패). 확장자보다 실제 매직 바이트를 믿어야 한다."""
+
+    def test_sniff_detects_pdf_zip_and_ole_magic_bytes(self):
+        self.assertEqual(_sniff_ext(b"%PDF-1.4\n..."), "pdf")
+        self.assertEqual(_sniff_ext(b"PK\x03\x04" + b"\x00" * 10), "hwpx")
+        self.assertEqual(_sniff_ext(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 10), "hwp")
+
+    def test_sniff_returns_none_for_unrecognized_bytes(self):
+        self.assertIsNone(_sniff_ext(b"just some random text"))
+
+    def test_pdf_content_labeled_hwpx_is_still_extracted(self):
+        """확장자는 .hwpx인데 실제 내용이 PDF인 경우 — 내용 기준으로 재분류해
+        정상 추출돼야 한다(확장자만 보고 hwpx 파서를 강제하면 zip 파싱 실패).
+
+        표준 Helvetica 폰트는 한글을 못 그리므로 ASCII로 검증한다
+        (test_successful_pdf_round_trip과 같은 이유).
+        """
+        data = _build_pdf("Actually PDF")
+        text = extract_text(data, "hwpx")
+        self.assertIn("Actually PDF", text)
+
+    def test_hwpx_content_labeled_hwp_is_still_extracted(self):
+        data = _build_hwpx(["실제로는 HWPX"])
+        text = extract_text(data, "hwp")
+        self.assertEqual(text, "실제로는 HWPX")
 
 
 class TestHwpxExtraction(unittest.TestCase):
