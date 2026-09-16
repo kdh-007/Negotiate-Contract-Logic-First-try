@@ -14,11 +14,13 @@
 **해외 전시회 한국관/단체관 판별** — 기존 시스템에는 없던 신규 규칙(2026-09
 결정). "한국관"이라는 단어만 보고 국내 공고로 오인하기 쉽다(실측:
 R26BK01717819 UAE 두바이 의료기기전시회, R26BK01714892 두바이 — 둘 다
-해외 개최인데 "한국관" 제목 때문에 국내로 오인됨). "전시회/박람회/엑스포"
-+ "한국관/단체관"이 제목에 같이 있으면 해외 부스 설치 공고로 보고 자동
-제외한다. 단, 회사가 실제로 확장 중인 몽골만 예외 — 자동 제외 대신
-플래그(🌐)만 남겨 담당자가 직접 확인하게 한다(이땐 통상적인 키워드/코드
-불일치 제외도 건너뛴다 — 플래그가 붙는데 조용히 빠지면 안 되므로).
+해외 개최인데 "한국관" 제목 때문에 국내로 오인됨). "한국관"은 그 자체로
+해외 국가관 부스를 뜻하므로 제목에 있으면 단독으로도 자동 제외한다.
+"단체관"은 국내 행사에도 쓰이는 말이라 "전시회/박람회/엑스포"가 같이
+있을 때만 신호로 인정한다. 단, 회사가 실제로 확장 중인 몽골만 예외 —
+자동 제외 대신 플래그(🌐)만 남겨 담당자가 직접 확인하게 한다(이땐
+통상적인 키워드/코드 불일치 제외도 건너뛴다 — 플래그가 붙는데 조용히
+빠지면 안 되므로).
 """
 
 from __future__ import annotations
@@ -70,7 +72,11 @@ def _match_keywords(notice: Notice, keywords: list[str]) -> list[str]:
 
 
 _OVERSEAS_EVENT_RE = re.compile(r"전시회|박람회|엑스포")
-_KOREA_PAVILION_RE = re.compile(r"한국관|단체관")
+# "한국관"은 그 단어만으로도 해외 국가관 부스라는 뜻이라 단독으로도 신호로 본다.
+# "단체관"은 국내 행사에도 쓰이는 좀 더 일반적인 말이라, 오탐을 줄이기 위해
+# 전시회/박람회/엑스포 키워드가 같이 있을 때만 신호로 인정한다.
+_KOREA_PAVILION_STRONG_RE = re.compile(r"한국관")
+_GROUP_PAVILION_RE = re.compile(r"단체관")
 _MONGOLIA_RE = re.compile(r"몽골")
 
 
@@ -78,7 +84,9 @@ def _is_overseas_exhibition_booth(notice: Notice) -> bool:
     """해외 전시회·박람회·엑스포에 한국 기업이 참가할 때 짓는 한국관/단체관
     부스 설치 공고인지 제목으로 판별한다."""
     haystack = _squash(notice.title) + _squash(notice.product_class_name)
-    return bool(_OVERSEAS_EVENT_RE.search(haystack) and _KOREA_PAVILION_RE.search(haystack))
+    if _KOREA_PAVILION_STRONG_RE.search(haystack):
+        return True
+    return bool(_OVERSEAS_EVENT_RE.search(haystack) and _GROUP_PAVILION_RE.search(haystack))
 
 
 def _is_mongolia(notice: Notice) -> bool:
