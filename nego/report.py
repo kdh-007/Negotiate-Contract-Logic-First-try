@@ -176,11 +176,11 @@ _HTML_HEAD = """<meta charset="utf-8">
   .card h2 a:hover { text-decoration:underline; }
   .fields { display:flex; flex-direction:column; gap:3px; font-size:0.86rem; color:var(--fg); }
   .fields .label { color:var(--muted); }
+  .fields .qual-row { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
   .kwtags { margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; }
   .kwtag { font-size:0.72rem; padding:2px 9px; border-radius:6px;
            border:1px solid #c9d4e6; background:#eef2f8; color:#2f4f78; }
-  .misstags { display:inline-flex; flex-wrap:wrap; gap:6px; vertical-align:middle; }
-  .misstag { font-size:0.72rem; padding:2px 9px; border-radius:6px;
+  .misstag { font-size:0.72rem; padding:2px 9px; border-radius:6px; line-height:1.4;
              border:1px solid #e6b8ae; background:#fdeeea; color:#9a3412; }
   .empty { text-align:center; color:var(--muted); padding:48px 0; }
   @media (max-width:520px) { .wrap { padding:20px 16px 48px; } }
@@ -230,9 +230,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 for g in c.qualification.missing_groups
                 for name in g.allowed_names
             )
-            qualification_line = esc(_qualification_label(c.qualification))
-            if miss_tags:
-                qualification_line += f' <span class="misstags">{miss_tags}</span>'
+            qualification_html = f"<span>{esc(_qualification_label(c.qualification))}</span>{miss_tags}"
 
             parts.append(f"<h2>{title}</h2>")
             parts.append(
@@ -240,7 +238,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 f'<div><span class="label">기관:</span> {esc(c.notice.notice_institution) or "미상"}</div>'
                 f'<div><span class="label">예산:</span> {esc(_fmt_money(c.notice.budget)) or "미상"}</div>'
                 f'<div><span class="label">마감/일정:</span> {esc(_fmt_dt(earliest[1])) if earliest else "일정 미상"}</div>'
-                f'<div><span class="label">자격판정:</span> {qualification_line}</div>'
+                f'<div class="qual-row"><span class="label">자격판정:</span> {qualification_html}</div>'
                 f'<div><span class="label">공고번호:</span> {esc(c.notice.notice_no)}</div>'
                 "</div>"
             )
