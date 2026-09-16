@@ -152,20 +152,21 @@ _CODE_REQUIREMENT_RE = re.compile(
     r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?(?P<code>[0-9]{4,10})"
     r"|\((?P<bare_code>[0-9]{10})\)"
 )
-# "세부품명번호 10자리(코드1 이름1, 코드2 이름2, 코드3 이름3)"처럼 프리픽스 하나 뒤에
-# 괄호 하나를 공유하는 코드 여러 개가 콤마로 나열되는 표기(실측: G2B 세부품명번호
-# 등록 안내 문구). 위 `_CODE_REQUIREMENT_RE`는 프리픽스당 코드 하나만 잡아서,
-# 이 형태에서는 첫 코드 말고 나머지가 조용히 빠진다 — 괄호를 통째로 잡아 콤마로
-# 나눠 각 코드를 따로 뽑는다. "이름(업종코드 ####)"처럼 프리픽스가 괄호 *안*에
-# 있는 기존 형태와는 괄호가 프리픽스 *바로 뒤*에 오는지로 구분된다.
+# 문서마다 괄호를 쓰는지 대괄호를 쓰는지, 코드 여러 개를 콤마로 나열하는지
+# 세미콜론이나 공백으로 나열하는지가 제각각이다 — 문서마다 정규식을 하나씩
+# 추가하는 대신, "괄호/대괄호 하나 안에 코드가 몇 개 있든, 구분자가 뭐든
+# 전부 뽑는다"로 일반화한다. "세부품명번호 10자리(코드1 이름1, 코드2 이름2)"처럼
+# 프리픽스 바로 뒤에 괄호가 오면(키워드로 확신 가능) 4~10자리를 코드로 보고,
+# "[코드, 이름]"처럼 키워드 없이 괄호/대괄호만 쓰면(실측: 직접생산확인증명서
+# 항목) 세부품명번호 자릿수(정확히 10자리)일 때만 코드로 인정한다 — 키워드가
+# 없어 짧은 숫자는 법조문·연도 인용과 구분할 수 없기 때문이다.
 _PREFIXED_GROUP_RE = re.compile(
-    r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?\(([^()]*)\)"
+    r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?[(\[]([^()\[\]]*)[)\]]"
 )
+_BARE_GROUP_RE = re.compile(r"[(\[]([^()\[\]]*)[)\]]")
 _GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{4,10}")
-# "[코드, 이름]" 형태(실측: 직접생산확인증명서 항목 — 업종코드/세부품명번호 키워드
-# 없이 대괄호로만 코드를 표기). 키워드가 없어 프리픽스로 코드를 확신할 수 없으므로,
-# 괄호 단독 표기와 같은 이유로 세부품명번호 자릿수(10자리)일 때만 코드로 인정한다.
-_BRACKET_CODE_RE = re.compile(r"\[\s*(?P<code>[0-9]{10})\s*,\s*(?P<name>[^\]]{1,40}?)\s*\]")
+_BARE_GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{10}")
+_GROUP_ENTRY_STRIP_CHARS = " ,·/;、"
 _OR_MARKER_RE = re.compile(r"어느\s*하나")
 # 이름표에서 떼어낼 법령 인용 연결어. 실측 문서마다 표현이 달라 여러 개를 다룬다.
 _LABEL_CONNECTOR_RE = re.compile(r"(?:에\s*따른|에\s*의하여|규정에\s*따라)\s*")
@@ -180,6 +181,24 @@ def _truncate_label(name: str) -> str:
     return name
 
 
+def _split_group_entries(content: str, code_re: re.Pattern) -> list[tuple[str, str]]:
+    """괄호/대괄호 안 내용에서 코드-이름 쌍을 뽑는다. 콤마·세미콜론·공백 등
+    구분자가 무엇이든 상관없이, 코드 숫자 뒤부터 다음 코드 앞까지를 그
+    코드의 이름표로 본다(실측 표기가 "코드 이름, 코드 이름" 순이라 이렇게
+    자르면 이름이 온전히 남는다)."""
+    matches = list(code_re.finditer(content))
+    pairs = []
+    for i, match in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+        name = content[match.end() : end].strip(_GROUP_ENTRY_STRIP_CHARS)
+        pairs.append((match.group(0), name))
+    return pairs
+
+
+def _spans_overlap(a: tuple[int, int], b: tuple[int, int]) -> bool:
+    return a[0] < b[1] and a[1] > b[0]
+
+
 def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
     """항목 한 줄에서 코드 표기가 붙은 요건을 [(코드, "이름(코드)" 이름표)]로 뽑는다.
 
@@ -191,9 +210,17 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
     나오는 것보다는, 한글 문장 특성상 대상 명사가 대개 끝에 오므로 뒷부분만
     잘라도 알아볼 수 있는 경우가 많다.
 
-    프리픽스 공유형("세부품명번호(코드1, 코드2, …)")과 대괄호형("[코드, 이름]")은
-    프리픽스당 코드 하나만 잡는 위 규칙으로는 일부 코드가 누락되므로 별도로
-    먼저 뽑고, 그 구간은 기존 규칙에서 다시 잡지 않게 제외한다.
+    세 단계로 나눠 뽑고, 뒤 단계는 앞 단계가 이미 잡은 구간을 다시 건드리지
+    않는다(겹치면 건너뜀) — 문서마다 괄호/대괄호·구분자 표기가 제각각이라
+    형태별로 정규식을 계속 추가하는 대신, 우선순위가 있는 일반 규칙으로
+    처리한다.
+      1. `_PREFIXED_GROUP_RE`: 프리픽스 바로 뒤 괄호/대괄호 — 키워드로 코드임을
+         확신할 수 있어 하나든 여러 개든, 구분자가 뭐든 전부 뽑는다.
+      2. `_CODE_REQUIREMENT_RE`: 프리픽스 뒤 코드 하나(괄호 없이), 또는 정확히
+         10자리 숫자만 있는 단독 괄호 — 기존 형태, 이름표 추출 로직도 그대로.
+      3. `_BARE_GROUP_RE`: 위 두 규칙이 건드리지 않은 나머지 모든 괄호/대괄호 —
+         키워드가 없어 확신할 수 없으므로 정확히 10자리(세부품명번호 자릿수)인
+         경우만 코드로 인정한다.
     """
     results = []
     for line in item.splitlines():
@@ -201,24 +228,14 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
 
         for group_match in _PREFIXED_GROUP_RE.finditer(line):
             consumed.append(group_match.span())
-            for entry in group_match.group(1).split(","):
-                entry = entry.strip()
-                code_match = _GROUP_ENTRY_CODE_RE.search(entry)
-                if not code_match:
-                    continue
-                code = code_match.group(0)
-                name = _truncate_label(entry[code_match.end():].strip())
+            for code, name in _split_group_entries(group_match.group(1), _GROUP_ENTRY_CODE_RE):
+                name = _truncate_label(name)
                 results.append((code, f"{name}({code})" if name else code))
 
-        for bracket_match in _BRACKET_CODE_RE.finditer(line):
-            consumed.append(bracket_match.span())
-            code = bracket_match.group("code")
-            name = _truncate_label(bracket_match.group("name").strip())
-            results.append((code, f"{name}({code})" if name else code))
-
         for match in _CODE_REQUIREMENT_RE.finditer(line):
-            if any(start <= match.start() < end for start, end in consumed):
+            if any(_spans_overlap(match.span(), span) for span in consumed):
                 continue
+            consumed.append(match.span())
             code = match.group("code") or match.group("bare_code")
             prefix = line[: match.start()]
             inside_paren = prefix.rsplit("(", 1)[1].strip(" ,") if "(" in prefix else ""
@@ -231,6 +248,13 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
                 name = (segments[-1] if segments else before_paren).strip()
                 name = _truncate_label(name)
             results.append((code, f"{name}({code})" if name else code))
+
+        for bare_match in _BARE_GROUP_RE.finditer(line):
+            if any(_spans_overlap(bare_match.span(), span) for span in consumed):
+                continue
+            for code, name in _split_group_entries(bare_match.group(1), _BARE_GROUP_ENTRY_CODE_RE):
+                name = _truncate_label(name)
+                results.append((code, f"{name}({code})" if name else code))
     return results
 
 
