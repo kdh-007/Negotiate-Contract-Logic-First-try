@@ -175,7 +175,23 @@ _HTML_HEAD = """<meta charset="utf-8">
   .badge { font-size:0.72rem; padding:2px 10px; border-radius:6px; font-weight:600;
            border:1px solid var(--line); background:#f6f5f2; color:var(--muted); }
   .badge.confidence-strong { border-color:#bfd8c4; background:#eef6f0; color:#2f6b45; }
-  .badge.overseas { border-color:#e6b8ae; background:#fdeeea; color:#9a3412; cursor:help; }
+  .badge.overseas { border-color:#a8c7e6; background:#eaf2fb; color:#1d5a99; cursor:help;
+                    position:relative; }
+  .badge.overseas .tip {
+    visibility:hidden; opacity:0; pointer-events:none;
+    position:absolute; bottom:calc(100% + 8px); left:0; width:230px;
+    background:#fff; border:1px solid var(--line); border-radius:10px;
+    box-shadow:0 6px 20px rgba(0,0,0,0.14); padding:10px 12px;
+    font-size:0.74rem; font-weight:400; color:var(--fg); text-align:left;
+    line-height:1.5; transition:opacity .12s ease; z-index:20;
+  }
+  .badge.overseas:hover .tip { visibility:visible; opacity:1; }
+  .badge.overseas .tip .tip-row { color:var(--muted); margin-bottom:6px; }
+  .badge.overseas .tip .tip-row b { color:var(--fg); font-weight:600; }
+  .badge.overseas .tip .tip-tag {
+    display:inline-block; padding:3px 8px; border-radius:999px;
+    background:#eef6f0; border:1px solid #bfd8c4; color:#2f6b45; font-size:0.68rem;
+  }
   .card h2 { font-size:1.02rem; margin:0 0 10px; font-weight:700; }
   .card h2 a { color:var(--accent); text-decoration:none; }
   .card h2 a:hover { text-decoration:underline; }
@@ -223,12 +239,16 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
 
             confidence_cls = " confidence-strong" if c.screen_result.confidence == "강력추천" else ""
 
-            overseas_badge = (
-                f'<span class="badge overseas" title="{esc(c.screen_result.overseas_evidence)}">'
-                "🌐 해외개최 의심(몽골)</span>"
-                if c.screen_result.overseas_flag
-                else ""
-            )
+            overseas_badge = ""
+            if c.screen_result.overseas_flag:
+                overseas_badge = (
+                    '<span class="badge overseas">ⓘ 해외의심'
+                    '<span class="tip">'
+                    f'<div class="tip-row"><b>발주기관:</b> {esc(c.notice.notice_institution) or "미상"}</div>'
+                    f'<span class="tip-tag">{esc(c.screen_result.overseas_evidence)}</span>'
+                    "</span>"
+                    "</span>"
+                )
             parts.append('<div class="card">')
             parts.append(
                 '<div class="badges">'
