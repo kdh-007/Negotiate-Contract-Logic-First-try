@@ -175,7 +175,23 @@ class TestQualification(unittest.TestCase):
         items = ["마.「건설산업기본법」 제9조에 따른 실내건축공사업(업종코드 4990)으로 입찰참가 등록한 자"]
         result = qualify.evaluate_attachment_text(items, held_codes={"9999"})
         self.assertIn("자격 미달", result.summary)
-        self.assertIn("실내건축공사업", result.summary)
+        self.assertIn("실내건축공사업(4990)", result.summary, "이름과 코드가 함께 표시돼야 한다")
+
+    def test_extract_code_requirements_skips_digit_count_filler(self):
+        """실측 오류 재현: "세부품명번호 10자리, 4924159701"에서 "10"을 코드로
+        잘못 잡으면, 실제로는 보유한 코드(4924159701)인데도 미달로 오판정된다."""
+        item = (
+            "나.「국가종합전자조달시스템 입찰참가자격등록규정」에 의하여 조합놀이대"
+            "(세부품명번호 10자리, 4924159701)을 제조물품으로 입찰참가 등록한 자"
+        )
+        requirements = qualify._extract_code_requirements(item)
+        self.assertEqual([code for code, _ in requirements], ["4924159701"])
+
+        self.assertEqual(qualify.evaluate_attachment_text([item], held_codes={"4924159701"}).summary, "자격 충족")
+        fail_summary = qualify.evaluate_attachment_text([item], held_codes={"9999"}).summary
+        self.assertIn("자격 미달", fail_summary)
+        self.assertIn("(4924159701)", fail_summary)
+        self.assertLess(len(fail_summary), 60, "실측 오류 재현: 문장 전체가 그대로 딸려 나오면 안 된다")
 
     def test_evaluate_attachment_text_or_group_needs_only_one_code(self):
         items = [

@@ -136,18 +136,27 @@ def evaluate(groups: list[LicenseGroup], held_names: list[str]) -> Qualification
 
 # "(업종코드 4990)" / "(세부품명번호 6010989901)" / "(디지털콘텐츠개발서비스사업,
 # 업종코드 1469)" — 참가자격 문서가 실측상 이 표기로 업종·품목을 명시한다.
-# held_qualifications.json의 code와 그대로 비교할 수 있다.
-_CODE_REQUIREMENT_RE = re.compile(r"(?:업종코드|세부품명번호)\s*([0-9]+)")
+# held_qualifications.json의 code와 그대로 비교할 수 있다. 실측: 일부 문서는
+# "세부품명번호 10자리, 4924159701"처럼 자릿수 설명을 코드 앞에 끼워 넣는다 —
+# 그 필러를 건너뛰지 않으면 "10"을 코드로 잘못 잡는다. 업종코드 4자리,
+# 세부품명번호 10자리라 4~10자리로 캡처를 제한해 이런 오탐도 같이 막는다.
+_CODE_REQUIREMENT_RE = re.compile(r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?([0-9]{4,10})")
 _OR_MARKER_RE = re.compile(r"어느\s*하나")
+# 이름표에서 떼어낼 법령 인용 연결어. 실측 문서마다 표현이 달라 여러 개를 다룬다.
+_LABEL_CONNECTOR_RE = re.compile(r"(?:에\s*따른|에\s*의하여|규정에\s*따라)\s*")
+_MAX_LABEL_LEN = 20
 
 
 def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
-    """항목 한 줄에서 코드 표기가 붙은 요건을 [(코드, 코드 앞 이름표)]로 뽑는다.
+    """항목 한 줄에서 코드 표기가 붙은 요건을 [(코드, "이름(코드)" 이름표)]로 뽑는다.
 
     이름표는 두 가지 표기 관행을 다룬다 — "이름(업종코드 ####)"(괄호 앞이 이름)와
-    "(설명, 업종코드 ####)"(괄호 안 콤마 앞이 이름). 후자는 콤마 앞 텍스트를,
-    전자는 괄호 앞 구절에서 "…법 제n조에 따른" 같은 인용부를 떼고 남은 마지막
-    구절을 이름표로 쓴다.
+    "(설명, 업종코드 ####)"(괄호 안 콤마 앞이 이름). 전자는 괄호 앞 구절에서
+    "…법에 따른/의하여" 같은 인용부를 떼고 남은 마지막 구절을 이름표로 쓴다.
+    실측 문서 문장이 다양해 완벽히 못 떼어낼 수 있으니, 그래도 너무 길면
+    (`_MAX_LABEL_LEN`) 뒷부분만 잘라 쓴다 — 문장 전체가 그대로 리포트에
+    나오는 것보다는, 한글 문장 특성상 대상 명사가 대개 끝에 오므로 뒷부분만
+    잘라도 알아볼 수 있는 경우가 많다.
     """
     results = []
     for line in item.splitlines():
@@ -155,13 +164,18 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
             code = match.group(1)
             prefix = line[: match.start()]
             inside_paren = prefix.rsplit("(", 1)[1].strip(" ,") if "(" in prefix else ""
-            if inside_paren:
-                label = inside_paren
+            if inside_paren and len(inside_paren) <= _MAX_LABEL_LEN:
+                name = inside_paren
             else:
                 before_paren = prefix.rsplit("(", 1)[0] if "(" in prefix else prefix
                 before_paren = re.sub(r"^[\s\-·「『]+", "", before_paren)
-                label = re.split(r"에\s*따른\s*", before_paren)[-1].strip()
-            results.append((code, label or code))
+                segments = [s for s in _LABEL_CONNECTOR_RE.split(before_paren) if s.strip()]
+                name = (segments[-1] if segments else before_paren).strip()
+                if len(name) > _MAX_LABEL_LEN:
+                    name = name[-_MAX_LABEL_LEN:]
+                    if " " in name:  # 잘린 앞 단어 조각을 버리고 온전한 단어부터 남긴다
+                        name = name.split(" ", 1)[1]
+            results.append((code, f"{name}({code})" if name else code))
     return results
 
 
