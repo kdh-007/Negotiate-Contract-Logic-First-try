@@ -178,9 +178,10 @@ def _deadline_cell_html(c: Candidate, esc) -> str:
     days = c.days_left
     if days is None:
         dday_html = ""
+    elif days < 0:
+        dday_html = '<div class="dday-closed">공고 마감</div>'
     else:
-        dday = f"D-{days}" if days >= 0 else f"D+{-days}"
-        dday_html = f'<div class="dday">{esc(dday)}</div>'
+        dday_html = f'<div class="dday">{esc(f"D-{days}")}</div>'
     return (
         f"{dday_html}"
         f'<div class="dl-date">{esc(_fmt_kr_deadline(when))}</div>'
@@ -362,6 +363,8 @@ _HTML_HEAD = """<meta charset="utf-8">
   .nowrap { white-space:nowrap; }
   .dday { display:inline-block; font-weight:800; color:#fff; background:#c0392b;
           font-size:0.68rem; padding:1px 6px; border-radius:4px; letter-spacing:0.01em; }
+  .dday-closed { display:inline-block; font-weight:800; color:#fff; background:#4a4a4a;
+                 font-size:0.68rem; padding:1px 6px; border-radius:4px; letter-spacing:0.01em; }
   .dl-date { white-space:nowrap; margin-top:4px; font-size:0.72rem; }
   .dl-label { font-size:0.65rem; margin-top:1px; white-space:nowrap; }
 

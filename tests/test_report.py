@@ -114,6 +114,14 @@ class TestRenderHtml(unittest.TestCase):
         out = render_html(candidates, stats, NOW)
         self.assertIn('<div class="dday">D-3</div>', out)
 
+    def test_deadline_past_shows_closed_badge_instead_of_dplus(self):
+        """마감이 지난 공고는 'D+N'이 아니라 어두운 회색 '공고 마감' 배지로 보여준다."""
+        candidates, stats = self._candidates()
+        candidates[0].days_left = -5
+        out = render_html(candidates, stats, NOW)
+        self.assertIn('<div class="dday-closed">공고 마감</div>', out)
+        self.assertNotIn("D+5", out)
+
     def test_estimate_price_method_shows_real_value(self):
         """예가방법(예정가격 결정방법) — 실측(2026-09-17 `nego --verify`, Run #46)으로
         확인한 prearngPrceDcsnMthdNm 필드값을 그대로 보여준다."""
