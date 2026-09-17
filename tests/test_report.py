@@ -2,9 +2,9 @@
 
     python -m unittest discover -s tests -v
 
-UI 구조는 기존에 사용 중이던 수집 시스템의 결과페이지(주간 리포트)를 그대로
-따른다 — 제목, "조회 기간 ~ 생성 시각" 표기, "본공고 (N건)" 절, 카드별
-신뢰도/업무구분 배지, 자격판정, 키워드 태그.
+제목, "조회 기간 ~ 생성 시각" 표기, "본공고 (N건)" 절은 기존에 사용 중이던
+수집 시스템의 결과페이지(주간 리포트)를 그대로 따른다. 후보 목록은 표(테이블)
+형식이다 — 행마다 신뢰도/업무구분 배지, 자격판정(체크원+호버 팝업), 키워드 태그.
 """
 
 from __future__ import annotations
@@ -71,17 +71,61 @@ class TestRenderHtml(unittest.TestCase):
         out = render_html(candidates, stats, NOW)
         self.assertIn(f"본공고 ({len(candidates)}건)", out)
 
-    def test_card_shows_confidence_and_worktype_badges(self):
+    def test_row_shows_confidence_and_worktype_badges(self):
         candidates, stats = self._candidates()
         out = render_html(candidates, stats, NOW)
-        self.assertIn("[공사]", out)
+        self.assertIn('<span class="badge">공사</span>', out)
         self.assertIn(candidates[0].screen_result.confidence, out)
 
-    def test_card_shows_qualification_verdict_and_keyword_tag(self):
+    def test_row_shows_qualification_verdict_and_keyword_tag(self):
         candidates, stats = self._candidates()
         out = render_html(candidates, stats, NOW)
         self.assertIn("키워드:인테리어", out)
         self.assertIn(candidates[0].qualification.summary, out)
+
+    def test_long_title_gets_ellipsis_wrapper_and_full_text_in_title_attr(self):
+        """공고명이 길면 여러 줄로 감싸이는 대신 한 줄로 자르고("..."는 CSS의
+        text-overflow가 담당) 마우스오버로 전체 제목을 볼 수 있게 title
+        속성에 원문을 그대로 남긴다."""
+        candidates, stats = self._candidates()
+        full_title = candidates[0].notice.title
+        out = render_html(candidates, stats, NOW)
+        self.assertIn(f'<div class="title-text" title="{full_title}">', out)
+
+    def test_opening_at_is_shown_date_only_without_time(self):
+        """개찰일은 연월일까지만 표기한다(시각 생략) — opengDt는 시각을 포함해서
+        내려오지만 입찰마감일 칸에서 이미 시각을 다루므로 여기선 날짜만 쓴다."""
+        candidates, stats = self._candidates()
+        candidates[0].notice.opening_at = "2026-09-24 10:00:00"
+        out = render_html(candidates, stats, NOW)
+        self.assertIn("개찰일 2026. 9. 24.", out)
+        self.assertNotIn("10:00", out)
+
+    def test_opening_at_missing_shows_placeholder(self):
+        candidates, stats = self._candidates()
+        candidates[0].notice.opening_at = None
+        out = render_html(candidates, stats, NOW)
+        self.assertIn("개찰일 일정 미상", out)
+
+    def test_deadline_shows_dday_badge(self):
+        candidates, stats = self._candidates()
+        candidates[0].days_left = 3
+        out = render_html(candidates, stats, NOW)
+        self.assertIn('<div class="dday">D-3</div>', out)
+
+    def test_estimate_price_method_shows_real_value(self):
+        """예가방법(예정가격 결정방법) — 실측(2026-09-17 `nego --verify`, Run #46)으로
+        확인한 prearngPrceDcsnMthdNm 필드값을 그대로 보여준다."""
+        candidates, stats = self._candidates()
+        candidates[0].notice.estimate_price_method = "단일예가"
+        out = render_html(candidates, stats, NOW)
+        self.assertIn('<td><div class="nowrap">단일예가</div></td>', out)
+
+    def test_estimate_price_method_missing_shows_dash(self):
+        candidates, stats = self._candidates()
+        candidates[0].notice.estimate_price_method = None
+        out = render_html(candidates, stats, NOW)
+        self.assertIn('<td><div class="nowrap">-</div></td>', out)
 
     def test_no_period_line_when_stats_lack_period(self):
         """--from-store처럼 조회 기간 정보가 없는 실행에서도 죽지 않아야 한다."""
@@ -91,8 +135,8 @@ class TestRenderHtml(unittest.TestCase):
         self.assertNotIn("조회 기간", out)
         self.assertIn("생성 시각", out)
 
-    def test_qualification_pass_is_wrapped_in_blue_box(self):
-        """'자격 충족'도 '자격 미달' 항목처럼 박스(태그)로 표시돼야 한다."""
+    def test_qualification_pass_is_a_blue_check_circle(self):
+        """'자격 충족'은 파란 체크원(circle-pass)으로 표시돼야 한다."""
         from nego.qualify import QualificationResult
 
         candidates, stats = self._candidates()
@@ -100,10 +144,31 @@ class TestRenderHtml(unittest.TestCase):
             total_groups=1, missing_groups=[], passes=True, checked=True
         )
         out = render_html(candidates, stats, NOW)
-        self.assertIn('<span class="passtag">자격 충족</span>', out)
+        self.assertIn('<span class="circle circle-pass">', out)
+        self.assertIn('aria-label="자격 충족"', out)
 
-    def test_qualification_unchecked_is_wrapped_in_gray_box(self):
-        """자격정보가 없어 판정을 못 한(통과 처리된) 경우는 회색 박스로,
+    def test_missing_qualification_tooltip_dedupes_same_name_across_groups(self):
+        """실측: 단양군 미디어아트 공고(R26BK01731335) — 첨부문서 참가자격 절에
+        같은 세부품명번호(조명용제어장치)가 항목 3개에 걸쳐 등장하면
+        `evaluate_attachment_text`가 미충족 그룹 3개를 만든다. 빨간 체크원
+        호버 팝업 안 목록은 이름 기준으로 한 번만 나와야 한다(summary()의
+        중복 제거와 동일)."""
+        from nego.qualify import LicenseGroup, QualificationResult
+
+        candidates, stats = self._candidates()
+        name = "조명용제어장치(3912110702)"
+        candidates[0].qualification = QualificationResult(
+            total_groups=3,
+            missing_groups=[LicenseGroup(group_no=str(i), allowed_names=[name]) for i in range(3)],
+            passes=False,
+            checked=True,
+        )
+        out = render_html(candidates, stats, NOW)
+        self.assertIn('<span class="circle circle-fail">', out)
+        self.assertEqual(out.count(f'<div class="tip-item">{name}</div>'), 1)
+
+    def test_qualification_unchecked_is_a_neutral_circle(self):
+        """자격정보가 없어 판정을 못 한(통과 처리된) 경우는 노란 원(circle-unchecked)으로,
         '자격 미달'과 헷갈리지 않는 중립적인 문구로 표시돼야 한다."""
         from nego.qualify import QualificationResult
 
@@ -112,7 +177,8 @@ class TestRenderHtml(unittest.TestCase):
             total_groups=0, missing_groups=[], passes=True, checked=False
         )
         out = render_html(candidates, stats, NOW)
-        self.assertIn('<span class="unchecktag">자격정보 미확인 (통과)</span>', out)
+        self.assertIn('<span class="circle circle-unchecked">', out)
+        self.assertIn('aria-label="자격정보 미확인 (통과)"', out)
 
 
 if __name__ == "__main__":

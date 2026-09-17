@@ -21,6 +21,10 @@ on:
         description: "재시도 회차 (자동 재시도가 채워넣는 값 — 직접 실행할 땐 비워두면 1)"
         required: false
         default: "1"
+      verify:
+        description: "true로 두면 수집 대신 `nego --verify`(응답 필드명 진단)만 실행하고 끝낸다"
+        required: false
+        default: "false"
 
 # 실패 시 같은 워크플로를 workflow_dispatch로 재호출해 새 Run을 큐에 올리려면
 # GITHUB_TOKEN에 actions:write 권한이 있어야 한다.
@@ -51,8 +55,18 @@ jobs:
       - name: 테스트
         run: python -m unittest discover -s tests -t .
 
+      # 필드명이 비어 보이거나(예: 예가방법에 해당하는 실제 필드명을 모를 때)
+      # 원본 응답을 직접 봐야 할 때 쓰는 1회성 진단. 이 스텝을 타면 아래
+      # 수집 실행/업로드는 건너뛴다 — Supabase에 아무것도 쓰지 않는다.
+      - name: API 필드명 진단 (verify=true일 때만)
+        if: github.event.inputs.verify == 'true'
+        env:
+          NARA_SERVICE_KEY: ${{ secrets.NARA_SERVICE_KEY }}
+        run: python -m nego --verify
+
       - name: 수집 실행
         id: collect
+        if: github.event.inputs.verify != 'true'
         continue-on-error: true
         env:
           NARA_SERVICE_KEY: ${{ secrets.NARA_SERVICE_KEY }}

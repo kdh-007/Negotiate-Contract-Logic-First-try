@@ -54,9 +54,16 @@ class QualificationResult:
             return "자격정보 미확인 (통과)"
         if self.missing_count == 0:
             return "자격 충족"
-        # 같은 자격이 여러 그룹에서 각각 미충족으로 걸리면(예: 첨부문서 항목
-        # 여러 개가 같은 코드를 요구) 이름표가 그대로 중복 표시된다 — 중복 제거.
-        names = ("/".join(g.allowed_names) for g in self.missing_groups)
+        # 실측(2026-09-17 Run #45, R26BK01731335): 첨부문서 한 항목 안에서도
+        # 같은 코드가 중복 추출될 수 있어(예: "세부품명번호 10자리, ####"와
+        # 괄호 표기가 같은 줄에 같이 있는 경우) 그룹 하나의 allowed_names
+        # 자체가 ["A", "A"]가 된다 — 이걸 그대로 "/"로 이으면 "A/A"가 되고,
+        # 다른 그룹의 단순 "A"와 문자열이 달라져서 아래 그룹 간 중복 제거를
+        # 통과해버린다("자격 미달(A/A, A)"). 그룹 안에서 먼저 이름 중복을
+        # 제거한 뒤 이어야, 같은 요건이면 다른 그룹이라도 "A"로 합쳐진다.
+        # 같은 자격이 여러 그룹에서 각각 미충족으로 걸리는 경우(예: 첨부문서
+        # 항목 여러 개가 같은 코드를 요구)도 이 순서로 함께 걸러진다.
+        names = ("/".join(dict.fromkeys(g.allowed_names)) for g in self.missing_groups)
         missing_names = ", ".join(dict.fromkeys(names))
         return f"자격 미달({missing_names})"
 

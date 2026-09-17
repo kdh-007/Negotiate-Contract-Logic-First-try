@@ -34,6 +34,8 @@ class Notice:
     posted_at: str | None = None
     qualification_deadline: str | None = None
     bid_deadline: str | None = None
+    opening_at: str | None = None
+    estimate_price_method: str | None = None
 
     joint_method_name: str | None = None
     joint_method_code: str | None = None
@@ -82,6 +84,8 @@ def notice_from_raw(raw: dict[str, Any], work_type: str) -> Notice:
         posted_at=F.pick_field(clean, "posted_at"),
         qualification_deadline=F.pick_field(clean, "qualification_deadline"),
         bid_deadline=F.pick_field(clean, "bid_deadline"),
+        opening_at=F.pick_field(clean, "opening_at"),
+        estimate_price_method=F.pick_field(clean, "estimate_price_method"),
         joint_method_name=F.pick_field(clean, "joint_method_name"),
         joint_method_code=F.pick_field(clean, "joint_method_code"),
         joint_agreement_deadline=F.pick_field(clean, "joint_agreement_deadline"),

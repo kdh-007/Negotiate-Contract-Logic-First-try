@@ -339,6 +339,19 @@ class TestQualification(unittest.TestCase):
         result = qualify.evaluate(groups, self.held)
         self.assertEqual(result.summary, "자격 미달(전기공사업/정보통신공사업)")
 
+    def test_summary_dedupes_name_repeated_within_one_group_before_matching_other_groups(self):
+        """실측 재현(Run #45, R26BK01731335): 첨부문서 한 항목 안에서 같은 코드가
+        중복 추출되면 그 그룹의 allowed_names 자체가 ["A", "A"]가 된다. 이걸
+        그대로 "/"로 이으면 "A/A"가 되어, 다른 그룹의 단순 "A"와 문자열이 달라
+        중복 제거를 피해간다 — "자격 미달(A/A, A)"로 잘못 표시됐다."""
+        name = "조명용제어장치(3912110702)"
+        groups = [
+            qualify.LicenseGroup("1", [name, name]),
+            qualify.LicenseGroup("2", [name]),
+        ]
+        result = qualify.evaluate(groups, self.held)
+        self.assertEqual(result.summary, f"자격 미달({name})")
+
 
 class TestScreen(unittest.TestCase):
     config = screen.ScreenConfig(
@@ -476,6 +489,33 @@ class TestSchedule(unittest.TestCase):
         label, when = sched.earliest
         self.assertEqual(label, "입찰 마감")
         self.assertEqual(when, datetime(2026, 9, 20, 18, 0))
+
+
+class TestNoticeOpeningAt(unittest.TestCase):
+    """개찰일(opengDt)은 fields.py에 후보가 있었지만 Notice에 연결이 안 돼 있었다 —
+    API가 실제로 주는 값이 파이프라인 어디에도 안 남고 버려지던 상태. 연결됐는지 확인."""
+
+    def test_opening_at_is_mapped_from_api_field(self):
+        n = notice_from_raw(fixtures.notice("X", opengDt="2026-09-25 11:00:00"), "용역")
+        self.assertEqual(n.opening_at, "2026-09-25 11:00:00")
+
+    def test_opening_at_is_none_when_absent(self):
+        n = notice_from_raw(fixtures.notice("X", opengDt=""), "용역")
+        self.assertIsNone(n.opening_at)
+
+
+class TestNoticeEstimatePriceMethod(unittest.TestCase):
+    """예가방법(예정가격 결정방법). 실측(2026-09-17 `nego --verify`, Run #46)으로
+    확인한 필드 — 용역/물품/공사 세 오퍼레이션 모두에서 prearngPrceDcsnMthdNm으로
+    내려온다(예: 용역="비예가", 물품/공사="단일예가")."""
+
+    def test_estimate_price_method_is_mapped_from_api_field(self):
+        n = notice_from_raw(fixtures.notice("X", prearngPrceDcsnMthdNm="단일예가"), "용역")
+        self.assertEqual(n.estimate_price_method, "단일예가")
+
+    def test_estimate_price_method_is_none_when_absent(self):
+        n = notice_from_raw(fixtures.notice("X", prearngPrceDcsnMthdNm=""), "용역")
+        self.assertIsNone(n.estimate_price_method)
 
 
 class TestScheduleTextExtraction(unittest.TestCase):
