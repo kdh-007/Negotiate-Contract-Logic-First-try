@@ -167,6 +167,28 @@ class TestRenderHtml(unittest.TestCase):
         self.assertIn(f'<div class="tip-item">{name}</div>', out)
         self.assertIn('<div class="tip-title" style="color:var(--pass-fg);">충족된 자격 1건</div>', out)
 
+    def test_tooltip_reformats_raw_slash_code_to_name_code(self):
+        """실측(2026-09-17): 면허제한정보 API의 lcnsLmtNm 필드는 "이름/코드"로
+        코드를 그대로 붙여 내려온다(예: "실내건축공사업/4990") — 첨부파일에서
+        뽑은 "이름(코드)" 항목과 표기가 안 맞았다. 표시 직전에만 변환하고
+        (qualify.py의 allowed_names 자체, 즉 매칭용 값은 그대로 둔다 —
+        `test_substring_matching_is_permissive` 참고), 이름이 같으면 코드
+        있는 쪽만 남긴다."""
+        from nego.qualify import LicenseGroup, QualificationResult
+
+        candidates, stats = self._candidates()
+        candidates[0].qualification = QualificationResult(
+            total_groups=1,
+            missing_groups=[],
+            passes=True,
+            checked=True,
+            satisfied_groups=[LicenseGroup(group_no="1", allowed_names=["실내건축공사업/4990", "실내건축공사업"])],
+        )
+        out = render_html(candidates, stats, NOW)
+        self.assertIn('<div class="tip-item">실내건축공사업(4990)</div>', out)
+        self.assertNotIn("실내건축공사업/4990", out)
+        self.assertEqual(out.count('class="tip-item"'), 1, "이름이 겹치면 코드 있는 쪽 하나만 남아야 한다")
+
     def test_missing_qualification_tooltip_dedupes_same_name_across_groups(self):
         """실측: 단양군 미디어아트 공고(R26BK01731335) — 첨부문서 참가자격 절에
         같은 세부품명번호(조명용제어장치)가 항목 3개에 걸쳐 등장하면

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import html
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -79,6 +80,38 @@ _CHECK_SVG = (
     'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>'
 )
 
+# 면허제한정보 API 필드가 실측상 "이름/코드"를 그대로 붙여 내려주는 경우가
+# 있다(예: lcnsLmtNm="실내건축공사업/4990") — 첨부파일에서 뽑은 항목은 이미
+# "이름(코드)" 형식이라 팝업 안에서 표기가 안 맞아 보인다. qualify.py의
+# allowed_names 자체는 매칭(_is_group_satisfied의 양방향 부분일치)에 쓰여서
+# 거기서 코드를 붙이면 매칭이 깨진다(실측으로 확인됨) — 그래서 이 변환은
+# 표시 직전, 여기서만 한다.
+_RAW_CODE_SUFFIX_RE = re.compile(r"^(.+)/([0-9]{4,10})$")
+
+
+def _display_name(name: str) -> str:
+    match = _RAW_CODE_SUFFIX_RE.match(name)
+    if not match:
+        return name
+    label, code = match.group(1), match.group(2)
+    return f"{label}({code})"
+
+
+def _dedupe_names_preferring_code(names: list[str]) -> list[str]:
+    """면허명 필드와 허용업종목록 필드가 같은 요건을 각각 내려주면(실측: 코드
+    있는 "이름(코드)"와 코드 없는 "이름" 둘 다) 이름 기준으로 겹친다 —
+    코드가 있는 쪽을 남긴다."""
+    by_base: dict[str, str] = {}
+    order: list[str] = []
+    for n in names:
+        base = n.split("(", 1)[0]
+        if base not in by_base:
+            order.append(base)
+            by_base[base] = n
+        elif "(" in n and "(" not in by_base[base]:
+            by_base[base] = n
+    return [by_base[b] for b in order]
+
 
 def _qualification_cell_html(q, esc) -> str:
     """표의 '자격판정' 칸. 이름표 문구 대신 원 아이콘 하나로 보여주고,
@@ -95,7 +128,8 @@ def _qualification_cell_html(q, esc) -> str:
     # 같은 미보유 자격이 여러 그룹에 걸쳐 잡히면(예: 첨부문서 내 같은 코드가
     # 참가자격 절에 여러 줄 등장) 그대로 중복 표시된다 — summary()와 동일하게
     # 이름 기준으로 중복 제거.
-    miss_names = list(dict.fromkeys(name for g in q.missing_groups for name in g.allowed_names))
+    miss_names = list(dict.fromkeys(_display_name(name) for g in q.missing_groups for name in g.allowed_names))
+    miss_names = _dedupe_names_preferring_code(miss_names)
     if miss_names:
         items = "".join(f'<div class="tip-item">{esc(n)}</div>' for n in miss_names)
         label = f"자격 미달 — 미보유 {len(miss_names)}건: " + ", ".join(miss_names)
@@ -111,7 +145,8 @@ def _qualification_cell_html(q, esc) -> str:
     # 미달 쪽과 같은 형식("이름(코드)")으로 충족된 자격도 보여준다. 직접
     # QualificationResult(...)를 만드는 옛 테스트처럼 satisfied_groups가 없는
     # 경우엔 목록 없이 "자격 충족"만 남긴다(하위 호환).
-    ok_names = list(dict.fromkeys(name for g in q.satisfied_groups for name in g.allowed_names))
+    ok_names = list(dict.fromkeys(_display_name(name) for g in q.satisfied_groups for name in g.allowed_names))
+    ok_names = _dedupe_names_preferring_code(ok_names)
     if not ok_names:
         return (
             '<button type="button" class="qual-dot" aria-label="자격 충족">'
@@ -294,7 +329,7 @@ _HTML_HEAD = """<meta charset="utf-8">
                     position:relative; margin-left:4px; }
   .badge.overseas .tip {
     visibility:hidden; opacity:0; pointer-events:none;
-    position:absolute; bottom:calc(100% + 8px); left:0; width:230px;
+    position:absolute; top:calc(100% + 8px); left:0; width:230px;
     background:#fff; border:1px solid var(--line); border-radius:10px;
     box-shadow:0 6px 20px rgba(0,0,0,0.14); padding:10px 12px;
     font-size:0.74rem; font-weight:400; color:var(--fg); text-align:left;
@@ -334,9 +369,13 @@ _HTML_HEAD = """<meta charset="utf-8">
   .circle-fail { background:#c0392b; }
   .circle-pass { background:#2554c7; }
   .circle-unchecked { background:#e3cf8f; }
+  /* 위로 열면(bottom:100%) 표의 맨 위쪽 행에서는 팝업이 브라우저 창 위로
+     잘려 나가 보였다(실측 스크린샷 확인) — 아래로 열도록 바꾼다. 마지막
+     행에서 아래로 잘리는 경우보다, 페이지 스크롤이 자연스럽게 이어지는
+     아래쪽으로 여는 편이 안전하다. */
   .qual-dot .tip {
     visibility:hidden; opacity:0; pointer-events:none;
-    position:absolute; bottom:calc(100% + 8px); left:50%; transform:translateX(-50%);
+    position:absolute; top:calc(100% + 8px); left:50%; transform:translateX(-50%);
     width:230px; background:#fff; border:1px solid var(--line); border-radius:10px;
     box-shadow:0 8px 22px rgba(0,0,0,0.16); padding:10px 12px;
     font-size:0.72rem; font-weight:400; color:var(--fg); text-align:left; line-height:1.5;

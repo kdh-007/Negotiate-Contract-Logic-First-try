@@ -79,6 +79,15 @@ def split_industry_list(text: str) -> list[str]:
     실측 형태는 "[업종명/업종코드][업종명/업종코드]…" 이다 (예: "[실내건축공사업/4990]").
     대괄호 단위로 나눈 뒤 마지막 '/' 뒤의 코드를 떼어 업종명만 남긴다.
     대괄호가 없으면 콤마·슬래시로 나눈다.
+
+    **코드를 여기서 버리는 건 의도한 것이다 — 건드리지 말 것.** 리포트에
+    "이름(코드)"로 통일해서 보여주고 싶다는 요청이 있었지만, 그 코드를
+    이름에 그대로 붙이면 `_is_group_satisfied`의 양방향 부분일치가 깨진다
+    (실측: held="실내건축공사업" 은 allowed="건축공사업"의 상위 문자열이라
+    지금은 매칭되는데, allowed가 "건축공사업(0002)"가 되는 순간 어느
+    방향으로도 부분일치가 안 돼 매칭이 깨짐 — `test_substring_matching_is_permissive`
+    로 이미 한 번 이 버그를 실측으로 잡았다). 표시용 "이름(코드)" 변환은
+    `report.py`에서 이 리스트를 다치지 않고 별도로 한다.
     """
     bracketed = re.findall(r"\[([^\]]+)\]", text)
     if bracketed:
@@ -111,6 +120,11 @@ def group_license_rows(raw_items: list[RawItem]) -> dict[str, list[LicenseGroup]
         names: list[str] = []
         license_name = F.pick_by(item, F.LICENSE_LIMIT_FIELDS, "license_name")
         if license_name:
+            # 실측: lcnsLmtNm 필드 자체가 "실내건축공사업/4990"처럼 코드를
+            # 슬래시로 붙여 내려온다. split_industry_list와 마찬가지로 매칭용
+            # allowed_names에선 코드를 버리지 않고 원문 그대로 둔다(양방향
+            # 부분일치가 깨지지 않는 값 그대로) — "이름(코드)" 표시 변환은
+            # report.py에서 별도로 한다.
             names.append(license_name)
         allowed = F.pick_by(item, F.LICENSE_LIMIT_FIELDS, "allowed_industries")
         if allowed:
