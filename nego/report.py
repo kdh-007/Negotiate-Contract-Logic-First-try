@@ -122,7 +122,7 @@ def _deadline_cell_html(c: Candidate, esc) -> str:
     인지를 작게 붙인다."""
     earliest = c.schedule.earliest
     if earliest is None:
-        return '<span class="dim">일정 미상</span>'
+        return '<span class="dim nowrap">일정 미상</span>'
     label, when = earliest
     days = c.days_left
     if days is None:
@@ -143,8 +143,8 @@ def _opening_cell_html(c: Candidate, esc) -> str:
     posted = _fmt_kr_date(parse_datetime(c.notice.posted_at))
     opening = _fmt_kr_date(parse_datetime(c.notice.opening_at))
     return (
-        f'<div>공고일 {esc(posted) or "미상"}</div>'
-        f'<div class="dim">개찰일 {esc(opening) or "일정 미상"}</div>'
+        f'<div class="nowrap">공고일 {esc(posted) or "미상"}</div>'
+        f'<div class="dim nowrap">개찰일 {esc(opening) or "일정 미상"}</div>'
     )
 
 
@@ -302,10 +302,11 @@ _HTML_HEAD = """<meta charset="utf-8">
   .kwtag { font-size:0.65rem; padding:2px 7px; border-radius:6px;
            border:1px solid var(--line); background:#f6f5f2; color:var(--muted); }
   .dim { color:var(--muted); }
+  .nowrap { white-space:nowrap; }
   .dday { display:inline-block; font-weight:800; color:#fff; background:#c0392b;
           font-size:0.68rem; padding:1px 6px; border-radius:4px; letter-spacing:0.01em; }
   .dl-date { white-space:nowrap; margin-top:4px; }
-  .dl-label { font-size:0.65rem; margin-top:1px; }
+  .dl-label { font-size:0.65rem; margin-top:1px; white-space:nowrap; }
 
   /* 자격판정: 원 아이콘 + 호버/포커스 팝업 (미보유 자격명·코드번호) */
   .qual-dot { position:relative; display:inline-flex; align-items:center; justify-content:center;
@@ -361,9 +362,9 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
         parts.append(
             "<thead><tr>"
             "<th>분야</th><th>계약방법</th><th>공고번호 / 공고명</th>"
-            "<th>추정가격(원)<br>배정예산(원)</th><th>자격판정</th>"
-            "<th>공동수급<br>(컨소시엄)</th><th>예가방법</th><th>수요기관</th>"
-            "<th>공고일 /<br>개찰일</th><th>입찰마감일</th>"
+            "<th>추정가격(원) / 배정예산(원)</th><th>자격판정</th>"
+            "<th>공동수급(컨소시엄)</th><th>예가방법</th><th>수요기관</th>"
+            "<th>공고일 / 개찰일</th><th>입찰마감일</th>"
             "</tr></thead><tbody>"
         )
         for c in candidates:
@@ -392,9 +393,11 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
 
             money_parts = []
             if c.notice.estimated_price:
-                money_parts.append(f"<div>추정가격 {esc(_fmt_money(c.notice.estimated_price))}</div>")
+                money_parts.append(f'<div class="nowrap">추정가격 {esc(_fmt_money(c.notice.estimated_price))}</div>')
             if c.notice.assigned_budget and c.notice.assigned_budget != c.notice.estimated_price:
-                money_parts.append(f'<div class="dim">배정예산 {esc(_fmt_money(c.notice.assigned_budget))}</div>')
+                money_parts.append(
+                    f'<div class="dim nowrap">배정예산 {esc(_fmt_money(c.notice.assigned_budget))}</div>'
+                )
             money_html = "".join(money_parts) or '<span class="dim">미상</span>'
 
             parts.append(
@@ -402,15 +405,15 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 '<td><div class="badges">'
                 f'<span class="badge{confidence_cls}">{esc(c.screen_result.confidence)}</span>'
                 f'<span class="badge">{esc(c.notice.work_type)}</span></div></td>'
-                f"<td><div>{esc(c.notice.contract_method) or '-'}</div></td>"
+                f'<td><div class="nowrap">{esc(c.notice.contract_method) or "-"}</div></td>'
                 f'<td class="notice-title">'
                 f'<div class="notice-no">{esc(c.notice.notice_no)}{re_badge}{overseas_badge}</div>'
                 f"<div>{title}</div>{kwtags}</td>"
                 f"<td><div>{money_html}</div></td>"
                 f"<td><div>{_qualification_cell_html(c.qualification, esc)}</div></td>"
-                f"<td><div>{esc(c.joint.label)}</div></td>"
-                f"<td><div>{esc(c.notice.estimate_price_method) or '-'}</div></td>"
-                f"<td><div>{esc(c.notice.demand_institution) or '-'}</div></td>"
+                f'<td><div class="nowrap">{esc(c.joint.label)}</div></td>'
+                f'<td><div class="nowrap">{esc(c.notice.estimate_price_method) or "-"}</div></td>'
+                f'<td><div class="nowrap">{esc(c.notice.demand_institution) or "-"}</div></td>'
                 f"<td><div>{_opening_cell_html(c, esc)}</div></td>"
                 f"<td><div>{_deadline_cell_html(c, esc)}</div></td>"
                 "</tr>"
