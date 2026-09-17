@@ -254,6 +254,37 @@ class TestQualification(unittest.TestCase):
         fail_summary = qualify.evaluate_attachment_text([item], held_codes={"9999"}).summary
         self.assertEqual(fail_summary, "자격 미달(조합놀이대(4924159701))")
 
+    def test_extract_code_requirements_merges_code_split_across_pdf_line_wrap(self):
+        """실측 오류(사용자 제보, 2026-09-17, 한국항공우주연구원 나로우주센터
+        공고 R26BK01710751): PDF는 페이지 폭 기준으로만 줄바꿈해서 "영상정보
+        디스플레이장치"라는 한 단어가 줄바꿈에 걸려 "디스플레이" / "장치"로
+        반으로 잘렸고, 그 사이에 코드를 담은 괄호가 걸쳐 있었다. 줄 단위로만
+        괄호를 찾으면 이 코드를 통째로 놓친다 — 줄바꿈을 합치면 코드 자체는
+        찾는다("이름, 코드" 순서라 이름표는 못 붙지만, 그건 held_code_names
+        lookup으로 '충족' 팝업에서 별도로 채워진다 — 아래 두 번째 테스트)."""
+        item = (
+            "④「중소기업제품 구매촉진 및 판로지원에 관한 법률」에 의한 직접생산확인증명서(영상정보디스플레이\n"
+            "장치, 4511189301)를 소지한 자"
+        )
+        requirements = qualify._extract_code_requirements(item)
+        self.assertEqual([code for code, _ in requirements], ["4511189301"])
+
+    def test_evaluate_attachment_text_satisfied_label_recovers_code_split_across_line_wrap(self):
+        """위 테스트가 확인한 코드 추출과, held_code_names lookup(앞서 구현한
+        '충족된 자격' 이름표 기능)을 합치면 실제 실측 문서에서도 최종적으로
+        올바른 이름("영상정보디스플레이장치(4511189301)")이 나와야 한다."""
+        item = (
+            "④「중소기업제품 구매촉진 및 판로지원에 관한 법률」에 의한 직접생산확인증명서(영상정보디스플레이\n"
+            "장치, 4511189301)를 소지한 자"
+        )
+        result = qualify.evaluate_attachment_text(
+            [item], held_codes={"4511189301"}, held_code_names={"4511189301": "영상정보디스플레이장치"}
+        )
+        self.assertEqual(result.summary, "자격 충족")
+        self.assertEqual(
+            [g.allowed_names for g in result.satisfied_groups], [["영상정보디스플레이장치(4511189301)"]]
+        )
+
     def test_extract_code_requirements_preserves_multi_word_item_name(self):
         """이름을 "마지막 한 단어"로 단순화하면 안 된다 — "실물모형 및 전시물"처럼
         여러 단어로 된 실제 품목명이 있고, 한 단어만 남기면("전시물") 정보가

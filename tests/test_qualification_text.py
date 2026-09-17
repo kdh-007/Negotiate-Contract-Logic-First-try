@@ -108,6 +108,15 @@ class TestSplitItems(unittest.TestCase):
     def test_empty_body_returns_empty_list(self):
         self.assertEqual(split_items("   \n  "), [])
 
+    def test_splits_circled_number_items(self):
+        """실측: 한국항공우주연구원 나로우주센터 공고(R26BK01710751) — 참가자격
+        절이 원문자(①②③④)로 나열됐다."""
+        body = " ① 첫째 요건\n ② 둘째 요건\n ③ 셋째 요건\n ④ 넷째 요건\n"
+        items = split_items(body)
+        self.assertEqual(len(items), 4)
+        self.assertTrue(items[0].startswith("①"))
+        self.assertTrue(items[3].startswith("④"))
+
     def test_single_marker_is_not_enough_to_split(self):
         """마커가 1개뿐이면(전체가 '가.' 하나 아래) 그 패턴으론 안 쪼갠다 — 다음 패턴을 시도."""
         body = " 가. 이 항목 하나뿐\n    1) 실제 요건 A\n    2) 실제 요건 B\n"
