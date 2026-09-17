@@ -51,6 +51,15 @@ class TestFindQualificationSection(unittest.TestCase):
         section = find_qualification_section(text)
         self.assertIn("마지막 절", section.body)
 
+    def test_heading_with_letter_spacing_is_matched(self):
+        """실측(사용자 제보, 2026-09-17): 한식진흥원 공고문 — 절 제목 글자 사이마다
+        공백을 넣어 자간을 벌린 "2. 입 찰 참 가 자 격" 표기. "입찰"/"참가"/"자격"
+        2글자 묶음 사이 공백만 허용하면 이 표기를 놓쳐서 절 전체를 못 찾는다."""
+        text = "2. 입 찰 참 가 자 격\n 가. 요건 하나\n 나. 요건 둘\n3. 다음 절\n"
+        section = find_qualification_section(text)
+        self.assertIsNotNone(section)
+        self.assertIn("요건 둘", section.body)
+
     def test_heading_with_trailing_text_on_same_line_is_matched(self):
         """실측: 두바이 의료기기전시회 한국관 공고문 — "4. 입찰참가자격 : 안내문"처럼
         콜론 뒤에 같은 줄로 안내문이 붙어도 절 제목으로 인식해야 한다."""
