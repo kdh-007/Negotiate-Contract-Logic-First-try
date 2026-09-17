@@ -148,15 +148,16 @@ class TestRenderHtml(unittest.TestCase):
         self.assertIn('<span class="circle circle-pass">', out)
         self.assertIn('aria-label="자격 충족"', out)
 
-    def test_tooltip_flip_script_is_present_for_dynamic_up_down_placement(self):
-        """실측: 자격판정 팝업을 한쪽 방향(위 또는 아래)으로만 고정하면 표의
-        반대쪽 끝 행에서 뷰포트 밖으로 잘린다 — 위/아래를 행 위치에 따라
-        동적으로 판단하는 스크립트가 리포트에 포함돼야 한다(Playwright로
-        상단/하단 행 모두 뷰포트 안에 들어오는 것을 별도로 확인함)."""
+    def test_tooltip_position_script_is_present_for_dynamic_placement(self):
+        """실측: 팝업을 위/아래 한쪽으로만 고정하면 표의 반대쪽 끝 행에서
+        뷰포트 밖으로 잘린다. 원 오른쪽(공간 없으면 왼쪽)에, 세로도 뷰포트
+        안으로 클램프해서 여는 스크립트가 리포트에 포함돼야 한다
+        (Playwright로 상단/하단/우측 행 모두 뷰포트 안에 들어오는 것을
+        별도로 확인함)."""
         candidates, stats = self._candidates()
         out = render_html(candidates, stats, NOW)
         self.assertIn("<script>", out)
-        self.assertIn("flip-up", out)
+        self.assertIn("position:fixed", out)
         self.assertIn(".qual-dot, .badge.overseas", out)
 
     def test_qualification_pass_tooltip_lists_satisfied_names_like_the_fail_one(self):

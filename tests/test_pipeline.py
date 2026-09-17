@@ -205,11 +205,11 @@ class TestQualification(unittest.TestCase):
         self.assertIn("(4924159701)", fail_summary)
         self.assertLess(len(fail_summary), 60, "실측 오류 재현: 문장 전체가 그대로 딸려 나오면 안 된다")
 
-    def test_extract_code_requirements_skips_procedural_clause_before_item_name(self):
+    def test_extract_code_requirements_skips_deadline_clause_before_item_name(self):
         """실측 오류 재현(사용자 제보 원문, 2026-09-17): 연결어("에 의하여")와
-        괄호 사이에 마감일자 안내 절차 문구가 끼면 "마감일시까지 조합놀이대"처럼
-        이름표에 그 문구가 그대로 딸려 나왔다. 괄호 바로 앞 마지막 한 단어만
-        이름으로 남겨야 한다."""
+        괄호 사이에 마감일자 안내 절차 문구("…마감일시까지")가 끼면
+        "마감일시까지 조합놀이대"처럼 이름표에 그 문구가 그대로 딸려 나왔다.
+        "까지"도 연결어 목록에 추가해 떼어낸다."""
         item = (
             "나.「국가종합전자조달시스템 입찰참가자격등록규정」에 의하여 국가종합전자조달"
             "시스템G2B(나라장터)에 입찰참가자격등록 마감일시까지 조합놀이대"
@@ -221,6 +221,22 @@ class TestQualification(unittest.TestCase):
 
         fail_summary = qualify.evaluate_attachment_text([item], held_codes={"9999"}).summary
         self.assertEqual(fail_summary, "자격 미달(조합놀이대(4924159701))")
+
+    def test_extract_code_requirements_preserves_multi_word_item_name(self):
+        """이름을 "마지막 한 단어"로 단순화하면 안 된다 — "실물모형 및 전시물"처럼
+        여러 단어로 된 실제 품목명이 있고, 한 단어만 남기면("전시물") 정보가
+        없어진다."""
+        item = "실물모형 및 전시물(세부품명번호 6010989901)"
+        requirements = qualify._extract_code_requirements(item)
+        self.assertEqual(requirements, [("6010989901", "실물모형 및 전시물(6010989901)")])
+
+    def test_extract_code_requirements_generalizes_connector_and_strips_quotes(self):
+        """실측 오류 재현: "규정에 따라"만 알던 연결어 정규식이 "「무슨무슨법」
+        제5조에 따라"처럼 다른 인용구 뒤의 "에 따라"는 못 걸렀고, 인용부호로
+        감싼 품목명("조합놀이대")의 따옴표도 그대로 남았다."""
+        item = '「무슨무슨법」 제5조에 따라 "조합놀이대"(세부품명번호 4924159701)를 소지한 자'
+        requirements = qualify._extract_code_requirements(item)
+        self.assertEqual(requirements, [("4924159701", "조합놀이대(4924159701)")])
 
     def test_extract_code_requirements_recognizes_bare_10_digit_code(self):
         """실측: 두바이 의료기기전시회 한국관 공고문 — "세부품명번호" 키워드 없이

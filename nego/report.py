@@ -327,15 +327,18 @@ _HTML_HEAD = """<meta charset="utf-8">
   .badge.confidence-strong { border-color:#bfd8c4; background:#eef6f0; color:#2f6b45; }
   .badge.overseas { border-color:#e6b8ae; background:#fdeeea; color:#9a3412; cursor:help;
                     position:relative; margin-left:4px; }
+  /* 위치는 JS(_TOOLTIP_POSITION_SCRIPT)가 호버/포커스 시점에 top/left를
+     직접 계산해서 인라인으로 넣는다 — 표의 어느 행에 있든(맨 위/맨 아래/
+     맨 오른쪽 칸) 뷰포트 밖으로 잘리지 않게 하려고. position:fixed라
+     스크롤 컨테이너에 안 걸리고 뷰포트 좌표를 그대로 쓸 수 있다. */
   .badge.overseas .tip {
     visibility:hidden; opacity:0; pointer-events:none;
-    position:absolute; top:calc(100% + 8px); left:0; width:230px;
+    position:fixed; top:0; left:0; width:230px;
     background:#fff; border:1px solid var(--line); border-radius:10px;
     box-shadow:0 6px 20px rgba(0,0,0,0.14); padding:10px 12px;
     font-size:0.74rem; font-weight:400; color:var(--fg); text-align:left;
     line-height:1.5; transition:opacity .12s ease; z-index:20;
   }
-  .badge.overseas.flip-up .tip { top:auto; bottom:calc(100% + 8px); }
   .badge.overseas:hover .tip, .badge.overseas:focus-visible .tip { visibility:visible; opacity:1; }
   .badge.overseas .tip .tip-row { color:var(--muted); margin-bottom:6px; }
   .badge.overseas .tip .tip-row b { color:var(--fg); font-weight:600; }
@@ -370,23 +373,18 @@ _HTML_HEAD = """<meta charset="utf-8">
   .circle-fail { background:#c0392b; }
   .circle-pass { background:#2554c7; }
   .circle-unchecked { background:#e3cf8f; }
-  /* 위로 열면(bottom:100%) 표의 맨 위쪽 행에서는 팝업이 브라우저 창 위로
-     잘려 나가 보였다(실측 스크린샷 확인) — 아래로 열도록 바꾼다. 마지막
-     행에서 아래로 잘리는 경우보다, 페이지 스크롤이 자연스럽게 이어지는
-     아래쪽으로 여는 편이 안전하다. */
-  /* 기본은 아래로 연다. 화면 아래쪽 행에서 뷰포트 밖으로 잘리면(JS가 판단)
-     .flip-up을 붙여 위로 열게 한다 — 위/아래 어느 한쪽으로 고정하면 표
-     맨 위나 맨 아래 행 중 하나는 항상 잘리므로 행 위치에 따라 판단해야
-     한다. */
+  /* 위/아래로 고정해서 열면(둘 다 실측으로 확인됨) 표의 반대쪽 끝 행에서
+     뷰포트 밖으로 잘린다 — 원 오른쪽(공간이 없으면 왼쪽)에, 세로로는
+     버튼 위치를 기준으로 뷰포트 안에 들어오게 JS가 top/left를 직접
+     계산해서 연다. position:fixed라 스크롤 컨테이너에 안 걸린다. */
   .qual-dot .tip {
     visibility:hidden; opacity:0; pointer-events:none;
-    position:absolute; top:calc(100% + 8px); left:50%; transform:translateX(-50%);
+    position:fixed; top:0; left:0;
     width:230px; background:#fff; border:1px solid var(--line); border-radius:10px;
     box-shadow:0 8px 22px rgba(0,0,0,0.16); padding:10px 12px;
     font-size:0.72rem; font-weight:400; color:var(--fg); text-align:left; line-height:1.5;
     transition:opacity .12s ease; z-index:30;
   }
-  .qual-dot.flip-up .tip { top:auto; bottom:calc(100% + 8px); }
   .qual-dot:hover .tip, .qual-dot:focus-visible .tip { visibility:visible; opacity:1; }
   .qual-dot .tip .tip-title { font-weight:700; margin-bottom:6px; }
   .qual-dot .tip .tip-item { padding:4px 2px; border-top:1px solid var(--line); word-break:break-all; }
@@ -398,25 +396,35 @@ _HTML_HEAD = """<meta charset="utf-8">
 </style>
 """
 
-# 자격판정 원(qual-dot)과 해외의심 배지 팁은 기본으로 아래에 연다(CSS).
-# 표 맨 아래쪽 행에서는 그게 또 뷰포트 밖으로 잘린다 — 위/아래 어느 한쪽
-# 으로만 고정하면 표의 한쪽 끝은 항상 잘리므로, 열기 직전에 실제로 아래
-# 공간이 모자라는지 봐서 그때만 위로 뒤집는다(.flip-up). visibility:hidden
-# 상태에서도 레이아웃은 잡혀 있어(display:none이 아니므로) 호버/포커스가
-# 들어오는 시점에 getBoundingClientRect로 미리 재둘 수 있다.
+# 자격판정 원(qual-dot)과 해외의심 배지 팁의 위치를 위/아래로만 고정해서
+# 열면(둘 다 실측으로 확인됨) 표의 반대쪽 끝 행에서 뷰포트 밖으로 잘린다.
+# 그래서 원 오른쪽으로 열되(공간이 없으면 왼쪽), 세로 위치도 버튼을 기준
+# 삼아 뷰포트 안에 들어오도록 클램프한다 — 팝업을 position:fixed로 두고
+# 호버/포커스 시점에 top/left를 인라인으로 직접 계산해 넣는다.
+# visibility:hidden 상태에서도 레이아웃은 잡혀 있어(display:none이 아니므로)
+# 호버/포커스가 들어오는 시점에 getBoundingClientRect로 크기를 미리 잴 수
+# 있다.
 _TOOLTIP_FLIP_SCRIPT = """<script>
 (function () {
+  var GAP = 8, EDGE = 8;
   function place(el) {
     var tip = el.querySelector('.tip');
     if (!tip) return;
-    el.classList.remove('flip-up');
     var elRect = el.getBoundingClientRect();
     var tipRect = tip.getBoundingClientRect();
-    var spaceBelow = window.innerHeight - elRect.bottom;
-    var spaceAbove = elRect.top;
-    if (spaceBelow < tipRect.height + 8 && spaceAbove > spaceBelow) {
-      el.classList.add('flip-up');
+    var vw = window.innerWidth, vh = window.innerHeight;
+
+    var left = elRect.right + GAP;
+    if (left + tipRect.width + EDGE > vw) {
+      left = elRect.left - tipRect.width - GAP;  // 오른쪽에 공간이 없으면 왼쪽으로
     }
+    left = Math.max(EDGE, Math.min(left, vw - tipRect.width - EDGE));
+
+    var top = elRect.top + elRect.height / 2 - tipRect.height / 2;  // 버튼 세로 중앙에 맞춘 뒤
+    top = Math.max(EDGE, Math.min(top, vh - tipRect.height - EDGE));  // 뷰포트 안으로 클램프
+
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
   }
   document.querySelectorAll('.qual-dot, .badge.overseas').forEach(function (el) {
     el.addEventListener('mouseenter', function () { place(el); });
