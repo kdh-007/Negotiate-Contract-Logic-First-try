@@ -189,6 +189,25 @@ class TestQualification(unittest.TestCase):
         self.assertIn("자격 미달", result.summary)
         self.assertIn("실내건축공사업(4990)", result.summary, "이름과 코드가 함께 표시돼야 한다")
 
+    def test_satisfied_display_scans_full_text_regardless_of_bracket_position(self):
+        """실측(사용자 제보, 2026-09-17): "산업디자인 전문업[업종코드 4440, 4442,
+        4444]로 등록되어 있는 업체"처럼 키워드가 괄호 안쪽 맨 앞에 오고 코드가
+        여러 개 나열되면, 단계별 추출은 첫 코드(4440)만 잡고 나머지(4442, 4444)를
+        놓친다(뒤 코드들이 이미 소비된 구간 안에 있어 바깥 규칙이 건너뛴다).
+        '충족된 자격' 표시는 그룹 추출과 무관하게 원문 전체에서 보유 코드를
+        직접 찾으므로, 그 4442 하나만 보유해도 정상적으로 팝업에 뜬다."""
+        item = (
+            "3)「산업디자인진흥법 시행규칙」제9조에 의한 산업디자인전문업회사로 "
+            "산업디자인 전문업[업종코드 4440, 4442, 4444]로 등록되어 있는 업체"
+        )
+        result = qualify.evaluate_attachment_text(
+            [item], held_codes={"4442"}, held_code_names={"4442": "산업디자인전문회사(환경디자인분야)"}
+        )
+        self.assertEqual(
+            [g.allowed_names for g in result.satisfied_groups],
+            [["산업디자인전문회사(환경디자인분야)(4442)"]],
+        )
+
     def test_evaluate_attachment_text_satisfied_label_uses_held_registry_name(self):
         """실측 버그(사용자 제보, 2026-09-17): 첨부문서 원문 파싱은 문서 표기가
         제각각이라 '충족된 자격' 팝업에 코드만 남거나("6010989901") 절차성

@@ -204,6 +204,17 @@ _OR_MARKER_RE = re.compile(r"어느\s*하나")
 # ("「…법」 제9조에 따라" 등)를 놓친다 — 앞 단어를 가리지 않고 일반화한다.
 _LABEL_CONNECTOR_RE = re.compile(r"(?:에\s*따른|에\s*따라|에\s*의하여|까지)\s*")
 _MAX_LABEL_LEN = 20
+# "충족된 자격" 팝업에 보여줄 목록을 만들 때 쓴다 — 실측: "[업종코드 4440, 4442,
+# 4444]로 등록되어 있는 업체"처럼 키워드가 괄호 **안쪽 맨 앞**에 오고 코드 여러
+# 개가 나열되는 표기는 위 단계별 추출(_extract_code_requirements)이 첫 코드만
+# 잡고 나머지를 놓친다(뒤 코드들이 이미 소비된 괄호 구간 안에 있어 바깥 규칙이
+# 건너뜀). 정확한 이름-코드 매칭·AND/OR 판정은 여전히 위 추출 결과로 하되,
+# 화면에 보여줄 "충족" 목록만은 참가자격 절 원문 전체에서 보유 코드(4자리 또는
+# 10자리, 앞뒤가 숫자가 아닌 독립된 숫자열)가 실제로 나오는지 직접 훑어서
+# 괄호/키워드 위치에 상관없이 다 잡는다. 판정(자격 미달 여부) 자체는 그대로
+# _extract_code_requirements의 그룹 단위 AND/OR 로직을 따른다 — 이 스캔은
+# 표시용일 뿐이다.
+_STANDALONE_CODE_RE = re.compile(r"(?<!\d)(?:\d{10}|\d{4})(?!\d)")
 
 
 def _truncate_label(name: str) -> str:
@@ -339,7 +350,7 @@ def evaluate_attachment_text(
     held_code_names = held_code_names or {}
     groups: list[LicenseGroup] = []
     missing: list[LicenseGroup] = []
-    satisfied_groups: list[LicenseGroup] = []
+    parsed_labels: dict[str, str] = {}
 
     for idx, item in enumerate(items):
         requirements = _extract_code_requirements(item)
@@ -348,6 +359,8 @@ def evaluate_attachment_text(
 
         group_no = str(idx)
         groups.append(LicenseGroup(group_no=group_no, allowed_names=[label for _, label in requirements]))
+        for code, label in requirements:
+            parsed_labels.setdefault(code, label)
 
         is_or = bool(_OR_MARKER_RE.search(item))
         held_flags = [code in held_codes for code, _ in requirements]
@@ -359,17 +372,21 @@ def evaluate_attachment_text(
                 else [label for (_, label), ok in zip(requirements, held_flags) if not ok]
             )
             missing.append(LicenseGroup(group_no=group_no, allowed_names=missing_labels))
-        else:
-            # 충족 판정은 이미 code in held_codes로 확인했으니 held_code_names에
-            # 그 코드가 반드시 있다 — 문서 원문 파싱 없이 등록증 이름을 그대로 쓴다.
-            canonical_labels = [
-                f"{held_code_names[code]}({code})" if code in held_code_names else label
-                for code, label in requirements
-            ]
-            satisfied_groups.append(LicenseGroup(group_no=group_no, allowed_names=canonical_labels))
 
     if not groups:
         return QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False)
+
+    # "충족된 자격" 표시는 그룹 단위 AND/OR 판정과 별개로, 참가자격 절 원문
+    # 전체에서 보유 코드가 실제로 나오는지 직접 훑어 만든다 — 위 판정 로직이
+    # 놓친 코드(괄호 안쪽에 코드가 여러 개 나열되는 등)도 여기서는 다 잡힌다.
+    full_text = "\n".join(items)
+    found_codes = dict.fromkeys(_STANDALONE_CODE_RE.findall(full_text))
+    satisfied_names = [
+        f"{held_code_names[code]}({code})" if code in held_code_names else parsed_labels.get(code, code)
+        for code in found_codes
+        if code in held_codes
+    ]
+    satisfied_groups = [LicenseGroup(group_no="held", allowed_names=satisfied_names)] if satisfied_names else []
 
     return QualificationResult(
         total_groups=len(groups),
