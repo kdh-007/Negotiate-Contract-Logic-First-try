@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .pipeline import Candidate, RunStats
+from .screen import parse_datetime
 
 CSV_COLUMNS = [
     "검토순서",
@@ -62,12 +63,89 @@ def _fmt_kr_deadline(value: datetime | None) -> str:
 
 
 def _qualification_label(q) -> str:
-    """HTML 카드의 '자격판정' 줄에 쓰는 짧은 표시. 미보유 자격명은 이 옆에
-    박스(태그)로 따로 붙이므로 여기엔 넣지 않는다 — CSV/콘솔용 전체 문장은
-    `q.summary`를 그대로 쓴다."""
+    """CSV/콘솔용 짧은 표시. HTML 표는 이름표 대신 원(circle) 아이콘 +
+    호버/포커스 팝업으로 보여준다 (`_qualification_cell_html` 참고) — 전체
+    문장은 `q.summary`를 그대로 쓴다."""
     if not q.checked:
         return q.summary
     return "자격 충족" if q.missing_count == 0 else "자격 미달"
+
+
+# 자격판정 원(circle) 안에 넣는 체크마크. 충족/미달 모두 같은 모양을 쓰고
+# 색만 다르게 한다(파란 원=충족, 빨간 원=미달) — 표 안에서 이름표 문구 없이도
+# 한눈에 훑을 수 있게 하기 위함이다.
+_CHECK_SVG = (
+    '<svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="#fff" stroke-width="2.4" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg>'
+)
+
+
+def _qualification_cell_html(q, esc) -> str:
+    """표의 '자격판정' 칸. 이름표 문구 대신 원 아이콘 하나로 보여주고,
+    미보유 자격이 있으면(빨간 원) 호버/포커스 시 이름·코드 목록을 팝업으로
+    띄운다 — 여러 개일 때 칸 안에 태그를 줄줄이 나열하면 표가 지저분해지므로."""
+    if not q.checked:
+        return (
+            '<button type="button" class="qual-dot" aria-label="자격정보 미확인 (통과)">'
+            '<span class="circle circle-unchecked"></span>'
+            '<span class="tip"><div class="tip-title" style="color:var(--unchecked-fg);">자격정보 미확인 (통과)</div>'
+            "<div class=\"tip-note\">API·첨부파일 모두 판정 근거가 없어 fail-open으로 통과 처리됩니다.</div></span>"
+            "</button>"
+        )
+    # 같은 미보유 자격이 여러 그룹에 걸쳐 잡히면(예: 첨부문서 내 같은 코드가
+    # 참가자격 절에 여러 줄 등장) 그대로 중복 표시된다 — summary()와 동일하게
+    # 이름 기준으로 중복 제거.
+    miss_names = list(dict.fromkeys(name for g in q.missing_groups for name in g.allowed_names))
+    if miss_names:
+        items = "".join(f'<div class="tip-item">{esc(n)}</div>' for n in miss_names)
+        label = f"자격 미달 — 미보유 {len(miss_names)}건: " + ", ".join(miss_names)
+        return (
+            f'<button type="button" class="qual-dot" aria-label="{esc(label)}">'
+            f'<span class="circle circle-fail">{_CHECK_SVG}</span>'
+            f'<span class="tip"><div class="tip-title" style="color:var(--fail-fg);">미보유 자격 {len(miss_names)}건</div>'
+            f"{items}"
+            '<div class="tip-note">이름 뒤 괄호 숫자는 세부품명번호·업종코드입니다. '
+            "코드가 없는 항목은 면허제한정보 API에 코드 필드 자체가 없어 이름만 표시됩니다.</div></span>"
+            "</button>"
+        )
+    return (
+        '<button type="button" class="qual-dot" aria-label="자격 충족">'
+        f'<span class="circle circle-pass">{_CHECK_SVG}</span>'
+        '<span class="tip"><div class="tip-title" style="color:var(--pass-fg);">자격 충족</div></span>'
+        "</button>"
+    )
+
+
+def _deadline_cell_html(c: Candidate, esc) -> str:
+    """표의 '입찰마감일' 칸. 잔여일수를 'D-N' 배지로 먼저 보여주고, 그 아래
+    실제 마감 시각과 어떤 마감(자격등록/공동수급협정/입찰/첨부파일 제출기한)
+    인지를 작게 붙인다."""
+    earliest = c.schedule.earliest
+    if earliest is None:
+        return '<span class="dim">일정 미상</span>'
+    label, when = earliest
+    days = c.days_left
+    if days is None:
+        dday_html = ""
+    else:
+        dday = f"D-{days}" if days >= 0 else f"D+{-days}"
+        dday_html = f'<div class="dday">{esc(dday)}</div>'
+    return (
+        f"{dday_html}"
+        f'<div class="dl-date">{esc(_fmt_kr_deadline(when))}</div>'
+        f'<div class="dl-label dim">{esc(label)}</div>'
+    )
+
+
+def _opening_cell_html(c: Candidate, esc) -> str:
+    """표의 '공고일/개찰일' 칸. 둘 다 연월일까지만 표기한다(시각은 마감일
+    칸에서 이미 다루므로 여기선 생략)."""
+    posted = _fmt_kr_date(parse_datetime(c.notice.posted_at))
+    opening = _fmt_kr_date(parse_datetime(c.notice.opening_at))
+    return (
+        f'<div>공고일 {esc(posted) or "미상"}</div>'
+        f'<div class="dim">개찰일 {esc(opening) or "일정 미상"}</div>'
+    )
 
 
 def _row(index: int, c: Candidate) -> dict[str, str]:
@@ -165,23 +243,32 @@ def render_console(candidates: list[Candidate], stats: RunStats) -> str:
 _HTML_HEAD = """<meta charset="utf-8">
 <title>나라장터 입찰 모니터링 주간 리포트</title>
 <style>
-  :root { --bg:#fbfbfa; --fg:#1f1e1c; --muted:#6b6a66; --line:#e3e1dc; --accent:#2554c7; }
+  :root {
+    --bg:#fbfbfa; --fg:#1f1e1c; --muted:#6b6a66; --line:#e3e1dc; --accent:#2554c7;
+    --pass-bg:#eaf2fb; --pass-bd:#a8c7e6; --pass-fg:#1d5a99;
+    --fail-bg:#fdeeea; --fail-bd:#e6b8ae; --fail-fg:#9a3412;
+    --unchecked-bg:#fbf3d9; --unchecked-bd:#e3cf8f; --unchecked-fg:#8a6d16;
+  }
   body { margin:0; background:var(--bg); color:var(--fg);
          font-family:-apple-system,'Segoe UI','Malgun Gothic',sans-serif; line-height:1.55; }
-  .wrap { max-width:1100px; margin:0 auto; padding:32px 20px 64px; }
+  .wrap { max-width:1320px; margin:0 auto; padding:32px 20px 64px; }
   h1 { font-size:1.45rem; margin:0 0 6px; letter-spacing:-0.01em; }
   .sub { color:var(--muted); font-size:0.85rem; margin-bottom:20px; }
   .warn { color:#9a3412; font-size:0.85rem; display:block; margin-bottom:16px; }
   .section { font-size:1.05rem; font-weight:700; margin:28px 0 14px;
              padding-bottom:8px; border-bottom:2px solid var(--fg); }
-  .card { background:#fff; border:1px solid var(--line); border-radius:10px;
-          padding:16px 18px; margin-bottom:12px; }
-  .badges { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
-  .badge { font-size:0.72rem; padding:2px 10px; border-radius:6px; font-weight:600;
-           border:1px solid var(--line); background:#f6f5f2; color:var(--muted); }
+  .tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:#fff; }
+  table { border-collapse:collapse; width:100%; min-width:1100px; }
+  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line);
+           vertical-align:top; font-size:0.82rem; }
+  thead th { background:#f3f2ee; color:var(--muted); font-weight:700; font-size:0.72rem;
+             letter-spacing:0.01em; border-bottom:2px solid var(--fg); white-space:nowrap; }
+  tbody tr:hover { background:#f6f5f2; }
+  .badge { font-size:0.68rem; padding:2px 8px; border-radius:6px; font-weight:600;
+           border:1px solid var(--line); background:#f6f5f2; color:var(--muted); display:inline-block; }
   .badge.confidence-strong { border-color:#bfd8c4; background:#eef6f0; color:#2f6b45; }
   .badge.overseas { border-color:#e6b8ae; background:#fdeeea; color:#9a3412; cursor:help;
-                    position:relative; }
+                    position:relative; margin-left:4px; }
   .badge.overseas .tip {
     visibility:hidden; opacity:0; pointer-events:none;
     position:absolute; bottom:calc(100% + 8px); left:0; width:230px;
@@ -190,28 +277,51 @@ _HTML_HEAD = """<meta charset="utf-8">
     font-size:0.74rem; font-weight:400; color:var(--fg); text-align:left;
     line-height:1.5; transition:opacity .12s ease; z-index:20;
   }
-  .badge.overseas:hover .tip { visibility:visible; opacity:1; }
+  .badge.overseas:hover .tip, .badge.overseas:focus-visible .tip { visibility:visible; opacity:1; }
   .badge.overseas .tip .tip-row { color:var(--muted); margin-bottom:6px; }
   .badge.overseas .tip .tip-row b { color:var(--fg); font-weight:600; }
   .badge.overseas .tip .tip-tag {
     display:inline-block; padding:3px 8px; border-radius:999px;
     background:#eef6f0; border:1px solid #bfd8c4; color:#2f6b45; font-size:0.68rem;
   }
-  .card h2 { font-size:1.02rem; margin:0 0 10px; font-weight:700; }
-  .card h2 a { color:var(--accent); text-decoration:none; }
-  .card h2 a:hover { text-decoration:underline; }
-  .fields { display:flex; flex-direction:column; gap:3px; font-size:0.86rem; color:var(--fg); }
-  .fields .label { color:var(--muted); }
-  .fields .qual-row { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
-  .kwtags { margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; }
-  .kwtag { font-size:0.72rem; padding:2px 9px; border-radius:6px;
+  .rebadge { font-size:0.65rem; padding:1px 6px; border-radius:4px; font-weight:700;
+             background:var(--fail-bg); color:var(--fail-fg); border:1px solid var(--fail-bd); margin-left:4px; }
+  .notice-no { font-size:0.7rem; color:var(--muted); white-space:nowrap; }
+  .notice-title { font-weight:600; min-width:220px; }
+  .notice-title a { color:var(--accent); text-decoration:none; }
+  .notice-title a:hover { text-decoration:underline; }
+  .kwtags { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; }
+  .kwtag { font-size:0.65rem; padding:2px 7px; border-radius:6px;
            border:1px solid var(--line); background:#f6f5f2; color:var(--muted); }
-  .misstag { font-size:0.72rem; padding:2px 9px; border-radius:6px; line-height:1.4;
-             border:1px solid #e6b8ae; background:#fdeeea; color:#9a3412; }
-  .passtag { font-size:0.72rem; padding:2px 9px; border-radius:6px; line-height:1.4;
-             border:1px solid #a8c7e6; background:#eaf2fb; color:#1d5a99; }
-  .unchecktag { font-size:0.72rem; padding:2px 9px; border-radius:6px; line-height:1.4;
-                border:1px solid #e3cf8f; background:#fbf3d9; color:#8a6d16; }
+  .dim { color:var(--muted); }
+  .field-gap { font-size:0.68rem; color:#a3341f; border-bottom:1px dashed #cfcdc6; padding-bottom:1px; }
+  .dday { display:inline-block; font-weight:800; color:#fff; background:#c0392b;
+          font-size:0.68rem; padding:1px 6px; border-radius:4px; letter-spacing:0.01em; }
+  .dl-date { white-space:nowrap; margin-top:4px; }
+  .dl-label { font-size:0.65rem; margin-top:1px; }
+
+  /* 자격판정: 원 아이콘 + 호버/포커스 팝업 (미보유 자격명·코드번호) */
+  .qual-dot { position:relative; display:inline-flex; align-items:center; justify-content:center;
+              width:26px; height:26px; padding:0; margin:0; border:none; background:none; cursor:help; }
+  .qual-dot .circle { width:16px; height:16px; border-radius:50%; display:flex;
+                       align-items:center; justify-content:center; }
+  .circle-fail { background:#c0392b; }
+  .circle-pass { background:#2554c7; }
+  .circle-unchecked { background:#e3cf8f; }
+  .qual-dot .tip {
+    visibility:hidden; opacity:0; pointer-events:none;
+    position:absolute; bottom:calc(100% + 8px); left:50%; transform:translateX(-50%);
+    width:230px; background:#fff; border:1px solid var(--line); border-radius:10px;
+    box-shadow:0 8px 22px rgba(0,0,0,0.16); padding:10px 12px;
+    font-size:0.72rem; font-weight:400; color:var(--fg); text-align:left; line-height:1.5;
+    transition:opacity .12s ease; z-index:30;
+  }
+  .qual-dot:hover .tip, .qual-dot:focus-visible .tip { visibility:visible; opacity:1; }
+  .qual-dot .tip .tip-title { font-weight:700; margin-bottom:6px; }
+  .qual-dot .tip .tip-item { padding:4px 2px; border-top:1px solid var(--line); word-break:break-all; }
+  .qual-dot .tip .tip-item:first-child { border-top:none; }
+  .qual-dot .tip .tip-note { color:var(--muted); font-size:0.65rem; margin-top:6px; }
+
   .empty { text-align:center; color:var(--muted); padding:48px 0; }
   @media (max-width:520px) { .wrap { padding:20px 16px 48px; } }
 </style>
@@ -240,65 +350,64 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
     if not candidates:
         parts.append('<div class="empty">조건에 맞는 공고가 없습니다.</div>')
     else:
+        parts.append('<div class="tablewrap"><table>')
+        parts.append(
+            "<thead><tr>"
+            "<th>분야</th><th>계약방법</th><th>공고번호 / 공고명</th>"
+            "<th>추정가격(원)<br>배정예산(원)</th><th>자격판정</th>"
+            "<th>공동수급<br>(컨소시엄)</th><th>예가방법</th><th>수요기관</th>"
+            "<th>공고일 /<br>개찰일</th><th>입찰마감일</th>"
+            "</tr></thead><tbody>"
+        )
         for c in candidates:
-            earliest = c.schedule.earliest
             title = esc(c.notice.title)
             if c.notice.detail_url:
                 title = f'<a href="{esc(c.notice.detail_url)}" target="_blank" rel="noopener">{title}</a>'
 
             confidence_cls = " confidence-strong" if c.screen_result.confidence == "강력추천" else ""
+            re_badge = '<span class="rebadge">재공고</span>' if c.is_re_notice else ""
 
             overseas_badge = ""
             if c.screen_result.overseas_flag:
                 overseas_badge = (
-                    '<span class="badge overseas">ⓘ 해외의심'
+                    '<span class="badge overseas" tabindex="0">ⓘ 해외의심'
                     '<span class="tip">'
                     f'<div class="tip-row"><b>발주기관:</b> {esc(c.notice.notice_institution) or "미상"}</div>'
                     f'<span class="tip-tag">{esc(c.screen_result.overseas_evidence)}</span>'
                     "</span>"
                     "</span>"
                 )
-            parts.append('<div class="card">')
-            parts.append(
-                '<div class="badges">'
-                f'<span class="badge{confidence_cls}">{esc(c.screen_result.confidence)}</span>'
-                f'<span class="badge">[{esc(c.notice.work_type)}]</span>'
-                f"{overseas_badge}"
-                "</div>"
-            )
-            # 같은 미보유 자격이 여러 그룹에 걸쳐 잡히면(예: 첨부문서 내 같은
-            # 코드가 참가자격 절에 여러 줄 등장) 태그가 그만큼 중복 표시된다 —
-            # summary()와 동일하게 이름 기준으로 중복 제거.
-            miss_names = dict.fromkeys(
-                name for g in c.qualification.missing_groups for name in g.allowed_names
-            )
-            miss_tags = "".join(f'<span class="misstag">{esc(name)}</span>' for name in miss_names)
-            label = _qualification_label(c.qualification)
-            if label == "자격 충족":
-                label_cls = "passtag"
-            elif not c.qualification.checked:
-                label_cls = "unchecktag"
-            else:
-                label_cls = None
-            label_html = f'<span class="{label_cls}">{esc(label)}</span>' if label_cls else f"<span>{esc(label)}</span>"
-            qualification_html = f"{label_html}{miss_tags}"
 
-            parts.append(f"<h2>{title}</h2>")
-            parts.append(
-                '<div class="fields">'
-                f'<div><span class="label">기관:</span> {esc(c.notice.notice_institution) or "미상"}</div>'
-                f'<div><span class="label">예산:</span> {esc(_fmt_money(c.notice.budget)) or "미상"}</div>'
-                f'<div><span class="label">마감/일정:</span> {esc(_fmt_kr_deadline(earliest[1])) if earliest else "일정 미상"}</div>'
-                f'<div class="qual-row"><span class="label">자격판정:</span> {qualification_html}</div>'
-                f'<div><span class="label">공고번호:</span> {esc(c.notice.notice_no)}</div>'
-                "</div>"
-            )
-
+            kwtags = ""
             if c.screen_result.matched_keywords:
-                kwtags = "".join(f'<span class="kwtag">키워드:{esc(k)}</span>' for k in c.screen_result.matched_keywords)
-                parts.append(f'<div class="kwtags">{kwtags}</div>')
+                tags = "".join(f'<span class="kwtag">키워드:{esc(k)}</span>' for k in c.screen_result.matched_keywords)
+                kwtags = f'<div class="kwtags">{tags}</div>'
 
-            parts.append("</div>")
+            money_parts = []
+            if c.notice.estimated_price:
+                money_parts.append(f"<div>추정가격 {esc(_fmt_money(c.notice.estimated_price))}</div>")
+            if c.notice.assigned_budget and c.notice.assigned_budget != c.notice.estimated_price:
+                money_parts.append(f'<div class="dim">배정예산 {esc(_fmt_money(c.notice.assigned_budget))}</div>')
+            money_html = "".join(money_parts) or '<span class="dim">미상</span>'
+
+            parts.append(
+                "<tr>"
+                f'<td><span class="badge{confidence_cls}">{esc(c.screen_result.confidence)}</span>'
+                f'<span class="badge">[{esc(c.notice.work_type)}]</span></td>'
+                f"<td>{esc(c.notice.contract_method) or '-'}</td>"
+                f'<td class="notice-title">'
+                f'<div class="notice-no">{esc(c.notice.notice_no)}{re_badge}{overseas_badge}</div>'
+                f"<div>{title}</div>{kwtags}</td>"
+                f"<td>{money_html}</td>"
+                f"<td>{_qualification_cell_html(c.qualification, esc)}</td>"
+                f"<td>{esc(c.joint.label)}</td>"
+                f'<td><span class="dim field-gap">필드 미확인</span></td>'
+                f"<td>{esc(c.notice.demand_institution) or '-'}</td>"
+                f"<td>{_opening_cell_html(c, esc)}</td>"
+                f"<td>{_deadline_cell_html(c, esc)}</td>"
+                "</tr>"
+            )
+        parts.append("</tbody></table></div>")
 
     parts.append("</div>")
     return "\n".join(parts)
