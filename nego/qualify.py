@@ -196,8 +196,6 @@ _GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{4,10}")
 _BARE_GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{10}")
 _GROUP_ENTRY_STRIP_CHARS = " ,·/;、"
 _OR_MARKER_RE = re.compile(r"어느\s*하나")
-# 이름표에서 떼어낼 법령 인용 연결어. 실측 문서마다 표현이 달라 여러 개를 다룬다.
-_LABEL_CONNECTOR_RE = re.compile(r"(?:에\s*따른|에\s*의하여|규정에\s*따라)\s*")
 _MAX_LABEL_LEN = 20
 
 
@@ -231,12 +229,13 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
     """항목 한 줄에서 코드 표기가 붙은 요건을 [(코드, "이름(코드)" 이름표)]로 뽑는다.
 
     이름표는 두 가지 표기 관행을 다룬다 — "이름(업종코드 ####)"(괄호 앞이 이름)와
-    "(설명, 업종코드 ####)"(괄호 안 콤마 앞이 이름). 전자는 괄호 앞 구절에서
-    "…법에 따른/의하여" 같은 인용부를 떼고 남은 마지막 구절을 이름표로 쓴다.
-    실측 문서 문장이 다양해 완벽히 못 떼어낼 수 있으니, 그래도 너무 길면
-    (`_MAX_LABEL_LEN`) 뒷부분만 잘라 쓴다 — 문장 전체가 그대로 리포트에
-    나오는 것보다는, 한글 문장 특성상 대상 명사가 대개 끝에 오므로 뒷부분만
-    잘라도 알아볼 수 있는 경우가 많다.
+    "(설명, 업종코드 ####)"(괄호 안 콤마 앞이 이름). 전자는 괄호 바로 앞의
+    "마지막 한 단어"를 이름표로 쓴다 — 실측 문서의 품목명은 예외 없이 공백
+    없는 명사 하나였고(조명용제어장치, 조합놀이대, 실내건축공사업 …),
+    연결어("…법에 따른/의하여")와 괄호 사이에 마감일자 안내 같은 길이를
+    예측할 수 없는 절차 설명이 낄 수도 있어(실측: 사용자 제보) 연결어
+    종류를 나열해 떼어내는 방식은 안정적이지 않다. 그래도 너무 길면
+    (`_MAX_LABEL_LEN`) 뒷부분만 잘라 쓴다.
 
     세 단계로 나눠 뽑고, 뒤 단계는 앞 단계가 이미 잡은 구간을 다시 건드리지
     않는다(겹치면 건너뜀) — 문서마다 괄호/대괄호·구분자 표기가 제각각이라
@@ -272,8 +271,16 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
             else:
                 before_paren = prefix.rsplit("(", 1)[0] if "(" in prefix else prefix
                 before_paren = re.sub(r"^[\s\-·「『]+", "", before_paren)
-                segments = [s for s in _LABEL_CONNECTOR_RE.split(before_paren) if s.strip()]
-                name = (segments[-1] if segments else before_paren).strip()
+                # 실측 오류 재현(사용자 제보, 2026-09-17): "...규정」에 의하여
+                # 국가종합전자조달시스템G2B(나라장터)에 입찰참가자격등록 마감일시까지
+                # 조합놀이대(세부품명번호 10자리, 4924159701)…" — 연결어("에 의하여")와
+                # 괄호 사이에 마감일자 안내 같은, 길이를 예측할 수 없는 절차 설명이
+                # 낄 수 있어 알려진 연결어만 떼어내는 방식으로는 안 걸러진다.
+                # 실측 문서의 품목명은 예외 없이 공백 없는 명사 하나였다(조명용제어장치,
+                # 조합놀이대, 실내건축공사업, LED경관조명기구 …) — 그래서 연결어
+                # 종류를 나열하는 대신, 괄호 바로 앞 "마지막 한 단어"만 이름으로 본다.
+                tokens = before_paren.split()
+                name = tokens[-1] if tokens else before_paren.strip()
                 name = _truncate_label(name)
             results.append((code, f"{name}({code})" if name else code))
 

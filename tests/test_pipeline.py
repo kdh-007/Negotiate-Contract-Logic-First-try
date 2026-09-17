@@ -205,6 +205,23 @@ class TestQualification(unittest.TestCase):
         self.assertIn("(4924159701)", fail_summary)
         self.assertLess(len(fail_summary), 60, "실측 오류 재현: 문장 전체가 그대로 딸려 나오면 안 된다")
 
+    def test_extract_code_requirements_skips_procedural_clause_before_item_name(self):
+        """실측 오류 재현(사용자 제보 원문, 2026-09-17): 연결어("에 의하여")와
+        괄호 사이에 마감일자 안내 절차 문구가 끼면 "마감일시까지 조합놀이대"처럼
+        이름표에 그 문구가 그대로 딸려 나왔다. 괄호 바로 앞 마지막 한 단어만
+        이름으로 남겨야 한다."""
+        item = (
+            "나.「국가종합전자조달시스템 입찰참가자격등록규정」에 의하여 국가종합전자조달"
+            "시스템G2B(나라장터)에 입찰참가자격등록 마감일시까지 조합놀이대"
+            "(세부품명번호 10자리, 4924159701)을 제조물품으로 입찰참가 등록한 자"
+        )
+        requirements = qualify._extract_code_requirements(item)
+        self.assertEqual([code for code, _ in requirements], ["4924159701"])
+        self.assertEqual(requirements[0][1], "조합놀이대(4924159701)")
+
+        fail_summary = qualify.evaluate_attachment_text([item], held_codes={"9999"}).summary
+        self.assertEqual(fail_summary, "자격 미달(조합놀이대(4924159701))")
+
     def test_extract_code_requirements_recognizes_bare_10_digit_code(self):
         """실측: 두바이 의료기기전시회 한국관 공고문 — "세부품명번호" 키워드 없이
         "이름(코드)"만 쓴 문서. 정확히 10자리일 때만 코드로 인정해 연도·조항
