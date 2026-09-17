@@ -478,6 +478,19 @@ class TestSchedule(unittest.TestCase):
         self.assertEqual(when, datetime(2026, 9, 20, 18, 0))
 
 
+class TestNoticeOpeningAt(unittest.TestCase):
+    """개찰일(opengDt)은 fields.py에 후보가 있었지만 Notice에 연결이 안 돼 있었다 —
+    API가 실제로 주는 값이 파이프라인 어디에도 안 남고 버려지던 상태. 연결됐는지 확인."""
+
+    def test_opening_at_is_mapped_from_api_field(self):
+        n = notice_from_raw(fixtures.notice("X", opengDt="2026-09-25 11:00:00"), "용역")
+        self.assertEqual(n.opening_at, "2026-09-25 11:00:00")
+
+    def test_opening_at_is_none_when_absent(self):
+        n = notice_from_raw(fixtures.notice("X", opengDt=""), "용역")
+        self.assertIsNone(n.opening_at)
+
+
 class TestScheduleTextExtraction(unittest.TestCase):
     def test_extracts_deadline_with_time_range(self):
         """실측: 경상남도관광재단 「K-거상」공고 R26BK01707504 — API 마감
