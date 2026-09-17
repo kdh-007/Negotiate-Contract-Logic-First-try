@@ -177,6 +177,7 @@ def save_attachment_texts(
     timeout: float = 30.0,
     session: requests.Session | None = None,
     held_codes: set[str] | None = None,
+    held_code_names: dict[str, str] | None = None,
     now: datetime | None = None,
 ) -> dict[str, int]:
     """후보 공고의 첨부파일을 내려받아 텍스트를 `output_dir/attachment_text/`에 저장한다.
@@ -263,7 +264,7 @@ def save_attachment_texts(
         if not needs_check or not all_items:
             continue
 
-        result = evaluate_attachment_text(all_items, held_codes)
+        result = evaluate_attachment_text(all_items, held_codes, held_code_names)
         if result.checked:
             candidate.qualification = merge_results(qualification, result)
             stats["qualification_determined"] += 1
@@ -272,6 +273,13 @@ def save_attachment_texts(
                 # 가능성이 있다(예: "세부품명번호 10자리, ####" 필러) — 미달로
                 # 판정된 건은 원문을 눈으로 대조할 수 있게 -v로만 남긴다.
                 log.debug("첨부파일 재판정 원문 [%s]: %s", notice.notice_no, all_items)
+
+    # days_left가 위에서 갱신된 후보가 있을 수 있다("일정 미상" → 첨부파일로 보충) —
+    # build_candidates가 정렬해둔 순서(days_left 기준)가 그 사이 낡아지므로 다시 정렬한다.
+    # 그러지 않으면 이미 마감된 공고가 build_candidates 시점의 "일정 미상"(정렬 시
+    # 최후순위 취급) 자리에 그대로 남아 목록 맨 뒤에 밀려 있게 된다.
+    if candidates and hasattr(candidates[0], "sort_key"):
+        candidates.sort(key=lambda c: c.sort_key)
     return stats
 
 

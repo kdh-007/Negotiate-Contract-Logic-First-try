@@ -189,6 +189,38 @@ class TestQualification(unittest.TestCase):
         self.assertIn("자격 미달", result.summary)
         self.assertIn("실내건축공사업(4990)", result.summary, "이름과 코드가 함께 표시돼야 한다")
 
+    def test_evaluate_attachment_text_satisfied_label_uses_held_registry_name(self):
+        """실측 버그(사용자 제보, 2026-09-17): 첨부문서 원문 파싱은 문서 표기가
+        제각각이라 '충족된 자격' 팝업에 코드만 남거나("6010989901") 절차성
+        문구가 뒤섞인 이름("환경디자인을 포함한 종합디자인분야)[4444)")이 뜬다.
+        코드가 이미 held_codes에 있다는 걸 확인한 뒤이니, 파싱한 이름표 대신
+        등록증 원문 이름(held_code_names)을 그대로 쓰면 이 문제가 없어진다."""
+        item = "마.「건설산업기본법」 제9조에 따른 실내건축공사업(업종코드 4990)으로 입찰참가 등록한 자"
+        result = qualify.evaluate_attachment_text(
+            [item], held_codes={"4990"}, held_code_names={"4990": "실내건축공사업"}
+        )
+        self.assertEqual(
+            [g.allowed_names for g in result.satisfied_groups],
+            [["실내건축공사업(4990)"]],
+        )
+
+    def test_evaluate_attachment_text_satisfied_label_falls_back_without_registry(self):
+        """held_code_names를 안 주면(기존 호출부와의 하위호환) 파싱한 이름표를
+        그대로 쓴다 — 동작이 바뀌지 않아야 한다."""
+        item = "마.「건설산업기본법」 제9조에 따른 실내건축공사업(업종코드 4990)으로 입찰참가 등록한 자"
+        result = qualify.evaluate_attachment_text([item], held_codes={"4990"})
+        self.assertEqual([g.allowed_names for g in result.satisfied_groups], [["실내건축공사업(4990)"]])
+
+    def test_load_held_code_names_maps_products_and_industries(self):
+        held_config = {
+            "heldProducts": [{"code": "6010989901", "name": "실물모형및전시물"}],
+            "heldIndustries": [{"code": "4990", "name": "실내건축공사업"}],
+        }
+        self.assertEqual(
+            qualify.load_held_code_names(held_config),
+            {"6010989901": "실물모형및전시물", "4990": "실내건축공사업"},
+        )
+
     def test_extract_code_requirements_skips_digit_count_filler(self):
         """실측 오류 재현: "세부품명번호 10자리, 4924159701"에서 "10"을 코드로
         잘못 잡으면, 실제로는 보유한 코드(4924159701)인데도 미달로 오판정된다."""

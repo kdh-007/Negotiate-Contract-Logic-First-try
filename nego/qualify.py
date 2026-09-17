@@ -299,7 +299,9 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
     return results
 
 
-def evaluate_attachment_text(items: list[str], held_codes: set[str]) -> QualificationResult:
+def evaluate_attachment_text(
+    items: list[str], held_codes: set[str], held_code_names: dict[str, str] | None = None
+) -> QualificationResult:
     """첨부파일 참가자격 절에서 업종코드·세부품명번호가 명시된 항목만 뽑아,
     API 판정(`evaluate`)과 같은 형태의 결과를 만든다 — 리포트에서 "자격 충족" /
     "자격 미달(이름)"로 API 기반 판정과 똑같이 보이게 하기 위함이다.
@@ -312,6 +314,7 @@ def evaluate_attachment_text(items: list[str], held_codes: set[str]) -> Qualific
     (실측: 정선군 복합문화센터 공고문 — "라"항은 품목 3개를 모두 소지해야
     하고, "바"항은 "다음 중 어느 하나"로 명시됨).
     """
+    held_code_names = held_code_names or {}
     groups: list[LicenseGroup] = []
     missing: list[LicenseGroup] = []
     satisfied_groups: list[LicenseGroup] = []
@@ -322,8 +325,7 @@ def evaluate_attachment_text(items: list[str], held_codes: set[str]) -> Qualific
             continue
 
         group_no = str(idx)
-        group = LicenseGroup(group_no=group_no, allowed_names=[label for _, label in requirements])
-        groups.append(group)
+        groups.append(LicenseGroup(group_no=group_no, allowed_names=[label for _, label in requirements]))
 
         is_or = bool(_OR_MARKER_RE.search(item))
         held_flags = [code in held_codes for code, _ in requirements]
@@ -336,7 +338,13 @@ def evaluate_attachment_text(items: list[str], held_codes: set[str]) -> Qualific
             )
             missing.append(LicenseGroup(group_no=group_no, allowed_names=missing_labels))
         else:
-            satisfied_groups.append(group)
+            # 충족 판정은 이미 code in held_codes로 확인했으니 held_code_names에
+            # 그 코드가 반드시 있다 — 문서 원문 파싱 없이 등록증 이름을 그대로 쓴다.
+            canonical_labels = [
+                f"{held_code_names[code]}({code})" if code in held_code_names else label
+                for code, label in requirements
+            ]
+            satisfied_groups.append(LicenseGroup(group_no=group_no, allowed_names=canonical_labels))
 
     if not groups:
         return QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False)
@@ -397,6 +405,21 @@ def load_held_codes(held_config: dict) -> set[str]:
             if code:
                 codes.add(code)
     return codes
+
+
+def load_held_code_names(held_config: dict) -> dict[str, str]:
+    """코드 → 등록증에 적힌 이름. `evaluate_attachment_text`가 "충족" 판정을 낼 때
+    쓴다 — 코드가 이미 held_codes에 있다는 걸 확인한 뒤라 여기 lookup은 항상
+    성공한다. 첨부문서 원문에서 파싱한 이름표(문서 표기가 제각각이라 fragile함)
+    대신 등록증 원문 표기를 그대로 보여줄 수 있다."""
+    names: dict[str, str] = {}
+    for key in ("heldProducts", "heldIndustries"):
+        for entry in held_config.get(key, []):
+            code = str(entry.get("code", "")).strip()
+            name = str(entry.get("name", "")).strip()
+            if code and name:
+                names[code] = name
+    return names
 
 
 def fetch_license_groups(

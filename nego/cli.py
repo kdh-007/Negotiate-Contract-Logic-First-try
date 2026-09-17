@@ -157,7 +157,10 @@ def main(argv: list[str] | None = None) -> int:
         from .attachments import save_attachment_texts
 
         held_codes = qualify.load_held_codes(config.held_raw)
-        att_stats = save_attachment_texts(candidates, config.output_dir, held_codes=held_codes, now=now)
+        held_code_names = qualify.load_held_code_names(config.held_raw)
+        att_stats = save_attachment_texts(
+            candidates, config.output_dir, held_codes=held_codes, held_code_names=held_code_names, now=now
+        )
         print(
             f"첨부파일 텍스트 추출: 시도 {att_stats['attempted']}건 "
             f"→ 성공 {att_stats['ok']} / 실패 {att_stats['failed']}"
