@@ -28,8 +28,9 @@ from nego.attachments import (  # noqa: E402
     save_attachment_texts,
 )
 from nego.models import notice_from_raw  # noqa: E402
-from nego.qualify import LicenseGroup, QualificationResult  # noqa: E402
-from nego.screen import Schedule  # noqa: E402
+from nego.pipeline import Candidate  # noqa: E402
+from nego.qualify import JointSupply, LicenseGroup, QualificationResult  # noqa: E402
+from nego.screen import ScreenResult, Schedule  # noqa: E402
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "attachments"
 
@@ -748,6 +749,61 @@ class TestSaveAttachmentTexts(unittest.TestCase):
             )
 
         self.assertEqual(candidate.days_left, 4)
+
+    def test_reorders_candidates_after_filling_a_past_attachment_deadline(self):
+        """실측: 경상남도관광재단 K-거상 공고(R26BK01707504)는 build_candidates 시점엔
+        '일정 미상'(sort_key가 9999로 취급)이라 목록 맨 뒤에 놓였는데, 첨부파일로 마감이
+        채워진 뒤(이미 지난 마감이라 days_left가 음수) 재정렬을 안 하면 이미 마감된
+        공고가 여전히 목록 맨 뒤에(예: 앞으로 38일 남은 공고보다도 뒤에) 남는다."""
+        soon_raw = {
+            "bidNtceNo": "R26TEST0008",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "마감이 곧인 공고",
+            "bidQlfctRgstDt": "2026-09-15 18:00:00",
+        }
+        soon_notice = notice_from_raw(soon_raw, "용역")
+        soon_schedule = Schedule(
+            qualification_deadline=datetime(2026, 9, 15, 18, 0),
+            joint_agreement_deadline=None,
+            bid_deadline=None,
+        )
+        soon = Candidate(
+            notice=soon_notice,
+            screen_result=ScreenResult(matched=True, confidence="참고용"),
+            qualification=_api_qualification(True),
+            joint=JointSupply(allowed=True, submit_type=None, exec_type=None, raw_value=None),
+            schedule=soon_schedule,
+            days_left=5,
+        )
+
+        stale_raw = {
+            "bidNtceNo": "R26TEST0009",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "일정 미상이었다가 첨부파일로 마감이 밝혀진 공고",
+            "ntceSpecFileNm1": "a.hwpx",
+            "ntceSpecDocUrl1": "https://example.com/a.hwpx",
+        }
+        stale_notice = notice_from_raw(stale_raw, "용역")
+        stale_schedule = Schedule(qualification_deadline=None, joint_agreement_deadline=None, bid_deadline=None)
+        stale = Candidate(
+            notice=stale_notice,
+            screen_result=ScreenResult(matched=True, confidence="참고용"),
+            qualification=_api_qualification(True),
+            joint=JointSupply(allowed=True, submit_type=None, exec_type=None, raw_value=None),
+            schedule=stale_schedule,
+            days_left=None,  # build_candidates 시점엔 '일정 미상'
+        )
+
+        data = _build_hwpx(["- 제출기한 : 2026. 9. 3.(목) 18:00"])  # now(9/10) 기준 이미 지남
+        candidates = [soon, stale]  # build_candidates가 정렬해뒀다고 가정한 초기 순서
+
+        with tempfile.TemporaryDirectory() as tmp:
+            save_attachment_texts(
+                candidates, Path(tmp), timeout=5.0, session=FakeSession(data), now=datetime(2026, 9, 10)
+            )
+
+        self.assertEqual(stale.days_left, -7)
+        self.assertEqual([c.notice.notice_no for c in candidates], ["R26TEST0009", "R26TEST0008"])
 
     def test_attachment_deadline_untouched_when_api_schedule_already_known(self):
         """API가 이미 마감일자를 하나라도 준 공고는 첨부파일 원문을 뒤지지 않는다."""

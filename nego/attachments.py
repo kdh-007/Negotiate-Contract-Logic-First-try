@@ -272,6 +272,13 @@ def save_attachment_texts(
                 # 가능성이 있다(예: "세부품명번호 10자리, ####" 필러) — 미달로
                 # 판정된 건은 원문을 눈으로 대조할 수 있게 -v로만 남긴다.
                 log.debug("첨부파일 재판정 원문 [%s]: %s", notice.notice_no, all_items)
+
+    # days_left가 위에서 갱신된 후보가 있을 수 있다("일정 미상" → 첨부파일로 보충) —
+    # build_candidates가 정렬해둔 순서(days_left 기준)가 그 사이 낡아지므로 다시 정렬한다.
+    # 그러지 않으면 이미 마감된 공고가 build_candidates 시점의 "일정 미상"(정렬 시
+    # 최후순위 취급) 자리에 그대로 남아 목록 맨 뒤에 밀려 있게 된다.
+    if candidates and hasattr(candidates[0], "sort_key"):
+        candidates.sort(key=lambda c: c.sort_key)
     return stats
 
 
