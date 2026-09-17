@@ -298,6 +298,8 @@ _HTML_HEAD = """<meta charset="utf-8">
   .notice-title { font-weight:600; min-width:220px; }
   .notice-title a { color:var(--accent); text-decoration:none; }
   .notice-title a:hover { text-decoration:underline; }
+  .title-text { display:block; max-width:340px; overflow:hidden;
+                text-overflow:ellipsis; white-space:nowrap; }
   .kwtags { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; }
   .kwtag { font-size:0.65rem; padding:2px 7px; border-radius:6px;
            border:1px solid var(--line); background:#f6f5f2; color:var(--muted); }
@@ -368,9 +370,15 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
             "</tr></thead><tbody>"
         )
         for c in candidates:
-            title = esc(c.notice.title)
+            title_text = esc(c.notice.title)
+            title = title_text
             if c.notice.detail_url:
                 title = f'<a href="{esc(c.notice.detail_url)}" target="_blank" rel="noopener">{title}</a>'
+            # 제목이 길면 한 줄로 잘라 "..."으로 표시한다(공고번호/공고명 칸에
+            # 그 밑으로 키워드 태그 등이 이어지는데, 제목이 여러 줄로 감싸이면
+            # 그 아래 칸들과 줄맞춤이 깨져 보였다) — title 속성으로 전체 제목은
+            # 마우스오버 시 그대로 보여준다.
+            title = f'<div class="title-text" title="{title_text}">{title}</div>'
 
             confidence_cls = " confidence-strong" if c.screen_result.confidence == "강력추천" else ""
             re_badge = '<span class="rebadge">재공고</span>' if c.is_re_notice else ""
@@ -408,7 +416,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 f'<td><div class="nowrap">{esc(c.notice.contract_method) or "-"}</div></td>'
                 f'<td class="notice-title">'
                 f'<div class="notice-no">{esc(c.notice.notice_no)}{re_badge}{overseas_badge}</div>'
-                f"<div>{title}</div>{kwtags}</td>"
+                f"{title}{kwtags}</td>"
                 f"<td><div>{money_html}</div></td>"
                 f"<td><div>{_qualification_cell_html(c.qualification, esc)}</div></td>"
                 f'<td><div class="nowrap">{esc(c.joint.label)}</div></td>'

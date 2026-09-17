@@ -83,6 +83,15 @@ class TestRenderHtml(unittest.TestCase):
         self.assertIn("키워드:인테리어", out)
         self.assertIn(candidates[0].qualification.summary, out)
 
+    def test_long_title_gets_ellipsis_wrapper_and_full_text_in_title_attr(self):
+        """공고명이 길면 여러 줄로 감싸이는 대신 한 줄로 자르고("..."는 CSS의
+        text-overflow가 담당) 마우스오버로 전체 제목을 볼 수 있게 title
+        속성에 원문을 그대로 남긴다."""
+        candidates, stats = self._candidates()
+        full_title = candidates[0].notice.title
+        out = render_html(candidates, stats, NOW)
+        self.assertIn(f'<div class="title-text" title="{full_title}">', out)
+
     def test_opening_at_is_shown_date_only_without_time(self):
         """개찰일은 연월일까지만 표기한다(시각 생략) — opengDt는 시각을 포함해서
         내려오지만 입찰마감일 칸에서 이미 시각을 다루므로 여기선 날짜만 쓴다."""
