@@ -335,6 +335,7 @@ _HTML_HEAD = """<meta charset="utf-8">
     font-size:0.74rem; font-weight:400; color:var(--fg); text-align:left;
     line-height:1.5; transition:opacity .12s ease; z-index:20;
   }
+  .badge.overseas.flip-up .tip { top:auto; bottom:calc(100% + 8px); }
   .badge.overseas:hover .tip, .badge.overseas:focus-visible .tip { visibility:visible; opacity:1; }
   .badge.overseas .tip .tip-row { color:var(--muted); margin-bottom:6px; }
   .badge.overseas .tip .tip-row b { color:var(--fg); font-weight:600; }
@@ -373,6 +374,10 @@ _HTML_HEAD = """<meta charset="utf-8">
      잘려 나가 보였다(실측 스크린샷 확인) — 아래로 열도록 바꾼다. 마지막
      행에서 아래로 잘리는 경우보다, 페이지 스크롤이 자연스럽게 이어지는
      아래쪽으로 여는 편이 안전하다. */
+  /* 기본은 아래로 연다. 화면 아래쪽 행에서 뷰포트 밖으로 잘리면(JS가 판단)
+     .flip-up을 붙여 위로 열게 한다 — 위/아래 어느 한쪽으로 고정하면 표
+     맨 위나 맨 아래 행 중 하나는 항상 잘리므로 행 위치에 따라 판단해야
+     한다. */
   .qual-dot .tip {
     visibility:hidden; opacity:0; pointer-events:none;
     position:absolute; top:calc(100% + 8px); left:50%; transform:translateX(-50%);
@@ -381,6 +386,7 @@ _HTML_HEAD = """<meta charset="utf-8">
     font-size:0.72rem; font-weight:400; color:var(--fg); text-align:left; line-height:1.5;
     transition:opacity .12s ease; z-index:30;
   }
+  .qual-dot.flip-up .tip { top:auto; bottom:calc(100% + 8px); }
   .qual-dot:hover .tip, .qual-dot:focus-visible .tip { visibility:visible; opacity:1; }
   .qual-dot .tip .tip-title { font-weight:700; margin-bottom:6px; }
   .qual-dot .tip .tip-item { padding:4px 2px; border-top:1px solid var(--line); word-break:break-all; }
@@ -391,6 +397,33 @@ _HTML_HEAD = """<meta charset="utf-8">
   @media (max-width:520px) { .wrap { padding:20px 16px 48px; } }
 </style>
 """
+
+# 자격판정 원(qual-dot)과 해외의심 배지 팁은 기본으로 아래에 연다(CSS).
+# 표 맨 아래쪽 행에서는 그게 또 뷰포트 밖으로 잘린다 — 위/아래 어느 한쪽
+# 으로만 고정하면 표의 한쪽 끝은 항상 잘리므로, 열기 직전에 실제로 아래
+# 공간이 모자라는지 봐서 그때만 위로 뒤집는다(.flip-up). visibility:hidden
+# 상태에서도 레이아웃은 잡혀 있어(display:none이 아니므로) 호버/포커스가
+# 들어오는 시점에 getBoundingClientRect로 미리 재둘 수 있다.
+_TOOLTIP_FLIP_SCRIPT = """<script>
+(function () {
+  function place(el) {
+    var tip = el.querySelector('.tip');
+    if (!tip) return;
+    el.classList.remove('flip-up');
+    var elRect = el.getBoundingClientRect();
+    var tipRect = tip.getBoundingClientRect();
+    var spaceBelow = window.innerHeight - elRect.bottom;
+    var spaceAbove = elRect.top;
+    if (spaceBelow < tipRect.height + 8 && spaceAbove > spaceBelow) {
+      el.classList.add('flip-up');
+    }
+  }
+  document.querySelectorAll('.qual-dot, .badge.overseas').forEach(function (el) {
+    el.addEventListener('mouseenter', function () { place(el); });
+    el.addEventListener('focus', function () { place(el); });
+  });
+})();
+</script>"""
 
 
 def render_html(candidates: list[Candidate], stats: RunStats, generated_at: datetime) -> str:
@@ -487,6 +520,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
         parts.append("</tbody></table></div>")
 
     parts.append("</div>")
+    parts.append(_TOOLTIP_FLIP_SCRIPT)
     return "\n".join(parts)
 
 
