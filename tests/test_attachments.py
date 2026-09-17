@@ -573,6 +573,49 @@ class TestSaveAttachmentTexts(unittest.TestCase):
         self.assertTrue(candidate.qualification.checked)
         self.assertEqual(candidate.qualification.summary, "자격 충족")
 
+    def test_satisfied_group_label_uses_held_registry_name_when_provided(self):
+        """held_code_names를 넘기면 '충족' 항목의 이름표를 문서 원문 파싱 대신
+        등록증 원문 이름으로 채운다 — 문서마다 표기가 달라 파싱이 fragile한
+        문제를 코드 lookup으로 우회한다(사용자 제보, 2026-09-17)."""
+        fixture = FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx"
+        raw = {
+            "bidNtceNo": "R26TEST0001",
+            "bidNtceOrd": "000",
+            "bidNtceNm": "테스트 공고",
+            "ntceSpecFileNm1": fixture.name,
+            "ntceSpecDocUrl1": f"file://{fixture}",
+        }
+        notice = notice_from_raw(raw, "용역")
+        session = FakeSession(fixture.read_bytes())
+        candidate = _FakeCandidate(notice, checked=False)
+        held_codes = {"6010989901", "5610150701", "5611210501", "4990", "4442", "4444", "6484", "1469"}
+        held_code_names = {
+            "6010989901": "실물모형및전시물",
+            "5610150701": "책장",
+            "5611210501": "라운지용의자",
+            "4990": "실내건축공사업",
+            "4442": "산업디자인전문회사(환경디자인분야)",
+            "4444": "산업디자인전문회사(종합디자인분야)",
+            "6484": "공공디자인 전문회사",
+            "1469": "소프트웨어사업자(디지털콘텐츠개발서비스사업)",
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            save_attachment_texts(
+                [candidate],
+                Path(tmp),
+                timeout=5.0,
+                session=session,
+                held_codes=held_codes,
+                held_code_names=held_code_names,
+            )
+
+        self.assertEqual(candidate.qualification.summary, "자격 충족")
+        all_names = [name for g in candidate.qualification.satisfied_groups for name in g.allowed_names]
+        self.assertIn("실내건축공사업(4990)", all_names)
+        self.assertIn("산업디자인전문회사(종합디자인분야)(4444)", all_names)
+        self.assertIn("소프트웨어사업자(디지털콘텐츠개발서비스사업)(1469)", all_names)
+
     def test_replaces_qualification_with_fail_when_a_code_missing(self):
         fixture = FIXTURES_DIR / "jeongseon_culture_center_notice.hwpx"
         raw = {

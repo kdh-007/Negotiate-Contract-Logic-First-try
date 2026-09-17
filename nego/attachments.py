@@ -177,6 +177,7 @@ def save_attachment_texts(
     timeout: float = 30.0,
     session: requests.Session | None = None,
     held_codes: set[str] | None = None,
+    held_code_names: dict[str, str] | None = None,
     now: datetime | None = None,
 ) -> dict[str, int]:
     """후보 공고의 첨부파일을 내려받아 텍스트를 `output_dir/attachment_text/`에 저장한다.
@@ -263,7 +264,7 @@ def save_attachment_texts(
         if not needs_check or not all_items:
             continue
 
-        result = evaluate_attachment_text(all_items, held_codes)
+        result = evaluate_attachment_text(all_items, held_codes, held_code_names)
         if result.checked:
             candidate.qualification = merge_results(qualification, result)
             stats["qualification_determined"] += 1
