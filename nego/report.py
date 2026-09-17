@@ -266,11 +266,13 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 f"{overseas_badge}"
                 "</div>"
             )
-            miss_tags = "".join(
-                f'<span class="misstag">{esc(name)}</span>'
-                for g in c.qualification.missing_groups
-                for name in g.allowed_names
+            # 같은 미보유 자격이 여러 그룹에 걸쳐 잡히면(예: 첨부문서 내 같은
+            # 코드가 참가자격 절에 여러 줄 등장) 태그가 그만큼 중복 표시된다 —
+            # summary()와 동일하게 이름 기준으로 중복 제거.
+            miss_names = dict.fromkeys(
+                name for g in c.qualification.missing_groups for name in g.allowed_names
             )
+            miss_tags = "".join(f'<span class="misstag">{esc(name)}</span>' for name in miss_names)
             label = _qualification_label(c.qualification)
             if label == "자격 충족":
                 label_cls = "passtag"

@@ -102,6 +102,24 @@ class TestRenderHtml(unittest.TestCase):
         out = render_html(candidates, stats, NOW)
         self.assertIn('<span class="passtag">자격 충족</span>', out)
 
+    def test_missing_qualification_tag_dedupes_same_name_across_groups(self):
+        """실측: 단양군 미디어아트 공고(R26BK01731335) — 첨부문서 참가자격 절에
+        같은 세부품명번호(조명용제어장치)가 항목 3개에 걸쳐 등장하면
+        `evaluate_attachment_text`가 미충족 그룹 3개를 만든다. 태그는 이름
+        기준으로 한 번만 나와야 한다(summary()의 중복 제거와 동일)."""
+        from nego.qualify import LicenseGroup, QualificationResult
+
+        candidates, stats = self._candidates()
+        name = "조명용제어장치(3912110702)"
+        candidates[0].qualification = QualificationResult(
+            total_groups=3,
+            missing_groups=[LicenseGroup(group_no=str(i), allowed_names=[name]) for i in range(3)],
+            passes=False,
+            checked=True,
+        )
+        out = render_html(candidates, stats, NOW)
+        self.assertEqual(out.count(f'<span class="misstag">{name}</span>'), 1)
+
     def test_qualification_unchecked_is_wrapped_in_gray_box(self):
         """자격정보가 없어 판정을 못 한(통과 처리된) 경우는 회색 박스로,
         '자격 미달'과 헷갈리지 않는 중립적인 문구로 표시돼야 한다."""
