@@ -41,6 +41,11 @@ class QualificationResult:
     missing_groups: list[LicenseGroup]
     passes: bool
     checked: bool  # False면 자격정보가 없어 판정을 못 한 것 (fail-open으로 통과)
+    # 충족된 그룹. HTML 리포트의 파란 체크원(자격 충족) 호버 팝업에 미보유 쪽과
+    # 같은 형식("이름(코드)")으로 보여주기 위한 것 — 판정 자체(passes/missing_groups)엔
+    # 관여하지 않는다. 직접 QualificationResult(...)를 만드는 기존 테스트 코드가
+    # 전부 깨지지 않도록 기본값을 빈 리스트로 둔다.
+    satisfied_groups: list[LicenseGroup] = field(default_factory=list)
 
     @property
     def missing_count(self) -> int:
@@ -136,11 +141,13 @@ def evaluate(groups: list[LicenseGroup], held_names: list[str]) -> Qualification
         return QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False)
 
     missing = [g for g in groups if not _is_group_satisfied(g, held_names)]
+    satisfied = [g for g in groups if g not in missing]
     return QualificationResult(
         total_groups=len(groups),
         missing_groups=missing,
         passes=len(missing) <= MAX_ALLOWED_MISSING_QUALIFICATIONS,
         checked=True,
+        satisfied_groups=satisfied,
     )
 
 
@@ -280,6 +287,7 @@ def evaluate_attachment_text(items: list[str], held_codes: set[str]) -> Qualific
     """
     groups: list[LicenseGroup] = []
     missing: list[LicenseGroup] = []
+    satisfied_groups: list[LicenseGroup] = []
 
     for idx, item in enumerate(items):
         requirements = _extract_code_requirements(item)
@@ -287,7 +295,8 @@ def evaluate_attachment_text(items: list[str], held_codes: set[str]) -> Qualific
             continue
 
         group_no = str(idx)
-        groups.append(LicenseGroup(group_no=group_no, allowed_names=[label for _, label in requirements]))
+        group = LicenseGroup(group_no=group_no, allowed_names=[label for _, label in requirements])
+        groups.append(group)
 
         is_or = bool(_OR_MARKER_RE.search(item))
         held_flags = [code in held_codes for code, _ in requirements]
@@ -299,6 +308,8 @@ def evaluate_attachment_text(items: list[str], held_codes: set[str]) -> Qualific
                 else [label for (_, label), ok in zip(requirements, held_flags) if not ok]
             )
             missing.append(LicenseGroup(group_no=group_no, allowed_names=missing_labels))
+        else:
+            satisfied_groups.append(group)
 
     if not groups:
         return QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False)
@@ -308,6 +319,7 @@ def evaluate_attachment_text(items: list[str], held_codes: set[str]) -> Qualific
         missing_groups=missing,
         passes=len(missing) <= MAX_ALLOWED_MISSING_QUALIFICATIONS,
         checked=True,
+        satisfied_groups=satisfied_groups,
     )
 
 
@@ -336,6 +348,7 @@ def merge_results(base: QualificationResult, extra: QualificationResult) -> Qual
         missing_groups=missing,
         passes=len(missing) <= MAX_ALLOWED_MISSING_QUALIFICATIONS,
         checked=True,
+        satisfied_groups=base.satisfied_groups + extra.satisfied_groups,
     )
 
 

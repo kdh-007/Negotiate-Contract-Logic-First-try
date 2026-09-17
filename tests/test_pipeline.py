@@ -146,6 +146,17 @@ class TestQualification(unittest.TestCase):
         self.assertEqual(result.missing_count, 1)
         self.assertTrue(result.passes, "1개까지는 통과 — 기존 규칙")
 
+    def test_satisfied_groups_tracked_separately_from_missing(self):
+        """자격판정 팝업에서 파란 원(충족)도 빨간 원(미달)과 같은 형식으로
+        보여주려면 어떤 그룹이 충족됐는지 알아야 한다."""
+        groups = [
+            qualify.LicenseGroup("1", ["실내건축공사업"]),  # 보유 — 충족
+            qualify.LicenseGroup("2", ["전기공사업"]),  # 미보유 — 미달
+        ]
+        result = qualify.evaluate(groups, self.held)
+        self.assertEqual([g.group_no for g in result.satisfied_groups], ["1"])
+        self.assertEqual([g.group_no for g in result.missing_groups], ["2"])
+
     def test_substring_matching_is_permissive(self):
         """현행 동작 기록: '건축공사업'이 보유 업종 '실내건축공사업'에 부분일치로 걸린다.
 
