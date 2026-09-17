@@ -94,18 +94,19 @@ class TestRenderHtml(unittest.TestCase):
 
     def test_opening_at_is_shown_date_only_without_time(self):
         """개찰일은 연월일까지만 표기한다(시각 생략) — opengDt는 시각을 포함해서
-        내려오지만 입찰마감일 칸에서 이미 시각을 다루므로 여기선 날짜만 쓴다."""
+        내려오지만 입찰마감일 칸에서 이미 시각을 다루므로 여기선 날짜만 쓴다.
+        헤더가 "공고일 / 개찰일" 순서를 알려주므로 칸 안엔 값만 둘째 줄(dim)로 둔다."""
         candidates, stats = self._candidates()
         candidates[0].notice.opening_at = "2026-09-24 10:00:00"
         out = render_html(candidates, stats, NOW)
-        self.assertIn("개찰일 2026. 9. 24.", out)
+        self.assertIn('<div class="dim nowrap">2026. 9. 24.</div>', out)
         self.assertNotIn("10:00", out)
 
     def test_opening_at_missing_shows_placeholder(self):
         candidates, stats = self._candidates()
         candidates[0].notice.opening_at = None
         out = render_html(candidates, stats, NOW)
-        self.assertIn("개찰일 일정 미상", out)
+        self.assertIn('<div class="dim nowrap">일정 미상</div>', out)
 
     def test_deadline_shows_dday_badge(self):
         candidates, stats = self._candidates()
@@ -146,6 +147,25 @@ class TestRenderHtml(unittest.TestCase):
         out = render_html(candidates, stats, NOW)
         self.assertIn('<span class="circle circle-pass">', out)
         self.assertIn('aria-label="자격 충족"', out)
+
+    def test_qualification_pass_tooltip_lists_satisfied_names_like_the_fail_one(self):
+        """파란 원(자격 충족)도 빨간 원과 같은 형식으로 충족된 자격명·코드번호를
+        호버/포커스 팝업에 보여줘야 한다."""
+        from nego.qualify import LicenseGroup, QualificationResult
+
+        candidates, stats = self._candidates()
+        name = "실내건축공사업(4990)"
+        candidates[0].qualification = QualificationResult(
+            total_groups=1,
+            missing_groups=[],
+            passes=True,
+            checked=True,
+            satisfied_groups=[LicenseGroup(group_no="1", allowed_names=[name])],
+        )
+        out = render_html(candidates, stats, NOW)
+        self.assertIn('<span class="circle circle-pass">', out)
+        self.assertIn(f'<div class="tip-item">{name}</div>', out)
+        self.assertIn('<div class="tip-title" style="color:var(--pass-fg);">충족된 자격 1건</div>', out)
 
     def test_missing_qualification_tooltip_dedupes_same_name_across_groups(self):
         """실측: 단양군 미디어아트 공고(R26BK01731335) — 첨부문서 참가자격 절에

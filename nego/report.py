@@ -108,10 +108,26 @@ def _qualification_cell_html(q, esc) -> str:
             "코드가 없는 항목은 면허제한정보 API에 코드 필드 자체가 없어 이름만 표시됩니다.</div></span>"
             "</button>"
         )
+    # 미달 쪽과 같은 형식("이름(코드)")으로 충족된 자격도 보여준다. 직접
+    # QualificationResult(...)를 만드는 옛 테스트처럼 satisfied_groups가 없는
+    # 경우엔 목록 없이 "자격 충족"만 남긴다(하위 호환).
+    ok_names = list(dict.fromkeys(name for g in q.satisfied_groups for name in g.allowed_names))
+    if not ok_names:
+        return (
+            '<button type="button" class="qual-dot" aria-label="자격 충족">'
+            f'<span class="circle circle-pass">{_CHECK_SVG}</span>'
+            '<span class="tip"><div class="tip-title" style="color:var(--pass-fg);">자격 충족</div></span>'
+            "</button>"
+        )
+    items = "".join(f'<div class="tip-item">{esc(n)}</div>' for n in ok_names)
+    label = f"자격 충족 — 충족된 자격 {len(ok_names)}건: " + ", ".join(ok_names)
     return (
-        '<button type="button" class="qual-dot" aria-label="자격 충족">'
+        f'<button type="button" class="qual-dot" aria-label="{esc(label)}">'
         f'<span class="circle circle-pass">{_CHECK_SVG}</span>'
-        '<span class="tip"><div class="tip-title" style="color:var(--pass-fg);">자격 충족</div></span>'
+        f'<span class="tip"><div class="tip-title" style="color:var(--pass-fg);">충족된 자격 {len(ok_names)}건</div>'
+        f"{items}"
+        '<div class="tip-note">이름 뒤 괄호 숫자는 세부품명번호·업종코드입니다. '
+        "코드가 없는 항목은 면허제한정보 API에 코드 필드 자체가 없어 이름만 표시됩니다.</div></span>"
         "</button>"
     )
 
@@ -142,10 +158,10 @@ def _opening_cell_html(c: Candidate, esc) -> str:
     칸에서 이미 다루므로 여기선 생략)."""
     posted = _fmt_kr_date(parse_datetime(c.notice.posted_at))
     opening = _fmt_kr_date(parse_datetime(c.notice.opening_at))
-    return (
-        f'<div class="nowrap">공고일 {esc(posted) or "미상"}</div>'
-        f'<div class="dim nowrap">개찰일 {esc(opening) or "일정 미상"}</div>'
-    )
+    # 헤더가 이미 "공고일 / 개찰일" 순서를 알려주므로 칸 안에서는 값만 두 줄로
+    # 보여준다(둘째 줄은 옅은 색으로 개찰일임을 구분) — 라벨을 더 붙이면 좁은
+    # 칸에서 한 줄로 이어 붙이기 어려워진다.
+    return f'<div class="nowrap">{esc(posted) or "미상"}</div><div class="dim nowrap">{esc(opening) or "일정 미상"}</div>'
 
 
 def _row(index: int, c: Candidate) -> dict[str, str]:
@@ -258,9 +274,9 @@ _HTML_HEAD = """<meta charset="utf-8">
   .section { font-size:1.05rem; font-weight:700; margin:28px 0 14px;
              padding-bottom:8px; border-bottom:2px solid var(--fg); }
   .tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:#fff; }
-  table { border-collapse:collapse; width:100%; min-width:1100px; }
-  th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line);
-           vertical-align:top; font-size:0.82rem; line-height:1.4; }
+  table { border-collapse:collapse; width:100%; min-width:820px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line);
+           vertical-align:top; font-size:0.75rem; line-height:1.4; }
   /* 셀 내용을 항상 블록(div)으로 감싸서 시작점을 맞춘다 — 뱃지/버튼 같은
      인라인 요소가 셀에 바로 있으면 브라우저가 셀마다 다른 줄상자 높이를
      잡아 계약방법/예가방법/수요기관/개찰일 같은 옆 칸과 첫 줄이 미묘하게
@@ -294,11 +310,11 @@ _HTML_HEAD = """<meta charset="utf-8">
   .rebadge { font-size:0.65rem; padding:1px 6px; border-radius:4px; font-weight:700;
              background:var(--fail-bg); color:var(--fail-fg); border:1px solid var(--fail-bd);
              margin-left:4px; white-space:nowrap; }
-  .notice-no { font-size:0.7rem; color:var(--muted); white-space:nowrap; }
-  .notice-title { font-weight:600; min-width:220px; }
+  .notice-no { font-size:0.68rem; color:var(--muted); white-space:nowrap; }
+  .notice-title { font-weight:600; }
   .notice-title a { color:var(--accent); text-decoration:none; }
   .notice-title a:hover { text-decoration:underline; }
-  .title-text { display:block; max-width:340px; overflow:hidden;
+  .title-text { display:block; max-width:175px; overflow:hidden;
                 text-overflow:ellipsis; white-space:nowrap; }
   .kwtags { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; }
   .kwtag { font-size:0.65rem; padding:2px 7px; border-radius:6px;
@@ -307,7 +323,7 @@ _HTML_HEAD = """<meta charset="utf-8">
   .nowrap { white-space:nowrap; }
   .dday { display:inline-block; font-weight:800; color:#fff; background:#c0392b;
           font-size:0.68rem; padding:1px 6px; border-radius:4px; letter-spacing:0.01em; }
-  .dl-date { white-space:nowrap; margin-top:4px; }
+  .dl-date { white-space:nowrap; margin-top:4px; font-size:0.72rem; }
   .dl-label { font-size:0.65rem; margin-top:1px; white-space:nowrap; }
 
   /* 자격판정: 원 아이콘 + 호버/포커스 팝업 (미보유 자격명·코드번호) */
@@ -399,12 +415,15 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 tags = "".join(f'<span class="kwtag">키워드:{esc(k)}</span>' for k in c.screen_result.matched_keywords)
                 kwtags = f'<div class="kwtags">{tags}</div>'
 
+            # 헤더가 "추정가격(원) / 배정예산(원)" 순서를 알려주므로 칸 안 라벨은
+            # "추정"/"배정" 두 글자로 줄인다 — 값 하나만 있을 때도 어느 쪽인지는
+            # 알 수 있게 유지하되 폭은 아낀다.
             money_parts = []
             if c.notice.estimated_price:
-                money_parts.append(f'<div class="nowrap">추정가격 {esc(_fmt_money(c.notice.estimated_price))}</div>')
+                money_parts.append(f'<div class="nowrap">추정 {esc(_fmt_money(c.notice.estimated_price))}</div>')
             if c.notice.assigned_budget and c.notice.assigned_budget != c.notice.estimated_price:
                 money_parts.append(
-                    f'<div class="dim nowrap">배정예산 {esc(_fmt_money(c.notice.assigned_budget))}</div>'
+                    f'<div class="dim nowrap">배정 {esc(_fmt_money(c.notice.assigned_budget))}</div>'
                 )
             money_html = "".join(money_parts) or '<span class="dim">미상</span>'
 
