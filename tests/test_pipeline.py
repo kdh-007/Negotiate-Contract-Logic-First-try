@@ -504,6 +504,20 @@ class TestNoticeOpeningAt(unittest.TestCase):
         self.assertIsNone(n.opening_at)
 
 
+class TestNoticeEstimatePriceMethod(unittest.TestCase):
+    """예가방법(예정가격 결정방법). 실측(2026-09-17 `nego --verify`, Run #46)으로
+    확인한 필드 — 용역/물품/공사 세 오퍼레이션 모두에서 prearngPrceDcsnMthdNm으로
+    내려온다(예: 용역="비예가", 물품/공사="단일예가")."""
+
+    def test_estimate_price_method_is_mapped_from_api_field(self):
+        n = notice_from_raw(fixtures.notice("X", prearngPrceDcsnMthdNm="단일예가"), "용역")
+        self.assertEqual(n.estimate_price_method, "단일예가")
+
+    def test_estimate_price_method_is_none_when_absent(self):
+        n = notice_from_raw(fixtures.notice("X", prearngPrceDcsnMthdNm=""), "용역")
+        self.assertIsNone(n.estimate_price_method)
+
+
 class TestScheduleTextExtraction(unittest.TestCase):
     def test_extracts_deadline_with_time_range(self):
         """실측: 경상남도관광재단 「K-거상」공고 R26BK01707504 — API 마감

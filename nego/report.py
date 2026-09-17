@@ -302,8 +302,6 @@ _HTML_HEAD = """<meta charset="utf-8">
   .kwtag { font-size:0.65rem; padding:2px 7px; border-radius:6px;
            border:1px solid var(--line); background:#f6f5f2; color:var(--muted); }
   .dim { color:var(--muted); }
-  .field-gap { font-size:0.68rem; color:#a3341f; border-bottom:1px dashed #cfcdc6;
-               padding-bottom:1px; white-space:nowrap; }
   .dday { display:inline-block; font-weight:800; color:#fff; background:#c0392b;
           font-size:0.68rem; padding:1px 6px; border-radius:4px; letter-spacing:0.01em; }
   .dl-date { white-space:nowrap; margin-top:4px; }
@@ -411,7 +409,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 f"<td><div>{money_html}</div></td>"
                 f"<td><div>{_qualification_cell_html(c.qualification, esc)}</div></td>"
                 f"<td><div>{esc(c.joint.label)}</div></td>"
-                f'<td><div><span class="dim field-gap">필드 미확인</span></div></td>'
+                f"<td><div>{esc(c.notice.estimate_price_method) or '-'}</div></td>"
                 f"<td><div>{esc(c.notice.demand_institution) or '-'}</div></td>"
                 f"<td><div>{_opening_cell_html(c, esc)}</div></td>"
                 f"<td><div>{_deadline_cell_html(c, esc)}</div></td>"

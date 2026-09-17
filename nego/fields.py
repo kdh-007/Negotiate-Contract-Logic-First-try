@@ -55,6 +55,10 @@ FIELD_CANDIDATES: dict[str, list[str]] = {
     "qualification_deadline": ["bidQlfctRgstDt"],
     "bid_deadline": ["bidClseDt", "bidClseDate"],
     "opening_at": ["opengDt"],
+    # 예가방법(예정가격 결정방법). 실측(2026-09-17 `nego --verify`, Run #46):
+    # 용역/물품/공사 세 오퍼레이션 모두에 있고 값도 실제로 채워져 있다
+    # (예: 용역="비예가", 물품/공사="단일예가"). "복수예가"도 나올 수 있다.
+    "estimate_price_method": ["prearngPrceDcsnMthdNm"],
     # ── 공동수급 ─────────────────────────────────────────
     "joint_method_code": ["cmmnSpldmdMethdCd"],
     "joint_method_name": ["cmmnSpldmdMethdNm"],

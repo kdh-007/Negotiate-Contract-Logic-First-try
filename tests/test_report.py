@@ -104,12 +104,19 @@ class TestRenderHtml(unittest.TestCase):
         out = render_html(candidates, stats, NOW)
         self.assertIn('<div class="dday">D-3</div>', out)
 
-    def test_estimate_price_method_is_marked_field_unconfirmed(self):
-        """예가방법(복수예가/단일예가 등)에 해당하는 API 필드를 아직 확인 못 했다 —
-        없는 필드를 있는 척 채우지 않고 명시적으로 '필드 미확인'이라고 표시한다."""
+    def test_estimate_price_method_shows_real_value(self):
+        """예가방법(예정가격 결정방법) — 실측(2026-09-17 `nego --verify`, Run #46)으로
+        확인한 prearngPrceDcsnMthdNm 필드값을 그대로 보여준다."""
         candidates, stats = self._candidates()
+        candidates[0].notice.estimate_price_method = "단일예가"
         out = render_html(candidates, stats, NOW)
-        self.assertIn('<span class="dim field-gap">필드 미확인</span>', out)
+        self.assertIn("<td><div>단일예가</div></td>", out)
+
+    def test_estimate_price_method_missing_shows_dash(self):
+        candidates, stats = self._candidates()
+        candidates[0].notice.estimate_price_method = None
+        out = render_html(candidates, stats, NOW)
+        self.assertIn("<td><div>-</div></td>", out)
 
     def test_no_period_line_when_stats_lack_period(self):
         """--from-store처럼 조회 기간 정보가 없는 실행에서도 죽지 않아야 한다."""
