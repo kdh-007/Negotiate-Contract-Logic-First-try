@@ -232,6 +232,28 @@ def _spans_overlap(a: tuple[int, int], b: tuple[int, int]) -> bool:
     return a[0] < b[1] and a[1] > b[0]
 
 
+def _merge_wrapped_parens(text: str) -> str:
+    """PDF는 페이지 폭 기준으로만 줄바꿈해서, 문장 구조와 무관하게 단어나
+    괄호 중간에서 줄이 끊긴다(실측: 한국항공우주연구원 나로우주센터 공고
+    R26BK01710751 — "직접생산확인증명서(영상정보디스플레이\\n장치, 4511189301)"
+    처럼 "영상정보디스플레이장치"라는 한 단어가 줄바꿈에 걸려 반으로 잘렸다).
+    아래 코드 추출은 괄호/대괄호 하나가 한 줄 안에 있다고 보고 그 줄만 본다 —
+    그래서 이렇게 걸리면 코드 자체를 통째로 놓친다. 괄호/대괄호가 열린 채로
+    줄이 끝나면 그 줄바꿈만 지워 다시 한 줄로 합친다(공백을 넣지 않는다 —
+    단어 중간이 끊긴 경우가 많아 공백을 넣으면 오히려 단어가 갈라진다)."""
+    out = []
+    depth = 0
+    for ch in text:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth = max(0, depth - 1)
+        if ch == "\n" and depth > 0:
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
 def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
     """항목 한 줄에서 코드 표기가 붙은 요건을 [(코드, "이름(코드)" 이름표)]로 뽑는다.
 
@@ -261,7 +283,7 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
          경우만 코드로 인정한다.
     """
     results = []
-    for line in item.splitlines():
+    for line in _merge_wrapped_parens(item).splitlines():
         consumed: list[tuple[int, int]] = []
 
         for group_match in _PREFIXED_GROUP_RE.finditer(line):
