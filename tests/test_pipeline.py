@@ -339,6 +339,19 @@ class TestQualification(unittest.TestCase):
         result = qualify.evaluate(groups, self.held)
         self.assertEqual(result.summary, "자격 미달(전기공사업/정보통신공사업)")
 
+    def test_summary_dedupes_name_repeated_within_one_group_before_matching_other_groups(self):
+        """실측 재현(Run #45, R26BK01731335): 첨부문서 한 항목 안에서 같은 코드가
+        중복 추출되면 그 그룹의 allowed_names 자체가 ["A", "A"]가 된다. 이걸
+        그대로 "/"로 이으면 "A/A"가 되어, 다른 그룹의 단순 "A"와 문자열이 달라
+        중복 제거를 피해간다 — "자격 미달(A/A, A)"로 잘못 표시됐다."""
+        name = "조명용제어장치(3912110702)"
+        groups = [
+            qualify.LicenseGroup("1", [name, name]),
+            qualify.LicenseGroup("2", [name]),
+        ]
+        result = qualify.evaluate(groups, self.held)
+        self.assertEqual(result.summary, f"자격 미달({name})")
+
 
 class TestScreen(unittest.TestCase):
     config = screen.ScreenConfig(

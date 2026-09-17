@@ -260,12 +260,19 @@ _HTML_HEAD = """<meta charset="utf-8">
   .tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:#fff; }
   table { border-collapse:collapse; width:100%; min-width:1100px; }
   th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line);
-           vertical-align:top; font-size:0.82rem; }
+           vertical-align:top; font-size:0.82rem; line-height:1.4; }
+  /* 셀 내용을 항상 블록(div)으로 감싸서 시작점을 맞춘다 — 뱃지/버튼 같은
+     인라인 요소가 셀에 바로 있으면 브라우저가 셀마다 다른 줄상자 높이를
+     잡아 계약방법/예가방법/수요기관/개찰일 같은 옆 칸과 첫 줄이 미묘하게
+     어긋나 보였다. */
+  td > div:first-child { margin-top:0; }
   thead th { background:#f3f2ee; color:var(--muted); font-weight:700; font-size:0.72rem;
              letter-spacing:0.01em; border-bottom:2px solid var(--fg); white-space:nowrap; }
   tbody tr:hover { background:#f6f5f2; }
+  .badges { display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
   .badge { font-size:0.68rem; padding:2px 8px; border-radius:6px; font-weight:600;
-           border:1px solid var(--line); background:#f6f5f2; color:var(--muted); display:inline-block; }
+           border:1px solid var(--line); background:#f6f5f2; color:var(--muted);
+           display:inline-block; white-space:nowrap; line-height:1.3; }
   .badge.confidence-strong { border-color:#bfd8c4; background:#eef6f0; color:#2f6b45; }
   .badge.overseas { border-color:#e6b8ae; background:#fdeeea; color:#9a3412; cursor:help;
                     position:relative; margin-left:4px; }
@@ -285,7 +292,8 @@ _HTML_HEAD = """<meta charset="utf-8">
     background:#eef6f0; border:1px solid #bfd8c4; color:#2f6b45; font-size:0.68rem;
   }
   .rebadge { font-size:0.65rem; padding:1px 6px; border-radius:4px; font-weight:700;
-             background:var(--fail-bg); color:var(--fail-fg); border:1px solid var(--fail-bd); margin-left:4px; }
+             background:var(--fail-bg); color:var(--fail-fg); border:1px solid var(--fail-bd);
+             margin-left:4px; white-space:nowrap; }
   .notice-no { font-size:0.7rem; color:var(--muted); white-space:nowrap; }
   .notice-title { font-weight:600; min-width:220px; }
   .notice-title a { color:var(--accent); text-decoration:none; }
@@ -294,7 +302,8 @@ _HTML_HEAD = """<meta charset="utf-8">
   .kwtag { font-size:0.65rem; padding:2px 7px; border-radius:6px;
            border:1px solid var(--line); background:#f6f5f2; color:var(--muted); }
   .dim { color:var(--muted); }
-  .field-gap { font-size:0.68rem; color:#a3341f; border-bottom:1px dashed #cfcdc6; padding-bottom:1px; }
+  .field-gap { font-size:0.68rem; color:#a3341f; border-bottom:1px dashed #cfcdc6;
+               padding-bottom:1px; white-space:nowrap; }
   .dday { display:inline-block; font-weight:800; color:#fff; background:#c0392b;
           font-size:0.68rem; padding:1px 6px; border-radius:4px; letter-spacing:0.01em; }
   .dl-date { white-space:nowrap; margin-top:4px; }
@@ -392,19 +401,20 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
 
             parts.append(
                 "<tr>"
-                f'<td><span class="badge{confidence_cls}">{esc(c.screen_result.confidence)}</span>'
-                f'<span class="badge">[{esc(c.notice.work_type)}]</span></td>'
-                f"<td>{esc(c.notice.contract_method) or '-'}</td>"
+                '<td><div class="badges">'
+                f'<span class="badge{confidence_cls}">{esc(c.screen_result.confidence)}</span>'
+                f'<span class="badge">{esc(c.notice.work_type)}</span></div></td>'
+                f"<td><div>{esc(c.notice.contract_method) or '-'}</div></td>"
                 f'<td class="notice-title">'
                 f'<div class="notice-no">{esc(c.notice.notice_no)}{re_badge}{overseas_badge}</div>'
                 f"<div>{title}</div>{kwtags}</td>"
-                f"<td>{money_html}</td>"
-                f"<td>{_qualification_cell_html(c.qualification, esc)}</td>"
-                f"<td>{esc(c.joint.label)}</td>"
-                f'<td><span class="dim field-gap">필드 미확인</span></td>'
-                f"<td>{esc(c.notice.demand_institution) or '-'}</td>"
-                f"<td>{_opening_cell_html(c, esc)}</td>"
-                f"<td>{_deadline_cell_html(c, esc)}</td>"
+                f"<td><div>{money_html}</div></td>"
+                f"<td><div>{_qualification_cell_html(c.qualification, esc)}</div></td>"
+                f"<td><div>{esc(c.joint.label)}</div></td>"
+                f'<td><div><span class="dim field-gap">필드 미확인</span></div></td>'
+                f"<td><div>{esc(c.notice.demand_institution) or '-'}</div></td>"
+                f"<td><div>{_opening_cell_html(c, esc)}</div></td>"
+                f"<td><div>{_deadline_cell_html(c, esc)}</div></td>"
                 "</tr>"
             )
         parts.append("</tbody></table></div>")

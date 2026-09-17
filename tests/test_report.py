@@ -74,7 +74,7 @@ class TestRenderHtml(unittest.TestCase):
     def test_row_shows_confidence_and_worktype_badges(self):
         candidates, stats = self._candidates()
         out = render_html(candidates, stats, NOW)
-        self.assertIn("[공사]", out)
+        self.assertIn('<span class="badge">공사</span>', out)
         self.assertIn(candidates[0].screen_result.confidence, out)
 
     def test_row_shows_qualification_verdict_and_keyword_tag(self):
