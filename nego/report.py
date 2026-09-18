@@ -394,6 +394,8 @@ _HTML_HEAD = """<meta charset="utf-8">
   .qual-dot .tip .tip-item:first-child { border-top:none; }
   .qual-dot .tip .tip-note { color:var(--muted); font-size:0.65rem; margin-top:6px; }
 
+  td.center { text-align:center; }
+
   .empty { text-align:center; color:var(--muted); padding:48px 0; }
   @media (max-width:520px) { .wrap { padding:20px 16px 48px; } }
 </style>
@@ -520,11 +522,11 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 f'<div class="notice-no">{esc(c.notice.notice_no)}{re_badge}{overseas_badge}</div>'
                 f"{title}{kwtags}</td>"
                 f"<td><div>{money_html}</div></td>"
-                f"<td><div>{_qualification_cell_html(c.qualification, esc)}</div></td>"
+                f'<td class="center"><div>{_qualification_cell_html(c.qualification, esc)}</div></td>'
                 f'<td><div class="nowrap">{esc(c.joint.label)}</div></td>'
                 f'<td><div class="nowrap">{esc(c.notice.estimate_price_method) or "-"}</div></td>'
                 f'<td><div class="nowrap">{esc(c.notice.demand_institution) or "-"}</div></td>'
-                f"<td><div>{_opening_cell_html(c, esc)}</div></td>"
+                f'<td class="center"><div>{_opening_cell_html(c, esc)}</div></td>'
                 f"<td><div>{_deadline_cell_html(c, esc)}</div></td>"
                 "</tr>"
             )
