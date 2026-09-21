@@ -83,6 +83,39 @@ class TestRenderHtml(unittest.TestCase):
         self.assertIn("키워드:인테리어", out)
         self.assertIn(candidates[0].qualification.summary, out)
 
+    def test_row_shows_similarity_score_and_matched_past_project(self):
+        """config.past_projects에 회사 과거 실적을 채우면(2026-09-21 요청) 매 실행마다
+        후보 표에 유사도 칸이 자동으로 채워져야 한다."""
+        from nego.similarity import PastProject
+
+        config = load_config()
+        config.screen.keywords = ["인테리어"]
+        config.past_projects = [
+            PastProject(title="OO 인테리어 리모델링 사업", amount=180_600_000, tags=["인테리어"]),
+        ]
+        raw = fixtures.notice("R26TEST0001", title="(긴급)경북동부근로자건강센터 인테리어공사 입찰공고")
+        notices = [notice_from_raw(raw, "공사")]
+        stats = RunStats(period_begin=datetime(2026, 8, 24), period_end=NOW)
+        candidates = build_candidates(notices, config, {}, {}, NOW, stats)
+
+        out = render_html(candidates, stats, NOW)
+        self.assertIsNotNone(candidates[0].similarity.matched, "픽스처가 매칭되어야 아래 검증이 의미가 있다")
+        self.assertIn("OO 인테리어 리모델링 사업", out)
+        self.assertIn('class="tip-item sim-axis"', out)
+
+    def test_row_shows_no_match_placeholder_without_configured_past_projects(self):
+        config = load_config()
+        config.screen.keywords = ["인테리어"]
+        config.past_projects = []
+        raw = fixtures.notice("R26TEST0001", title="(긴급)경북동부근로자건강센터 인테리어공사 입찰공고")
+        notices = [notice_from_raw(raw, "공사")]
+        stats = RunStats(period_begin=datetime(2026, 8, 24), period_end=NOW)
+        candidates = build_candidates(notices, config, {}, {}, NOW, stats)
+
+        out = render_html(candidates, stats, NOW)
+        self.assertIsNone(candidates[0].similarity.matched)
+        self.assertIn("비교할 과거 실적 없음", out)
+
     def test_long_title_gets_ellipsis_wrapper_and_full_text_in_title_attr(self):
         """공고명이 길면 여러 줄로 감싸이는 대신 한 줄로 자르고("..."는 CSS의
         text-overflow가 담당) 마우스오버로 전체 제목을 볼 수 있게 title

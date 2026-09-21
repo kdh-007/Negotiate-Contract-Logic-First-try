@@ -26,6 +26,7 @@ CSV_COLUMNS = [
     "해외의심",
     "공동수급",
     "자격판정",
+    "유사도",
     "참가가능지역",
     "첨부파일수",
     "공고번호",
@@ -167,6 +168,34 @@ def _qualification_cell_html(q, esc) -> str:
     )
 
 
+def _similarity_cell_html(s, esc) -> str:
+    """표의 '유사도' 칸. 과거 실적과 비교한 종합점수를 원(circle) 색으로
+    구간 표시하고(70+=파랑, 40~70=노랑, 그 미만/실적없음=회색), 호버/포커스 시
+    가장 유사했던 과거 사업명과 세 축(업역/규모/내용) 점수를 팝업으로 보여준다
+    — `_qualification_cell_html`과 같은 패턴이다."""
+    if s.matched is None:
+        return (
+            '<button type="button" class="qual-dot" aria-label="비교할 과거 실적 없음">'
+            '<span class="circle circle-unchecked"></span>'
+            '<span class="tip"><div class="tip-title" style="color:var(--unchecked-fg);">비교할 과거 실적 없음</div>'
+            '<div class="tip-note">config/past_projects.json에 과거 수행 실적을 채우면 계산됩니다.</div></span>'
+            "</button>"
+        )
+    circle_cls = "circle-pass" if s.score >= 70 else "circle-unchecked" if s.score >= 40 else "circle-fail"
+    fg_var = "--pass-fg" if s.score >= 70 else "--unchecked-fg" if s.score >= 40 else "--fail-fg"
+    label = f"유사도 {s.score:.0f}점 — 유사 사업: {s.matched.title}"
+    return (
+        f'<button type="button" class="qual-dot" aria-label="{esc(label)}">'
+        f'<span class="circle {circle_cls}"></span>'
+        f'<span class="tip"><div class="tip-title" style="color:var({fg_var});">{esc(f"{s.score:.0f}점")} — {esc(s.matched.title)}</div>'
+        f'<div class="tip-row"><b>발주기관:</b> {esc(s.matched.institution) or "미상"}</div>'
+        f'<div class="tip-item sim-axis">업역 적합도: {esc(f"{s.structural_score * 100:.0f}")}점</div>'
+        f'<div class="tip-item sim-axis">규모 적합도: {esc(f"{s.track_record_score * 100:.0f}")}점</div>'
+        f'<div class="tip-item sim-axis">내용 유사도: {esc(f"{s.text_score * 100:.0f}")}점</div>'
+        "</span></button>"
+    )
+
+
 def _deadline_cell_html(c: Candidate, esc) -> str:
     """표의 '입찰마감일' 칸. 잔여일수를 'D-N' 배지로 먼저 보여주고, 그 아래
     실제 마감 시각과 어떤 마감(자격등록/공동수급협정/입찰/첨부파일 제출기한)
@@ -217,6 +246,7 @@ def _row(index: int, c: Candidate) -> dict[str, str]:
         "해외의심": "🌐 몽골" if c.screen_result.overseas_flag else "",
         "공동수급": c.joint.label,
         "자격판정": c.qualification.summary,
+        "유사도": c.similarity.label,
         "참가가능지역": ", ".join(c.regions),
         "첨부파일수": str(len(c.notice.attachments)),
         "공고번호": c.notice.notice_no,
@@ -281,6 +311,7 @@ def render_console(candidates: list[Candidate], stats: RunStats) -> str:
         lines.append(
             f"     {c.screen_result.confidence}"
             f"  ·  공동수급: {c.joint.label}  ·  {c.qualification.summary}"
+            f"  ·  유사도: {c.similarity.label}"
         )
         if flags:
             lines.append(f"     {' · '.join(flags)}")
@@ -465,7 +496,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
         parts.append(
             "<thead><tr>"
             "<th>분야</th><th>계약방법</th><th>공고번호 / 공고명</th>"
-            "<th>추정가격(원) / 배정예산(원)</th><th>자격판정</th>"
+            "<th>추정가격(원) / 배정예산(원)</th><th>자격판정</th><th>유사도</th>"
             "<th>공동수급(컨소시엄)</th><th>예가방법</th><th>수요기관</th>"
             "<th>공고일 / 개찰일</th><th>입찰마감일</th>"
             "</tr></thead><tbody>"
@@ -523,6 +554,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 f"{title}{kwtags}</td>"
                 f"<td><div>{money_html}</div></td>"
                 f'<td class="center"><div>{_qualification_cell_html(c.qualification, esc)}</div></td>'
+                f'<td class="center"><div>{_similarity_cell_html(c.similarity, esc)}</div></td>'
                 f'<td><div class="nowrap">{esc(c.joint.label)}</div></td>'
                 f'<td><div class="nowrap">{esc(c.notice.estimate_price_method) or "-"}</div></td>'
                 f'<td><div class="nowrap">{esc(c.notice.demand_institution) or "-"}</div></td>'

@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 
 from . import fields as F
 from . import qualify, scope, screen
+from . import similarity as sim
 from .config import AppConfig
 from .http_client import ApiError, DataGoKrClient
 from .models import Notice, notice_from_raw
@@ -34,6 +35,7 @@ class Candidate:
     qualification: qualify.QualificationResult
     joint: qualify.JointSupply
     schedule: screen.Schedule
+    similarity: sim.SimilarityResult = field(default_factory=sim.SimilarityResult.no_match)
     regions: list[str] = field(default_factory=list)
     days_left: int | None = None
     is_re_notice: bool = False
@@ -147,6 +149,7 @@ def build_candidates(
             qualification=qualification,
             joint=qualify.parse_joint_supply(notice.joint_method_name),
             schedule=schedule,
+            similarity=sim.score(notice, config.past_projects),
             regions=regions.get(notice.notice_no, []),
             days_left=schedule.days_left(now),
             is_re_notice=scope.is_re_notice(notice),

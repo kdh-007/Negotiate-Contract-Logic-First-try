@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .http_client import ApiConfig
 from .screen import ScreenConfig
+from .similarity import PastProject, load_past_projects_file
 
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent.parent / "config"
 
@@ -34,6 +35,7 @@ class AppConfig:
     api: ApiConfig
     lookback_days: int
     output_dir: Path
+    past_projects: list[PastProject] = field(default_factory=list)
 
 
 def load_config(config_dir: Path | None = None) -> AppConfig:
@@ -42,6 +44,7 @@ def load_config(config_dir: Path | None = None) -> AppConfig:
     keywords = _read_json(directory / "keywords.json")
     codes = _read_json(directory / "codes.json")
     held = _read_json(directory / "held_qualifications.json")
+    past_projects = load_past_projects_file(directory / "past_projects.json")
 
     from .qualify import load_held_names
 
@@ -72,6 +75,7 @@ def load_config(config_dir: Path | None = None) -> AppConfig:
         api=api,
         lookback_days=int(os.environ.get("LOOKBACK_DAYS", "1")),
         output_dir=Path(os.environ.get("OUTPUT_DIR", "output")),
+        past_projects=past_projects,
     )
 
 

@@ -753,6 +753,34 @@ class TestEndToEnd(unittest.TestCase):
         days = [c.days_left if c.days_left is not None else 9999 for c in candidates]
         self.assertEqual(days, sorted(days), "마감 임박 순으로 정렬되어야 한다")
 
+    def test_candidates_are_scored_against_configured_past_projects(self):
+        """config.past_projects를 채우면 다음 실행부터 별도 배선 없이 후보마다
+        유사도가 계산되어야 한다 — 회사 과거 실적을 config/past_projects.json에
+        추가하는 것만으로 계속 반영되게 하려는 목적(2026-09-21 요청)."""
+        from nego.similarity import PastProject
+
+        config = load_config()
+        config.screen.keywords = ["전시관", "박물관", "과학관", "전시디자인", "전시물", "전시홍보관"]
+        config.past_projects = [
+            PastProject(title="○○과학관 전시물 제작 설치 사업", amount=500_000_000, tags=["과학관"]),
+        ]
+        stats = RunStats()
+        candidates = build_candidates(_notices(), config, {}, {}, NOW, stats)
+
+        matched = next(c for c in candidates if c.notice.notice_no == "R26TEST00001")
+        self.assertIsNotNone(matched.similarity.matched)
+        self.assertGreater(matched.similarity.score, 0)
+
+    def test_no_configured_past_projects_gives_no_match_for_every_candidate(self):
+        config = load_config()
+        config.screen.keywords = ["전시관", "박물관", "과학관", "전시디자인", "전시물", "전시홍보관"]
+        config.past_projects = []
+        stats = RunStats()
+        candidates = build_candidates(_notices(), config, {}, {}, NOW, stats)
+
+        for c in candidates:
+            self.assertIsNone(c.similarity.matched)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

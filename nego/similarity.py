@@ -15,8 +15,12 @@
 "이건 낮게/높게 나와야 하는데" 하는 건이 생기면 그때 조정한다.
 
 과거 실적은 `config/past_projects.json`에서 읽는다(키워드/코드 config와 같은 패턴 — 코드
-수정 없이 파일만 고치면 반영됨). 2026-09-18 기준 회사 과거 자료(제안서·수행능력평가서)가
-아직 구조화되지 않아 이 파일은 예시 1건만 든 빈 상태로 시작한다. 제안서는 텍스트 레이어가
+수정 없이 파일만 고치면 반영됨). 2026-09-21부로 `pipeline.build_candidates`가 매 후보마다
+이 파일 기준으로 점수를 계산해 `Candidate.similarity`에 담고, `report.py`가 표의 "유사도"
+칸으로 보여준다 — 코드를 다시 건드릴 필요 없이 `config/past_projects.json`에 실적을 추가할
+때마다 다음 실행부터 반영된다. 2026-09-18 기준 회사 과거 자료(제안서·수행능력평가서)가
+아직 구조화되지 않아 이 파일은 예시 1건만 든 빈 상태다 — 실제 항목이 없으면 모든 후보가
+`SimilarityResult.no_match()`(비교할 과거 실적 없음)로 나온다. 제안서는 텍스트 레이어가
 살아있어 pypdf로 바로 추출 가능함을 확인했고(수행능력평가서/기타자료는 절반가량 스캔이라
 OCR 필요) — `summary_text`를 채울 때 그 텍스트를 쓰면 된다.
 """
@@ -72,6 +76,14 @@ class SimilarityResult:
     track_record_score: float  # 0~1 — 규모(예산) 적합도
     text_score: float  # 0~1 — 내용 유사도
     matched: PastProject | None  # 종합점수가 가장 높았던 과거 사업(근거 설명용)
+
+    @classmethod
+    def no_match(cls) -> "SimilarityResult":
+        """비교할 과거 실적이 없을 때(또는 아직 계산 전) 쓰는 중립값.
+
+        `Candidate.similarity`의 기본값으로도 쓴다 — `config/past_projects.json`이
+        비어 있으면 파이프라인 전체가 이 값 그대로 리포트에 나간다."""
+        return cls(score=0.0, structural_score=0.0, track_record_score=0.0, text_score=0.0, matched=None)
 
     @property
     def label(self) -> str:
@@ -135,7 +147,7 @@ def score(
     """
     weights = weights or DEFAULT_WEIGHTS
     if not past_projects:
-        return SimilarityResult(score=0.0, structural_score=0.0, track_record_score=0.0, text_score=0.0, matched=None)
+        return SimilarityResult.no_match()
 
     total, structural, track_record, text, matched = max(
         (( *_score_one(notice, p, weights), p) for p in past_projects),
