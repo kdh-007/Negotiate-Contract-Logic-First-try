@@ -5,6 +5,7 @@
     python -m nego --from-store       # API 호출 없이 저장된 원문으로 재필터링
     python -m nego --verify           # 응답 필드명 진단 (필드가 비어 보일 때)
     python -m nego --fetch-attachment-text  # 후보 공고 첨부파일 텍스트 추출(원문 대조용)
+    python -m nego --ai-similarity    # 후보-과거실적 내용 유사도를 Claude API로 재판단 (ANTHROPIC_API_KEY 필요)
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -102,6 +104,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="후보 공고의 첨부파일(HWP/HWPX/PDF)을 내려받아 텍스트를 추출한다 (지역제한/면허제한/공동수급 원문 대조용)",
     )
+    parser.add_argument(
+        "--ai-similarity",
+        action="store_true",
+        help="최종 후보와 과거실적의 내용 유사도를 Claude API로 재판단해 반영한다 (ANTHROPIC_API_KEY 필요)",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -169,6 +176,18 @@ def main(argv: list[str] | None = None) -> int:
             f" · 일정 미상 → 첨부파일로 보충 {att_stats['deadline_determined']}건"
             f" (저장 위치: {config.output_dir / 'attachment_text'})"
         )
+
+    if args.ai_similarity:
+        from .ai_similarity import DEFAULT_MODEL, default_client, refine_with_ai
+
+        try:
+            ai_client = default_client()
+        except RuntimeError as err:
+            print(err, file=sys.stderr)
+            return 1
+        ai_model = os.environ.get("SIMILARITY_AI_MODEL", DEFAULT_MODEL)
+        refined = refine_with_ai(candidates, ai_client, model=ai_model)
+        print(f"AI 유사도 판단({ai_model}): 후보 {len(candidates)}건 중 {refined}건 반영")
 
     print(render_console(candidates, stats))
 

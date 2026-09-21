@@ -183,15 +183,26 @@ def _similarity_cell_html(s, esc) -> str:
         )
     circle_cls = "circle-pass" if s.score >= 70 else "circle-unchecked" if s.score >= 40 else "circle-fail"
     fg_var = "--pass-fg" if s.score >= 70 else "--unchecked-fg" if s.score >= 40 else "--fail-fg"
-    label = f"유사도 {s.score:.0f}점 — 유사 사업: {s.matched.title}"
+    ai_badge = " 🤖" if s.text_source == "ai" else ""
+    label = f"유사도 {s.score:.0f}점 — 유사 사업: {s.matched.title}{ai_badge}"
+    # text_source가 "ai"면 내용 유사도 줄 옆에 AI 판단임을 표시하고, 근거 문장을
+    # 팁 맨 아래에 따로 붙인다 — 코드 판정(자카드)과 섞여 보이지 않게 하려는 것
+    # (2026-09-18 논의: "결과엔 source=ai 표시해서 코드 판정과 구분").
+    text_axis_label = "내용 유사도 (AI)" if s.text_source == "ai" else "내용 유사도"
+    ai_reason_html = (
+        f'<div class="tip-note">AI 판단 근거: {esc(s.ai_reason)}</div>'
+        if s.text_source == "ai" and s.ai_reason
+        else ""
+    )
     return (
         f'<button type="button" class="qual-dot" aria-label="{esc(label)}">'
         f'<span class="circle {circle_cls}"></span>'
-        f'<span class="tip"><div class="tip-title" style="color:var({fg_var});">{esc(f"{s.score:.0f}점")} — {esc(s.matched.title)}</div>'
+        f'<span class="tip"><div class="tip-title" style="color:var({fg_var});">{esc(f"{s.score:.0f}점")} — {esc(s.matched.title)}{ai_badge}</div>'
         f'<div class="tip-row"><b>발주기관:</b> {esc(s.matched.institution) or "미상"}</div>'
         f'<div class="tip-item sim-axis">업역 적합도: {esc(f"{s.structural_score * 100:.0f}")}점</div>'
         f'<div class="tip-item sim-axis">규모 적합도: {esc(f"{s.track_record_score * 100:.0f}")}점</div>'
-        f'<div class="tip-item sim-axis">내용 유사도: {esc(f"{s.text_score * 100:.0f}")}점</div>'
+        f'<div class="tip-item sim-axis">{esc(text_axis_label)}: {esc(f"{s.text_score * 100:.0f}")}점</div>'
+        f"{ai_reason_html}"
         "</span></button>"
     )
 

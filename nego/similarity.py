@@ -76,6 +76,11 @@ class SimilarityResult:
     track_record_score: float  # 0~1 — 규모(예산) 적합도
     text_score: float  # 0~1 — 내용 유사도
     matched: PastProject | None  # 종합점수가 가장 높았던 과거 사업(근거 설명용)
+    # text_score의 출처. 기본은 자카드 키워드 겹침("jaccard")이고, `ai_similarity.py`가
+    # 이 축을 Claude 판단으로 교체하면 "ai"로 바뀐다 — 코드 판정과 AI 판단을 리포트에서
+    # 구분해서 보여주기 위함(2026-09-18 논의: "결과엔 source=ai 표시").
+    text_source: str = "jaccard"
+    ai_reason: str | None = None  # text_source가 "ai"일 때 판단 근거 한두 문장
 
     @classmethod
     def no_match(cls) -> "SimilarityResult":
@@ -90,7 +95,8 @@ class SimilarityResult:
         """리포트 등에 바로 쓸 수 있는 한 줄 요약."""
         if self.matched is None:
             return "비교할 과거 실적 없음"
-        return f"{self.score:.0f}점 — 유사 사업: {self.matched.title}"
+        suffix = " (AI 판단)" if self.text_source == "ai" else ""
+        return f"{self.score:.0f}점 — 유사 사업: {self.matched.title}{suffix}"
 
 
 DEFAULT_WEIGHTS: dict[str, float] = {"structural": 1 / 3, "track_record": 1 / 3, "text": 1 / 3}
