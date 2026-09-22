@@ -125,6 +125,25 @@ class TestSplitSections(unittest.TestCase):
         headings = [s.heading for s in sections]
         self.assertEqual(headings, ["Ⅰ. 사업개요", "Ⅱ 제안업체 일반사항", "Ⅲ. 사업수행 부문"])
 
+    def test_ascii_roman_numerals_are_recognized_as_headings(self):
+        """실측(국립중앙과학관 2017 제안요청서): 목차는 유니코드 로마숫자(Ⅰ)를
+        쓰면서 실제 본문 헤딩은 똑같이 생긴 ASCII 알파벳("I. II. III. IV.")으로
+        쓴다 — pypdf 추출 텍스트에서 `text.find('IV.')`로 직접 확인. 유니코드
+        로마숫자 패턴만으로는 이 문서의 본문 헤딩을 전혀 못 찾아 후보가 0개였다."""
+        text = (
+            "I. 개요\n 1. 사업목적\n  가. 국립중앙과학관 야외전시장 물과학공원\n"
+            "II. 과업내용 및 지침\n 1. 과업내용 및 범위\n  가. 과업내용\n"
+            "III. 제안서 작성요령 및 제출\n 1. 제출도서의 종류 및 규격\n"
+            "IV. 제안서 평가\n 1. 평가 기준\n"
+        )
+        sections = split_sections(text)
+        headings = [s.heading for s in sections]
+        self.assertEqual(
+            headings,
+            ["I. 개요", "II. 과업내용 및 지침", "III. 제안서 작성요령 및 제출", "IV. 제안서 평가"],
+        )
+        self.assertIn("물과학공원", sections[0].body)
+
     def test_roman_listing_sentence_is_not_mistaken_for_a_heading(self):
         """실측(국립중앙과학관 2017 제안요청서 등 16건): "Ⅰ., Ⅱ., Ⅲ., Ⅳ. ····"처럼
         절 번호를 한 문장에서 나열하는 상투 문구가 "Ⅰ."로 시작해 매칭되면서, 진짜

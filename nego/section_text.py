@@ -65,6 +65,23 @@
     한계: 법천사지의 첫 절("①")은 바로 앞 제어문자 노이즈 블록에 이 PUA 글리프까지
     같이 먹혀 원문에서 아예 사라졌다 — 그 경우 1번 절 내용은 어느 절에도 안 잡히고
     2번 절부터 시작한다(예약 슬롯 소실이지 이 모듈의 버그는 아님).
+  - **ASCII 로마숫자 본문 헤딩(2026-09-22 추가 발견)**: 국립중앙과학관(2017)
+    제안요청서는 목차는 유니코드 로마숫자(Ⅰ U+2160...)로 쓰면서 실제 본문 헤딩은
+    똑같이 생긴 ASCII 알파벳 "I. II. III. IV."로 쓴다 — 두 글자셋이 코드포인트
+    단위로 다르다는 걸 pypdf 추출 텍스트를 직접 검색해 확인(`text.find('IV.')` 등
+    실측). 위 "목차를 본문으로 오인" 항목과 별개 원인: 이 문서는 목차 오인이
+    아니라 유니코드 로마숫자 패턴 자체가 본문 헤딩을 매칭하지 못해서 후보가 0개
+    였다. 고정된 로마숫자 토큰(I~X)만 인정하고 마침표 뒤 공백을 필수로 요구해도
+    일반 영문 텍스트와의 오탐을 다 막지는 못한다 — 실측(107건 전수 재확인):
+    울산과학관(2019)·청년김구 역사거리(2020)·KOICA지구촌체험관(2018) 제안요청서는
+    진짜 최상위 절이 박스형 유니코드 로마숫자로 이미 정확히 잡히는데, 그 절
+    본문 안에 "정성제안서 작성목차"(제안사가 자기 제안서를 이렇게 구성하라는
+    안내문, 발주기관 문서의 진짜 목차가 아님)가 "I. 제안개요 II. 사업 세부
+    III. 사업수행" 식으로 똑같은 표기를 써서 ASCII 패턴에 걸렸다 — 그대로 합쳐
+    쓰면 이 가짜 "I."이 "번호 1의 마지막 등장" 경계를 뒤로 밀어버려 진짜 절
+    (예: 울산과학관의 "Ⅳ 제안서 작성 요령")이 통째로 결과에서 빠지는 회귀가
+    실제로 발생했다. 그래서 ASCII는 유니코드(같은 줄+박스형)가 후보를 하나도
+    못 찾았을 때만 시도하는 별도 하위 tier로 분리했다(`_ascii_roman_candidates`).
 """
 
 from __future__ import annotations
@@ -85,6 +102,18 @@ _ROMAN_BOXED_RE = re.compile(
     r"[ \t　]*(\S[^\n]*)$",
     re.MULTILINE,
 )
+# 일부 문서(실측: 국립중앙과학관 2017 제안요청서)는 목차에는 유니코드 로마숫자
+# (Ⅰ U+2160...)를 쓰면서 정작 본문 헤딩은 순수 ASCII 알파벳(I. II. III. IV.)으로
+# 쓴다 — pypdf 추출 결과에도 두 글자셋이 코드포인트 단위로 섞여 있음을 직접 확인
+# (`text.find('IV.')` 등). ASCII 대문자는 일반 텍스트에도 흔하므로 오탐을 줄이려고
+# 고정된 로마숫자 토큰(I~X)만 허용하고, 마침표 뒤 공백을 필수로 요구한다.
+_ASCII_ROMAN_VALUES = {
+    "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5,
+    "VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10,
+}
+_ASCII_ROMAN_HEADING_RE = re.compile(
+    r"^[ \t　]*(I|II|III|IV|V|VI|VII|VIII|IX|X)\.[ \t　]+(\S.*)$", re.MULTILINE
+)
 # 한컴 전용 폰트가 원문자(①②③...) 대용으로 쓰는 유니코드 개인 영역 글리프.
 # U+F02B1=1, U+F02B2=2, ... (법천사지/웅진백제역사관 과업지시서 실측으로 확인,
 # 최대 16개까지 여유 있게 잡는다 — 실측 문서는 8개가 최대였음).
@@ -101,8 +130,11 @@ _ARABIC_TOP_RE = re.compile(r"^[ \t　]*(\d{1,2})\.[ \t　]+(?=[^\d\s])(.*)$", r
 _KOREAN_LETTER_ITEM_RE = re.compile(r"^[ \t　]*[가나다라마바사아자차카타파하]\.[ \t　]", re.MULTILINE)
 
 # "Ⅰ., Ⅱ., Ⅲ. ..." 처럼 절 번호 여러 개를 한 문장에서 나열하는 상투 문구 —
-# 진짜 절 제목이라면 쉼표 다음 곧장 다른 로마숫자가 나올 일이 없다.
-_ROMAN_LISTING_GUARD_RE = re.compile(r"^[,、][ \t　]*[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]")
+# 진짜 절 제목이라면 쉼표 다음 곧장 다른 로마숫자가 나올 일이 없다. ASCII 변형
+# ("I., II., III. ...")도 같은 상투 문구가 가능해 함께 걸러낸다.
+_ROMAN_LISTING_GUARD_RE = re.compile(
+    r"^[,、][ \t　]*(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]|I|II|III|IV|V|VI|VII|VIII|IX|X)\."
+)
 
 # 목차 줄의 공통 특징 — 제목 끝에 페이지 번호가 붙는다("Ⅰ. 개요 1", "Ⅱ. 과업내용
 # 및 지침 5"). 본문 진짜 헤딩은 이 꼴로 안 끝난다(실측 확인).
@@ -149,7 +181,6 @@ def _roman_candidates(text: str) -> list[_Candidate]:
         if len(title) > _TITLE_MAX_LEN or _looks_like_toc_entry(title):
             continue
         candidates.append(_Candidate(m.start(), m.end(), f"{m.group(1)} {title}", _ROMAN_VALUES[m.group(1)]))
-
     candidates.sort(key=lambda c: c.start)
     # 두 패턴이 같은 자리를 다르게 잡아 겹칠 수 있어(드묾) 먼저 나온 것만 남긴다.
     deduped: list[_Candidate] = []
@@ -160,6 +191,23 @@ def _roman_candidates(text: str) -> list[_Candidate]:
         deduped.append(c)
         last_end = c.end
     return deduped
+
+
+def _ascii_roman_candidates(text: str) -> list[_Candidate]:
+    """유니코드 로마숫자(같은 줄/박스형 모두)가 전혀 없을 때만 시도하는 하위
+    tier(`split_sections` 참고) — ASCII 대문자는 "정성제안서 작성목차"처럼 본문에
+    박힌 예시 목차(발주기관이 아니라 제안사가 써야 할 챕터 안내)에도 자주
+    나타나(실측: 울산과학관 2019 제안요청서, "정성제안서 작성목차" 아래 "I. 제안개요
+    II. 사업 세부 III. 사업수행" 등장 — 이 문서의 진짜 최상위 절은 박스형 유니코드
+    로마숫자라 그쪽으로 이미 정확히 잡힌다) 유니코드 tier가 이미 성공하면 절대
+    끼어들면 안 된다."""
+    candidates = []
+    for m in _ASCII_ROMAN_HEADING_RE.finditer(text):
+        title = m.group(2).strip()
+        if _ROMAN_LISTING_GUARD_RE.match(title) or len(title) > _TITLE_MAX_LEN or _looks_like_toc_entry(title):
+            continue
+        candidates.append(_Candidate(m.start(), m.end(), m.group(0).strip(), _ASCII_ROMAN_VALUES[m.group(1)]))
+    return candidates
 
 
 def _chapter_candidates(text: str) -> list[_Candidate]:
@@ -221,12 +269,20 @@ def _sections_from_candidates(text: str, candidates: list[_Candidate]) -> list[S
 def split_sections(text: str) -> list[Section]:
     """문서를 최상위 절 단위로 나눈다.
 
-    로마숫자(같은 줄/박스형 제목틀 모두) → 제N장 → 원문자(PUA 글리프) → 아라비아숫자
-    (가나다 하위항목으로 검증됨) 순으로 시도하고, 넷 다 신뢰할 만한 구조를 못 찾으면
+    유니코드 로마숫자(같은 줄/박스형 제목틀 모두) → ASCII 로마숫자(I. II. III. ...,
+    유니코드 쪽이 하나도 안 잡혔을 때만) → 제N장 → 원문자(PUA 글리프) → 아라비아숫자
+    (가나다 하위항목으로 검증됨) 순으로 시도하고, 다섯 다 신뢰할 만한 구조를 못 찾으면
     전체 텍스트를 절 1개(heading="")로 반환한다(fail-open) — 어설프게 쪼개서 조항
     문장을 "절"로 오인하는 것보다, 통째로 넘겨서 호출측이 원문 그대로 보는 편이 낫다.
+    ASCII 로마숫자를 별도 하위 tier로 분리한 이유는 `_ascii_roman_candidates`
+    docstring 참고 — 유니코드 후보와 그냥 합치면 본문에 박힌 예시 목차를 진짜
+    절로 오인할 위험이 있다(실측: 울산과학관 2019).
     """
     sections = _sections_from_candidates(text, _roman_candidates(text))
+    if sections:
+        return sections
+
+    sections = _sections_from_candidates(text, _ascii_roman_candidates(text))
     if sections:
         return sections
 
