@@ -91,11 +91,39 @@ class TestSplitSections(unittest.TestCase):
         headings = [s.heading for s in sections]
         self.assertEqual(headings, ["제1장 총칙", "제2장 과업내용", "제3장 제출서류"])
 
-    def test_fewer_than_three_top_level_matches_fails_open(self):
-        text = "Ⅰ. 사업개요\n개요 내용\nⅡ. 과업내용\n과업 내용\n"
+    def test_one_or_two_real_sections_are_accepted(self):
+        """사용자 확인(2026-09-22, 화진포 씨월드·함양 곶감 조형물 과업지시서/제안요청서):
+        최상위 절이 1~2개뿐인 문서도 실제로 존재하는 정상 구조다 — 이전에는 최소
+        3개를 요구해 이런 문서를 전부 fail-open으로 흘렸는데, 실측으로 확인된
+        만큼 1개부터도 인정한다."""
+        text = "Ⅰ. 과업개요\n개요 내용\nⅡ. 과업 세부내용\n세부 내용\n"
         sections = split_sections(text)
-        self.assertEqual(len(sections), 1)
-        self.assertEqual(sections[0].heading, "")
+        headings = [s.heading for s in sections]
+        self.assertEqual(headings, ["Ⅰ. 과업개요", "Ⅱ. 과업 세부내용"])
+
+        single = split_sections("Ⅰ. 과업개요\n개요 내용만 있는 문서\n")
+        self.assertEqual(len(single), 1)
+        self.assertEqual(single[0].heading, "Ⅰ. 과업개요")
+
+    def test_boxed_title_heading_on_next_line(self):
+        """실측(사용자 스크린샷, 2026-09-22 — 국립무형유산원 2020 과업지시서,
+        시아의여행 2017 제안요청서): 번호가 박스 안에, 제목이 옆에 굵은 글씨로
+        배치된 디자인은 텍스트로 뽑으면 번호만 있는 줄 다음에 제목 줄이 온다
+        ("Ⅰ." 한 줄짜리 표기가 아니라 "Ⅰ\\n과업개요")."""
+        text = "Ⅰ\n과업개요\n개요 내용\nⅡ\n과업내용\n내용\nⅢ\n제출서류\n서류\n"
+        sections = split_sections(text)
+        headings = [s.heading for s in sections]
+        self.assertEqual(headings, ["Ⅰ 과업개요", "Ⅱ 과업내용", "Ⅲ 제출서류"])
+        self.assertIn("개요 내용", sections[0].body)
+
+    def test_boxed_and_inline_roman_styles_mix_in_one_document(self):
+        """실측(KOSCOM 2017 제안요청서): 한 문서 안에서 앞쪽 절은 "Ⅰ. 제목" 한
+        줄짜리로, 뒤쪽 절은 박스형("Ⅰ\\n제목")으로 섞여 쓰이기도 한다 — 두 패턴의
+        매치를 합쳐 위치순으로 정렬해야 순서가 안 꼬인다."""
+        text = "Ⅰ. 사업개요\n개요 내용\nⅡ\n제안업체 일반사항\n일반사항 내용\nⅢ. 사업수행 부문\n수행 내용\n"
+        sections = split_sections(text)
+        headings = [s.heading for s in sections]
+        self.assertEqual(headings, ["Ⅰ. 사업개요", "Ⅱ 제안업체 일반사항", "Ⅲ. 사업수행 부문"])
 
     def test_roman_listing_sentence_is_not_mistaken_for_a_heading(self):
         """실측(국립중앙과학관 2017 제안요청서 등 16건): "Ⅰ., Ⅱ., Ⅲ., Ⅳ. ····"처럼
