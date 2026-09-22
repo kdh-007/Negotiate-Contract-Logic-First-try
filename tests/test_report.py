@@ -229,6 +229,24 @@ class TestRenderHtml(unittest.TestCase):
         self.assertIn('<span class="circle circle-fail">', out)
         self.assertEqual(out.count(f'<div class="tip-item">{name}</div>'), 1)
 
+    def test_similarity_column_hidden_by_default(self):
+        """past_projects를 안 넘기면(기본 일일 수집 실행) "유사 과거 실적" 칸
+        자체가 안 보여야 한다 — 계산도 안 한 빈 칸을 매일 리포트에 얹지 않는다."""
+        candidates, stats = self._candidates()
+        out = render_html(candidates, stats, NOW)
+        self.assertNotIn("유사 과거 실적", out)
+
+    def test_similarity_column_shows_score_when_past_projects_given(self):
+        """--similarity로 과거 실적을 넘기면 칸이 나타나고, 유사한 과거 실적이
+        있으면 SimilarityResult.label 그대로("N점 — 사업명") 채워져야 한다."""
+        from nego.similarity import PastProject
+
+        candidates, stats = self._candidates()
+        past = PastProject(title="유사 인테리어 공사", summary_text="인테리어 공사 관련 내용")
+        out = render_html(candidates, stats, NOW, past_projects=[past])
+        self.assertIn("유사 과거 실적", out)
+        self.assertIn("유사 인테리어 공사", out)
+
     def test_qualification_unchecked_is_a_neutral_circle(self):
         """자격정보가 없어 판정을 못 한(통과 처리된) 경우는 노란 원(circle-unchecked)으로,
         '자격 미달'과 헷갈리지 않는 중립적인 문구로 표시돼야 한다."""

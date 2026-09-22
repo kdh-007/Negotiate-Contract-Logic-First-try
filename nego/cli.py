@@ -102,6 +102,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="후보 공고의 첨부파일(HWP/HWPX/PDF)을 내려받아 텍스트를 추출한다 (지역제한/면허제한/공동수급 원문 대조용)",
     )
+    parser.add_argument(
+        "--similarity",
+        action="store_true",
+        help=(
+            "후보 공고마다 과거 실적(config/past_projects.json)과의 유사도 점수를 리포트에 붙인다"
+            " (nego/similarity.py 프로토타입 — 아직 기본 실행에는 안 붙어 있음)"
+        ),
+    )
+    parser.add_argument(
+        "--past-projects",
+        default="config/past_projects.json",
+        help="--similarity와 함께 쓸 과거 실적 파일 경로",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -175,7 +188,17 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_supabase:
         _save_to_supabase(candidates, stats)
 
-    paths = save_reports(candidates, stats, config.output_dir, now)
+    past_projects = None
+    if args.similarity:
+        from .similarity import load_past_projects_file
+
+        past_projects = load_past_projects_file(Path(args.past_projects))
+        if past_projects:
+            print(f"유사도 매칭: 과거 실적 {len(past_projects)}건과 비교해 리포트에 반영")
+        else:
+            print(f"유사도 매칭: 과거 실적을 읽지 못해 건너뜀 ({args.past_projects})", file=sys.stderr)
+
+    paths = save_reports(candidates, stats, config.output_dir, now, past_projects)
     for kind, path in paths.items():
         print(f"{kind.upper()} 저장: {path}")
 

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .pipeline import Candidate, RunStats
 from .screen import parse_datetime
+from .similarity import PastProject, score as similarity_score
 
 CSV_COLUMNS = [
     "검토순서",
@@ -31,6 +32,7 @@ CSV_COLUMNS = [
     "공고번호",
     "차수",
     "원문URL",
+    "유사 과거 실적",
 ]
 
 
@@ -200,7 +202,21 @@ def _opening_cell_html(c: Candidate, esc) -> str:
     return f'<div class="nowrap">{esc(posted) or "미상"}</div><div class="dim nowrap">{esc(opening) or "일정 미상"}</div>'
 
 
-def _row(index: int, c: Candidate) -> dict[str, str]:
+def _similarity_label(c: Candidate, past_projects: list[PastProject] | None) -> str:
+    """`nego/similarity.py` 프로토타입 — 과거 실적 목록이 주어졌을 때만 계산한다.
+
+    일일 수집 기본 실행에는 아직 안 붙어 있다(past_projects=None이면 그냥
+    빈 칸) — `--similarity` 플래그로 켤 때만 채운다. 아직 past_projects.json의
+    amount/industryNames/productCodes가 비어 있어 내용(text) 축 하나로만
+    점수가 갈리는 초기 프로토타입 단계라, 매일 자동으로 리포트에 채우기보다
+    켜고 끌 수 있게 둔다."""
+    if not past_projects:
+        return ""
+    result = similarity_score(c.notice, past_projects)
+    return result.label
+
+
+def _row(index: int, c: Candidate, past_projects: list[PastProject] | None = None) -> dict[str, str]:
     earliest = c.schedule.earliest
     return {
         "검토순서": str(index),
@@ -222,16 +238,17 @@ def _row(index: int, c: Candidate) -> dict[str, str]:
         "공고번호": c.notice.notice_no,
         "차수": c.notice.notice_ord,
         "원문URL": c.notice.detail_url or "",
+        "유사 과거 실적": _similarity_label(c, past_projects),
     }
 
 
-def write_csv(candidates: list[Candidate], path: Path) -> Path:
+def write_csv(candidates: list[Candidate], path: Path, past_projects: list[PastProject] | None = None) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=CSV_COLUMNS)
         writer.writeheader()
         for i, candidate in enumerate(candidates, start=1):
-            writer.writerow(_row(i, candidate))
+            writer.writerow(_row(i, candidate, past_projects))
     return path
 
 
@@ -439,7 +456,12 @@ _TOOLTIP_FLIP_SCRIPT = """<script>
 </script>"""
 
 
-def render_html(candidates: list[Candidate], stats: RunStats, generated_at: datetime) -> str:
+def render_html(
+    candidates: list[Candidate],
+    stats: RunStats,
+    generated_at: datetime,
+    past_projects: list[PastProject] | None = None,
+) -> str:
     def esc(text: str | None) -> str:
         return html.escape(str(text or ""))
 
@@ -461,6 +483,10 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
     if not candidates:
         parts.append('<div class="empty">조건에 맞는 공고가 없습니다.</div>')
     else:
+        # "유사 과거 실적" 칸은 past_projects가 있을 때만 보여준다 — 아직 일일
+        # 수집 기본 실행에는 안 붙어 있는 프로토타입 기능이라, 계산도 안 한
+        # 빈 칸을 매일 리포트에 얹고 싶지 않다(`--similarity` 플래그로 켤 때만).
+        similarity_header = "<th>유사 과거 실적</th>" if past_projects else ""
         parts.append('<div class="tablewrap"><table>')
         parts.append(
             "<thead><tr>"
@@ -468,6 +494,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
             "<th>추정가격(원) / 배정예산(원)</th><th>자격판정</th>"
             "<th>공동수급(컨소시엄)</th><th>예가방법</th><th>수요기관</th>"
             "<th>공고일 / 개찰일</th><th>입찰마감일</th>"
+            f"{similarity_header}"
             "</tr></thead><tbody>"
         )
         for c in candidates:
@@ -512,6 +539,8 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 )
             money_html = "".join(money_parts) or '<span class="dim">미상</span>'
 
+            similarity_cell = f"<td><div>{esc(_similarity_label(c, past_projects))}</div></td>" if past_projects else ""
+
             parts.append(
                 "<tr>"
                 '<td><div class="badges">'
@@ -528,6 +557,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 f'<td><div class="nowrap">{esc(c.notice.demand_institution) or "-"}</div></td>'
                 f'<td class="center"><div>{_opening_cell_html(c, esc)}</div></td>'
                 f"<td><div>{_deadline_cell_html(c, esc)}</div></td>"
+                f"{similarity_cell}"
                 "</tr>"
             )
         parts.append("</tbody></table></div>")
@@ -538,13 +568,17 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
 
 
 def save_reports(
-    candidates: list[Candidate], stats: RunStats, output_dir: Path, generated_at: datetime
+    candidates: list[Candidate],
+    stats: RunStats,
+    output_dir: Path,
+    generated_at: datetime,
+    past_projects: list[PastProject] | None = None,
 ) -> dict[str, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = generated_at.strftime("%Y%m%d_%H%M")
 
-    csv_path = write_csv(candidates, output_dir / f"협상공고_{stamp}.csv")
+    csv_path = write_csv(candidates, output_dir / f"협상공고_{stamp}.csv", past_projects)
     html_path = output_dir / f"협상공고_{stamp}.html"
-    html_path.write_text(render_html(candidates, stats, generated_at), encoding="utf-8")
+    html_path.write_text(render_html(candidates, stats, generated_at, past_projects), encoding="utf-8")
 
     return {"csv": csv_path, "html": html_path}
