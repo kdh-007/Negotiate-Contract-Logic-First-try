@@ -162,6 +162,21 @@ class TestSplitSections(unittest.TestCase):
         self.assertEqual(headings, ["1. 사업내용", "2. 제안안내", "3. 제안서 작성"])
         self.assertIn("목적 내용", sections[0].body)
 
+    def test_circled_pua_glyph_headings(self):
+        """실측(사용자 제보, 2026-09-22 — 법천사지·웅진백제역사관 과업지시서 원문
+        직접 역추적): 원문자(①②③...) 대신 한컴 전용 폰트의 유니코드 개인 영역
+        글리프(U+F02B1부터 순서대로)로 절 번호를 매기는 문서가 있다. 표시용으로는
+        실제 원문자로 바꿔 담아야 한다."""
+        text = (
+            "\U000f02b1 사업 개요\n개요 내용\n"
+            "\U000f02b2 과업 내용\n과업 내용\n"
+            "\U000f02b3 기본지침\n지침 내용\n"
+        )
+        sections = split_sections(text)
+        headings = [s.heading for s in sections]
+        self.assertEqual(headings, ["① 사업 개요", "② 과업 내용", "③ 기본지침"])
+        self.assertIn("지침 내용", sections[2].body)
+
     def test_arabic_clause_with_incidental_letters_still_fails_open(self):
         """가나다가 우연히 섞인 조항 설명 문장("N. 입찰자는 ... 하여야 한다.")은
         절 제목치고 너무 길어서(20자 초과) 여전히 걸러져야 한다(실측 6건)."""
