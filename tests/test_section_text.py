@@ -97,6 +97,58 @@ class TestSplitSections(unittest.TestCase):
         self.assertEqual(len(sections), 1)
         self.assertEqual(sections[0].heading, "")
 
+    def test_roman_listing_sentence_is_not_mistaken_for_a_heading(self):
+        """실측(국립중앙과학관 2017 제안요청서 등 16건): "Ⅰ., Ⅱ., Ⅲ., Ⅳ. ····"처럼
+        절 번호를 한 문장에서 나열하는 상투 문구가 "Ⅰ."로 시작해 매칭되면서, 진짜
+        "마지막 Ⅰ"보다 뒤에 있으면 경계를 잘못 잡아 구조를 통째로 놓친다."""
+        text = (
+            "Ⅰ. 개요\n개요 내용\n"
+            "Ⅱ. 과업내용\n과업 내용\n"
+            "Ⅲ. 제안서 작성요령\n작성요령 내용\n"
+            "Ⅳ. 제안서 평가\n"
+            "  Ⅰ., Ⅱ., Ⅲ., Ⅳ. 항목별 배점은 붙임 기준에 따른다\n"
+            "평가 내용\n"
+        )
+        sections = split_sections(text)
+        headings = [s.heading for s in sections]
+        self.assertEqual(headings, ["Ⅰ. 개요", "Ⅱ. 과업내용", "Ⅲ. 제안서 작성요령", "Ⅳ. 제안서 평가"])
+        self.assertIn("평가 내용", sections[3].body)
+
+    def test_arabic_with_korean_letter_subitems_is_trusted(self):
+        """실측(고성군 독립만세운동 기념탑 2019 제안요청서): 로마숫자/장 표기 없이
+        "1. 2. 3."에 "가.나.다." 하위항목이 붙는 문서도 있다 — 가나다 하위항목이
+        뒤따르는지로 진짜 절과 법률식 조항 나열을 구분한다."""
+        text = (
+            "1. 사업내용\n"
+            "가. 사업목적\n목적 내용\n"
+            "나. 기본방향\n방향 내용\n"
+            "2. 제안안내\n"
+            "가. 참가자격\n자격 내용\n"
+            "나. 접수방법\n접수 내용\n"
+            "3. 제안서 작성\n"
+            "가. 작성요령\n요령 내용\n"
+            "나. 제출서류\n서류 내용\n"
+        )
+        sections = split_sections(text)
+        headings = [s.heading for s in sections]
+        self.assertEqual(headings, ["1. 사업내용", "2. 제안안내", "3. 제안서 작성"])
+        self.assertIn("목적 내용", sections[0].body)
+
+    def test_arabic_clause_with_incidental_letters_still_fails_open(self):
+        """가나다가 우연히 섞인 조항 설명 문장("N. 입찰자는 ... 하여야 한다.")은
+        절 제목치고 너무 길어서(20자 초과) 여전히 걸러져야 한다(실측 6건)."""
+        text = (
+            "1. 입찰자는 수행실적 평가를 위하여 다음 각 목의 서류를 제출하여야 한다.\n"
+            "가. 사업수행실적증명서\n나. 계약서 사본\n"
+            "2. 공동수급체의 경우 구성원별 실적에 지분율을 곱하여 평가한다.\n"
+            "가. 지분율 산정기준\n나. 합산방법\n"
+            "3. 위 기준에 따라 최종 순위를 결정한다.\n"
+            "가. 동점자 처리\n나. 이의신청\n"
+        )
+        sections = split_sections(text)
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(sections[0].heading, "")
+
 
 class TestFindSection(unittest.TestCase):
     def test_finds_section_by_keyword(self):
