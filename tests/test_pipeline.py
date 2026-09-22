@@ -331,6 +331,20 @@ class TestQualification(unittest.TestCase):
         result = qualify.evaluate_attachment_text([item], held_codes={"7215409901"})
         self.assertEqual(result.summary, "자격 충족")
 
+    def test_extract_code_requirements_recovers_label_split_before_bare_paren(self):
+        """실측 오류(사용자 스크린샷 제보, 2026-09-22, 리포트 "미보유 자격" 팝업에
+        이름 없이 "7215409901"만 뜸 — 위 테스트와 같은 두바이 의료기기전시회
+        한국관 공고문). 앞 테스트는 이름표와 괄호가 같은 줄에 있는 경우였는데,
+        실제 문서는 PDF 폭 제한으로 "전시부스설치서비스" 이름표 바로 뒤에서
+        줄이 끊기고 "(7215409901)"이 다음 줄로 넘어갔다 — 줄 단위로 이름표를
+        찾다 보니 코드만 남고 이름을 통째로 잃었다."""
+        item = "o 전시부스설치서비스\n(7215409901) 소지 업체"
+        requirements = qualify._extract_code_requirements(item)
+        self.assertEqual(requirements, [("7215409901", "o 전시부스설치서비스(7215409901)")])
+
+        result = qualify.evaluate_attachment_text([item], held_codes={"9999"})
+        self.assertEqual(result.summary, "자격 미달(o 전시부스설치서비스(7215409901))")
+
     def test_extract_code_requirements_ignores_short_bare_parens(self):
         """4자리 등 10자리가 아닌 괄호 숫자는(예: 법조문 인용) 코드로 보지 않는다."""
         item = "o 국가를 당사자로 하는 계약에 관한 법률(2024) 제12조에 따른 자"
