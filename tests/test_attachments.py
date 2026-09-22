@@ -277,6 +277,54 @@ class TestPdfExtraction(unittest.TestCase):
                 extract_text(data, "pdf")
 
 
+class TestPdfOcrFallback(unittest.TestCase):
+    """실측(2026-09-22, jiil-past-contracts 안흥찐빵 사업수행능력평가서 — 95페이지
+    전부 텍스트 0자): pypdf가 텍스트를 하나도 못 뽑은(스캔) 페이지만 OCR로
+    보충한다. 실제 tesseract 실행은 무겁고 환경 의존적이라, 여기선 OCR
+    호출부(_open_ocr_document/_ocr_pdf_page)만 모킹해 그 앞뒤 로직(정상
+    페이지는 안 건드림·실패 시 조용히 넘어감·한 번 실패하면 이후 페이지는
+    재시도 안 함)을 검증한다."""
+
+    def test_ocr_fills_in_text_only_for_empty_pages(self):
+        data = _build_pdf_pages(["Page with real text", ""])
+        fake_doc = unittest.mock.MagicMock()
+        with (
+            unittest.mock.patch("nego.attachments._open_ocr_document", return_value=fake_doc),
+            unittest.mock.patch("nego.attachments._ocr_pdf_page", return_value="OCR로 복원된 텍스트") as ocr,
+        ):
+            text = extract_text(data, "pdf")
+
+        self.assertIn("Page with real text", text)
+        self.assertIn("OCR로 복원된 텍스트", text)
+        ocr.assert_called_once_with(fake_doc, 1)  # 빈 페이지(두 번째, index 1)만 OCR
+        fake_doc.close.assert_called_once()
+
+    def test_ocr_unavailable_falls_back_silently(self):
+        data = _build_pdf_pages(["", ""])
+        with unittest.mock.patch(
+            "nego.attachments._open_ocr_document",
+            side_effect=AttachmentError("OCR 라이브러리가 없습니다"),
+        ) as open_ocr:
+            text = extract_text(data, "pdf")  # 예외 없이 그냥 빈 텍스트로 남아야 함
+
+        self.assertEqual(text, "")
+        open_ocr.assert_called_once()  # 처음 한 번 실패하면 이후 빈 페이지는 재시도 안 함
+
+    def test_ocr_failure_on_one_page_disables_it_for_the_rest(self):
+        data = _build_pdf_pages(["", "", ""])
+        with (
+            unittest.mock.patch("nego.attachments._open_ocr_document", return_value=unittest.mock.MagicMock()),
+            unittest.mock.patch(
+                "nego.attachments._ocr_pdf_page",
+                side_effect=AttachmentError("OCR 실패"),
+            ) as ocr,
+        ):
+            text = extract_text(data, "pdf")
+
+        self.assertEqual(text, "")
+        ocr.assert_called_once()  # 첫 빈 페이지에서 실패하면 나머지는 시도하지 않음
+
+
 class TestExtensionMismatchSniffing(unittest.TestCase):
     """실측: 나라장터 첨부파일이 파일명 확장자와 실제 내용이 다른 경우가 있다
     (.hwpx로 등록됐지만 실제론 구버전 OLE2 .hwp 바이너리 — "File is not a

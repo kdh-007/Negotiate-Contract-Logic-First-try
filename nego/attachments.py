@@ -286,6 +286,18 @@ def save_attachment_texts(
 
 # ── PDF ──────────────────────────────────────────────────────────
 
+# 실측(2026-09-22, jiil-past-contracts 안흥찐빵 사업수행능력평가서 — 95페이지
+# 전부 텍스트 0자): 나라장터 첨부 PDF 중 사업수행능력평가서류는 스캔본이 흔하다
+# (CLAUDE.md 기록: 파일당 40~60%가 스캔). pypdf가 텍스트를 하나도 못 뽑은
+# 페이지에 한해서만(정상 추출된 페이지는 그대로 둠) OCR(tesseract, 한국어+영어)
+# 로 보충한다. pymupdf/pytesseract/시스템 tesseract 바이너리는 선택 의존성 —
+# 없으면 조용히 건너뛰고 기존처럼 빈 텍스트로 남긴다(운영 수집 파이프라인이
+# 도는 GitHub Actions에는 아직 tesseract를 안 깔아서, 거기선 이 보충이 자동
+# 비활성화된다 — 실패해도 안전).
+_OCR_LANG = "kor+eng"
+_OCR_DPI = 200
+
+
 def _extract_pdf_text(data: bytes) -> str:
     """페이지별로 추출한다. 그 전에 알려진 pypdf 결함을 먼저 패치해서
 
@@ -293,6 +305,7 @@ def _extract_pdf_text(data: bytes) -> str:
     그래도 남는 예외는(다른 원인일 수 있으니) 조용히 건너뛰지 않고, 그
     페이지 자리에 "추출 실패, 원본 확인 필요" 표시를 남긴다 — 지역제한 같은
     중요 정보가 하필 그 페이지에 있었을 수 있으니 사람이 놓치면 안 된다.
+    텍스트가 하나도 없는(스캔) 페이지는 OCR로 한 번 더 시도한다.
     """
     from pypdf import PdfReader
     from pypdf.errors import PdfReadError
@@ -307,18 +320,67 @@ def _extract_pdf_text(data: bytes) -> str:
     total = len(reader.pages)
     pages: list[str] = []
     failed = 0
+    ocr_doc = None
+    ocr_disabled = False
     for i, page in enumerate(reader.pages):
         try:
-            pages.append(page.extract_text() or "")
+            text = page.extract_text() or ""
         except Exception as err:  # pypdf가 던지는 예외 타입이 일정하지 않다 (KeyError 등)
             log.warning("PDF %d/%d페이지 텍스트 추출 실패: %s", i + 1, total, err)
             pages.append(f"[※ {i + 1}페이지 텍스트 추출 실패 — 이 페이지는 원본 파일에서 직접 확인해야 합니다]")
             failed += 1
+            continue
+
+        if not text.strip() and not ocr_disabled:
+            if ocr_doc is None:
+                try:
+                    ocr_doc = _open_ocr_document(data)
+                except AttachmentError as err:
+                    log.info("OCR 사용 불가 — 스캔 페이지는 빈 텍스트로 남깁니다: %s", err)
+                    ocr_disabled = True
+            if ocr_doc is not None:
+                try:
+                    text = _ocr_pdf_page(ocr_doc, i)
+                except AttachmentError as err:
+                    log.warning("PDF %d/%d페이지 OCR 실패 — 이후 페이지도 OCR 건너뜁니다: %s", i + 1, total, err)
+                    ocr_disabled = True
+
+        pages.append(text)
+
+    if ocr_doc is not None:
+        ocr_doc.close()
 
     if failed and failed == total:
         raise AttachmentError(f"PDF 모든 페이지({total}개) 텍스트 추출 실패")
 
     return "\n\n".join(pages).strip()
+
+
+def _open_ocr_document(data: bytes):
+    """OCR용으로 PDF를 렌더링 가능한 문서 객체로 연다 (pymupdf, 선택 의존성)."""
+    try:
+        import fitz  # pymupdf
+    except ImportError as err:
+        raise AttachmentError(f"OCR 렌더링 라이브러리(pymupdf)가 없습니다: {err}") from err
+    try:
+        return fitz.open(stream=data, filetype="pdf")
+    except Exception as err:
+        raise AttachmentError(f"OCR용 PDF 렌더링 실패: {err}") from err
+
+
+def _ocr_pdf_page(ocr_doc, page_index: int) -> str:
+    """페이지 하나를 이미지로 렌더링해 tesseract로 읽는다 (pytesseract, 선택 의존성)."""
+    try:
+        import pytesseract
+        from PIL import Image
+    except ImportError as err:
+        raise AttachmentError(f"OCR 라이브러리(pytesseract/pillow)가 없습니다: {err}") from err
+    try:
+        pix = ocr_doc[page_index].get_pixmap(dpi=_OCR_DPI)
+        img = Image.open(io.BytesIO(pix.tobytes("png")))
+        return pytesseract.image_to_string(img, lang=_OCR_LANG)
+    except Exception as err:
+        raise AttachmentError(f"OCR 실패: {err}") from err
 
 
 def _patch_missing_descendant_fonts(reader) -> int:
