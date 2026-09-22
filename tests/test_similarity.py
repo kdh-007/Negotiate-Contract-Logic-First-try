@@ -15,6 +15,7 @@ from nego.models import notice_from_raw  # noqa: E402
 from nego.similarity import (  # noqa: E402
     PastProject,
     load_past_projects,
+    rank,
     score,
     tokenize,
 )
@@ -122,6 +123,88 @@ class TestScore(unittest.TestCase):
         result_default = score(notice, [past])
         result_text_only = score(notice, [past], weights=text_heavy)
         self.assertNotEqual(result_default.score, result_text_only.score)
+
+    def test_common_boilerplate_words_do_not_create_false_ties(self):
+        """실측(2026-09-22, config/past_projects.json 81건으로 프로토타입 실행):
+        "포함·설치·있는·제작·사업" 같은 단어는 과거 실적 80~90%에 등장하는
+        보일러플레이트라, 겹침계수만 쓰면 무관한 실적이 진짜 일치 건과 동점을
+        먹는다. corpus가 충분히 크면(5건 이상) 절반 넘게 등장하는 토큰을 걸러내
+        진짜 일치 건이 확실히 더 높은 점수를 받아야 한다."""
+        notice = _notice(bidNtceNm="울산과학관 전시체험물 교체 사업")
+        real_match = PastProject(title="울산과학관", summary_text="울산과학관 전시체험물 교체 사업 관련 내용")
+        boilerplate_only = [
+            PastProject(title=f"무관한 사업 {i}", summary_text="사업 포함 설치 제작 관련 절차 내용")
+            for i in range(5)
+        ]
+        result = score(notice, [real_match, *boilerplate_only])
+        self.assertEqual(result.matched, real_match)
+        self.assertGreater(result.text_score, 0.5)
+
+
+class TestContentAwareTokens(unittest.TestCase):
+    """`PastProject.tokens`가 summary_text 전체가 아니라 section_text로 뽑아낸
+    "사업개요/과업내용" 절만 쓰는지 확인한다 — 실측(국립중앙과학관 등)에서 목차·
+    서식 안내가 summary_text 대부분을 차지해 그대로 토큰화하면 신호가 희석된다."""
+
+    def test_prefers_content_section_over_toc_noise(self):
+        summary_text = (
+            "차   례\n"
+            "Ⅰ. 사업 개요 蠠ȃ1\n"
+            "Ⅱ. 제안 요청 내용 秤ȃ2\n"
+            "Ⅲ. 일반 사항 蠠ȃ7\n"
+            "\n"
+            "Ⅰ. 사업 개요\n"
+            " 1. 사업명 : 미디어아트 콘텐츠 제작 설치\n"
+            " 2. 사업 목적 : 창의적 전시 콘텐츠 확보\n"
+            "\n"
+            "Ⅱ. 제안 요청 내용\n"
+            " 일반 사항 안내 및 서식 목록\n"
+            "\n"
+            "Ⅲ. 일반 사항\n"
+            " 제안서 작성 방법, 제출 서류, 청렴계약 이행서약서 등 행정 절차\n"
+        )
+        past = PastProject(title="테스트 사업", summary_text=summary_text)
+        self.assertIn("미디어아트", past.tokens)
+        self.assertIn("콘텐츠", past.tokens)
+        # "일반 사항" 절(행정 절차)은 "사업개요" 절이 아니므로 안 섞여 들어와야 한다.
+        self.assertNotIn("청렴계약", past.tokens)
+        self.assertNotIn("이행서약서", past.tokens)
+
+    def test_falls_back_to_full_text_when_no_content_section_found(self):
+        """절 구조를 못 찾거나(fail-open) 사업개요/과업내용 절이 아예 없으면
+        summary_text 전체를 그대로 쓴다 — 있는 신호를 버리지 않는다."""
+        past = PastProject(title="테스트 사업", summary_text="구조 없는 평문 텍스트, 미디어아트 콘텐츠 제작 건")
+        self.assertIn("미디어아트", past.tokens)
+        self.assertIn("콘텐츠", past.tokens)
+
+
+class TestRank(unittest.TestCase):
+    def test_returns_top_n_sorted_descending(self):
+        notice = _notice(
+            bidNtceNm="전시관 미디어아트 콘텐츠 제작",
+            presmptPrce="500000000",
+            bidprcPsblIndstrytyNm="[실내건축공사업/4990]",
+        )
+        best = PastProject(
+            title="전시관 미디어아트 콘텐츠 제작 설치",
+            amount=500_000_000,
+            industry_names=["실내건축공사업"],
+        )
+        mid = PastProject(title="전시관 콘텐츠 일부 제작", amount=300_000_000)
+        worst = PastProject(title="상하수도 정비공사", amount=5_000_000_000)
+        matches = rank(notice, [worst, mid, best], top_n=2)
+        self.assertEqual(len(matches), 2)
+        self.assertEqual(matches[0].past, best)
+        self.assertGreaterEqual(matches[0].score, matches[1].score)
+
+    def test_top_n_larger_than_pool_returns_all(self):
+        notice = _notice()
+        past = PastProject(title="유일한 실적")
+        matches = rank(notice, [past], top_n=5)
+        self.assertEqual(len(matches), 1)
+
+    def test_empty_pool_returns_empty_list(self):
+        self.assertEqual(rank(_notice(), []), [])
 
 
 class TestLoadPastProjects(unittest.TestCase):
