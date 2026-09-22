@@ -436,11 +436,21 @@ def _render_cell(tc: ET.Element) -> str:
 # 압축돼 있고, 그 안은 레코드 스트림이다. 레코드 헤더 4바이트 = tag_id(10bit)
 # + level(10bit) + size(12bit, 0xFFF면 다음 4바이트가 실제 크기).
 #
-# 참고: 표/그림 같은 인라인 컨트롤 문자 뒤에 예약된 텍스트 슬롯을 정교하게
-# 건너뛰지는 않는다 — 문단 본문은 정상 추출되지만 표/이미지가 많은 문서는
-# 경계 부분에 약간의 잡음이 섞일 수 있다. 실제 공고 첨부파일로 검증 필요.
+# 실측(2026-09-22, KOSCOM/원주거돈사지/화진포 씨월드 제안요청서·과업지시서 원문 바이트
+# 직접 역추적): 필드(0x02)/표·그리기개체(0x0B)/자동번호류(0x10)/책갈피류(0x15) 같은
+# 인라인 컨트롤 문자는
+# [여는 코드(1워드)][예약 데이터(6워드)][닫는 코드(1워드, 여는 코드와 동일값)] 총 8워드를
+# 차지한다. 예약 구간에는 내부 식별자(예: "dces","dloc"," osg")가 들어있는데, 이를 걷어내지
+# 않고 그대로 UTF-16LE로 읽으면 2바이트씩 우연히 한자 유니코드 대역(U+4E00~U+9FFF)에 걸려
+# 원본 문서에 없는 한자처럼 보이는 노이즈가 생긴다 — 확인된 세 컨트롤 코드에 한해
+# `_INLINE_ANCHOR_CONTROL_CODES`로 여닫는 코드가 정확히 일치하는 8워드 블록을 통째로
+# 걸러낸다(`_decode_para_text`). 목록에 없는 컨트롤 문자는 기존처럼 1워드만 제거한다 —
+# 다른 컨트롤 코드도 같은 구조일 가능성이 높지만 실측으로 확인된 것만 반영한다.
 
 _HWPTAG_PARA_TEXT = 0x43
+
+_INLINE_ANCHOR_CONTROL_CODES = {0x02, 0x0B, 0x10, 0x15}
+_INLINE_ANCHOR_BLOCK_LEN = 8  # 여는 코드 + 예약 6워드 + 닫는 코드
 
 
 def _extract_hwp_text(data: bytes) -> str:
@@ -528,6 +538,34 @@ def _hwp_section_paragraphs(payload: bytes) -> list[str]:
 
 
 def _decode_para_text(record: bytes) -> str:
-    raw = record.decode("utf-16le", errors="ignore")
-    # 표/그림 등 인라인 컨트롤 문자(0x00~0x1F, 개행 제외)는 걷어낸다.
-    return "".join(ch for ch in raw if ch == "\n" or ord(ch) >= 0x20)
+    """레코드를 문단 텍스트로 디코딩한다.
+
+    강제 줄바꿈(0x0A)은 개행으로 살리고, 그 외 컨트롤 문자(<0x20)는 걷어낸다.
+    `_INLINE_ANCHOR_CONTROL_CODES`에 속하는 컨트롤 문자는 단순 1워드가 아니라
+    [여는 코드][예약 6워드][닫는 코드] 8워드짜리 인라인 개체 앵커일 수 있으므로,
+    같은 코드가 정확히 7워드 뒤에서 블록을 닫는 걸 확인한 경우에 한해 그 구간
+    전체를 건너뛴다 — 예약 슬롯의 내부 식별자가 텍스트로 새어 나가는 걸 막는다
+    (검증 없이 무조건 8워드를 건너뛰면 실제로는 짧은 컨트롤인 경우 뒤따르는
+    본문을 삼켜버릴 수 있어, 닫는 코드 일치를 조건으로 둔다).
+    """
+    chars = record.decode("utf-16le", errors="ignore")
+    n = len(chars)
+    out: list[str] = []
+    i = 0
+    while i < n:
+        ch = chars[i]
+        code = ord(ch)
+        if code == 0x0A:
+            out.append("\n")
+            i += 1
+            continue
+        if code < 0x20:
+            block_end = i + _INLINE_ANCHOR_BLOCK_LEN - 1
+            if code in _INLINE_ANCHOR_CONTROL_CODES and block_end < n and chars[block_end] == ch:
+                i = block_end + 1
+            else:
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
