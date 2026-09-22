@@ -177,6 +177,29 @@ class TestSplitSections(unittest.TestCase):
         self.assertEqual(headings, ["① 사업 개요", "② 과업 내용", "③ 기본지침"])
         self.assertIn("지침 내용", sections[2].body)
 
+    def test_toc_entries_ending_in_a_page_number_are_not_mistaken_for_headings(self):
+        """실측(사용자 지적, 2026-09-22 — 국립중앙과학관 2017 제안요청서): 이 문서는
+        "Ⅰ.Ⅱ.Ⅲ.Ⅳ."가 전체에서 딱 1번씩만 등장했는데 그 1번이 전부 목차 줄이었다
+        ("Ⅰ. 개요 1"의 "1"은 페이지 번호). "번호 1의 마지막 등장을 경계로 삼는다"는
+        로직은 최소 2번 등장(목차+본문)을 전제하는데, 여기서는 그 전제가 깨져서
+        목차 자체를 4개 절로 잘못 쪼갰고 진짜 본문은 마지막 절에 전부 뭉뚱그려
+        들어갔다. 제목이 페이지 번호로 끝나는 후보는 아예 제외해야 한다."""
+        text = (
+            "목    차\n"
+            "Ⅰ. 개요 1\n"
+            "Ⅱ. 과업내용 및 지침 5\n"
+            "Ⅲ. 제안서 작성요령 및 제출 20\n"
+            "Ⅳ. 제안서 평가 26\n"
+            "\n"
+            "실제로는 이 문서 전체에 로마숫자 헤딩이 이게 전부다 — 본문 어디에도\n"
+            "Ⅰ.Ⅱ.Ⅲ.Ⅳ.가 다시 나오지 않는다. 사업목적 관련 진짜 내용은 그냥 평문으로\n"
+            "이어진다.\n"
+        )
+        sections = split_sections(text)
+        # 로마숫자 4개를 그대로 절로 잘못 쪼개면 안 된다 — 목차 줄로 걸러져서
+        # 로마숫자 방식 자체가 실패하고, 다른 방식도 안 맞으면 fail-open이어야 한다.
+        self.assertEqual(sections[0].heading, "")
+
     def test_arabic_clause_with_incidental_letters_still_fails_open(self):
         """가나다가 우연히 섞인 조항 설명 문장("N. 입찰자는 ... 하여야 한다.")은
         절 제목치고 너무 길어서(20자 초과) 여전히 걸러져야 한다(실측 6건)."""

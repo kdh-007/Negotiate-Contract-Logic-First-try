@@ -38,6 +38,18 @@
     하위항목 없이 문장 하나로 끝나는 조항)을 구분할 수 없다. 가나다 하위항목이
     2개 이상 뒤따르는지로 판별한다. 조항 설명 문장이 우연히 가나다를 포함하는
     경우가 있어(실측 6건), 절 제목치고 너무 긴(20자 초과) 캡처는 걸러낸다.
+  - **목차를 본문으로 오인(중대 오탐, 사용자 지적으로 발견)**: 국립중앙과학관(2017)
+    제안요청서는 "Ⅰ.Ⅱ.Ⅲ.Ⅳ."가 문서 전체에서 딱 1번씩만 등장했는데, 그 1번이
+    전부 목차 줄이었다("Ⅰ. 개요 1"의 "1"은 페이지 번호) — 목차가 아예 없는 문서로
+    착각해 목차 자체를 4개 절로 잘못 쪼갰고, 진짜 본문(사업목적 등, "Ⅰ" 헤딩보다
+    한참 뒤에 나옴)은 전부 마지막 절("Ⅳ")에 뭉뚱그려 들어갔다. "번호 1의 마지막
+    등장"을 경계로 삼는 로직은 최소 2번 등장(목차+본문)을 전제하는데, 이 문서는
+    번호별로 정확히 1번씩만 나와서 그 전제가 깨졌다. 목차 줄은 제목 끝에 페이지
+    번호가 붙는다는 게 공통 특징이라("Ⅰ. 개요 1", "Ⅱ. 과업내용 및 지침 5") —
+    제목이 공백/가운뎃점/마침표 뒤에 1~3자리 숫자로 끝나는 후보는 아예 목차로 보고
+    제외한다(`_looks_like_toc_entry`). 그러면 이 문서는 로마숫자 후보가 0개가 돼
+    다음 방식(제N장→원문자→아라비아)으로 넘어가고, 그마저도 안 맞으면 fail-open
+    으로 정직하게 "구조 없음"이 된다 — 오분류보다 낫다.
   - **최소 절 개수**: 사용자 확인(2026-09-22) — 함양 곶감 조형물(Ⅰ. 하나뿐),
     화진포 씨월드(Ⅰ.Ⅱ. 둘뿐)처럼 최상위 절이 1~2개인 문서도 실제로 존재하는
     정상 구조다. 예전에는 "1~2개만 우연히 매치됐을 가능성"을 우려해 최소 3개를
@@ -92,6 +104,14 @@ _KOREAN_LETTER_ITEM_RE = re.compile(r"^[ \t　]*[가나다라마바사아자차�
 # 진짜 절 제목이라면 쉼표 다음 곧장 다른 로마숫자가 나올 일이 없다.
 _ROMAN_LISTING_GUARD_RE = re.compile(r"^[,、][ \t　]*[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]")
 
+# 목차 줄의 공통 특징 — 제목 끝에 페이지 번호가 붙는다("Ⅰ. 개요 1", "Ⅱ. 과업내용
+# 및 지침 5"). 본문 진짜 헤딩은 이 꼴로 안 끝난다(실측 확인).
+_TOC_PAGE_NUMBER_SUFFIX_RE = re.compile(r"[ \t·.]\d{1,3}$")
+
+
+def _looks_like_toc_entry(title: str) -> bool:
+    return bool(_TOC_PAGE_NUMBER_SUFFIX_RE.search(title))
+
 # 절 제목은 짧은 명사구여야 한다 — 이보다 길면 조항 설명 문장/일반 본문으로 본다.
 _TITLE_MAX_LEN = 40
 _ARABIC_TITLE_MAX_LEN = 20
@@ -121,12 +141,12 @@ def _roman_candidates(text: str) -> list[_Candidate]:
     candidates = []
     for m in _ROMAN_HEADING_RE.finditer(text):
         title = m.group(2).strip()
-        if _ROMAN_LISTING_GUARD_RE.match(title) or len(title) > _TITLE_MAX_LEN:
+        if _ROMAN_LISTING_GUARD_RE.match(title) or len(title) > _TITLE_MAX_LEN or _looks_like_toc_entry(title):
             continue
         candidates.append(_Candidate(m.start(), m.end(), m.group(0).strip(), _ROMAN_VALUES[m.group(1)]))
     for m in _ROMAN_BOXED_RE.finditer(text):
         title = m.group(2).strip()
-        if len(title) > _TITLE_MAX_LEN:
+        if len(title) > _TITLE_MAX_LEN or _looks_like_toc_entry(title):
             continue
         candidates.append(_Candidate(m.start(), m.end(), f"{m.group(1)} {title}", _ROMAN_VALUES[m.group(1)]))
 
@@ -143,14 +163,20 @@ def _roman_candidates(text: str) -> list[_Candidate]:
 
 
 def _chapter_candidates(text: str) -> list[_Candidate]:
-    return [_Candidate(m.start(), m.end(), m.group(0).strip(), int(m.group(1))) for m in _CHAPTER_HEADING_RE.finditer(text)]
+    candidates = []
+    for m in _CHAPTER_HEADING_RE.finditer(text):
+        title = m.group(2).strip()
+        if _looks_like_toc_entry(title):
+            continue
+        candidates.append(_Candidate(m.start(), m.end(), m.group(0).strip(), int(m.group(1))))
+    return candidates
 
 
 def _circled_candidates(text: str) -> list[_Candidate]:
     candidates = []
     for m in _CIRCLED_PUA_RE.finditer(text):
         title = m.group(2).strip()
-        if len(title) > _TITLE_MAX_LEN:
+        if len(title) > _TITLE_MAX_LEN or _looks_like_toc_entry(title):
             continue
         value = ord(m.group(1)) - _CIRCLED_PUA_BASE
         digit = _CIRCLED_DIGITS[value - 1] if 1 <= value <= len(_CIRCLED_DIGITS) else f"{value}."
@@ -164,7 +190,7 @@ def _corroborated_arabic_candidates(text: str) -> list[_Candidate]:
     candidates = []
     for i, m in enumerate(matches):
         title = m.group(2).strip()
-        if len(title) > _ARABIC_TITLE_MAX_LEN:
+        if len(title) > _ARABIC_TITLE_MAX_LEN or _looks_like_toc_entry(title):
             continue
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         body = text[m.end() : end]
