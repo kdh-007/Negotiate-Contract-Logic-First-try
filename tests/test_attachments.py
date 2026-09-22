@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from nego.attachments import (  # noqa: E402
     AttachmentError,
     _decode_para_text,
+    _extract_char_overlap_text,
     _hwp_section_paragraphs,
     _hwpx_section_text,
     _sniff_ext,
@@ -434,6 +435,35 @@ class TestHwpRecordParsing(unittest.TestCase):
         record = _build_hwp_record(0x43, payload)
 
         self.assertEqual(_hwp_section_paragraphs(record), [text])
+
+    def test_extract_char_overlap_text_reads_length_prefixed_string(self):
+        record = b"spct" + (1).to_bytes(2, "little") + "①".encode("utf-16le")
+        self.assertEqual(_extract_char_overlap_text(record), "①")
+
+    def test_extract_char_overlap_text_empty_control_returns_empty_string(self):
+        record = b"spct" + (0).to_bytes(2, "little")
+        self.assertEqual(_extract_char_overlap_text(record), "")
+
+    def test_extract_char_overlap_text_ignores_non_spct_records(self):
+        self.assertEqual(_extract_char_overlap_text(b"xyz1" + (1).to_bytes(2, "little") + "A".encode("utf-16le")), "")
+
+    def test_char_overlap_control_restores_the_overlapped_character(self):
+        """실측(사용자 제보, 2026-09-22 — 법천사지 과업지시서): "①"이 문단 텍스트가
+        아니라 별도 "spct"(글자겹치기) 컨트롤 레코드에 들어있다. 0x17 앵커를 그
+        컨트롤의 문자로 치환해 복원해야 한다."""
+        overlap_char = "①"
+        anchor = chr(0x17) + "\x00" * 6 + chr(0x17)
+        para = _build_hwp_record(0x43, (anchor + " 사업 개요").encode("utf-16le"))
+        ctrl = _build_hwp_record(0x47, b"spct" + (1).to_bytes(2, "little") + overlap_char.encode("utf-16le"))
+        section = para + ctrl
+
+        self.assertEqual(_hwp_section_paragraphs(section), ["① 사업 개요"])
+
+    def test_char_overlap_control_with_no_matching_spct_is_just_skipped(self):
+        anchor = chr(0x17) + "\x00" * 6 + chr(0x17)
+        para = _build_hwp_record(0x43, (anchor + " 사업 개요").encode("utf-16le"))
+
+        self.assertEqual(_hwp_section_paragraphs(para), [" 사업 개요"])
 
 
 class TestFetchAttachmentText(unittest.TestCase):

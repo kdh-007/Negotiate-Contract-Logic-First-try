@@ -16,6 +16,7 @@ import logging
 import re
 import zipfile
 import zlib
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -438,8 +439,7 @@ def _render_cell(tc: ET.Element) -> str:
 #
 # 실측(2026-09-22, KOSCOM/원주거돈사지/화진포 씨월드/법천사지 제안요청서·과업지시서
 # 원문 바이트 직접 역추적): 필드(0x02)/표·그리기개체(0x0B)/자동번호류(0x10)/책갈피류
-# (0x15)/박스형 제목틀(0x17, 사용자 제보로 법천사지 과업지시서에서 추가 확인 — 예약
-# 식별자 "spct") 같은 인라인 컨트롤 문자는
+# (0x15)/글자겹치기(0x17, "spct" 컨트롤) 같은 인라인 컨트롤 문자는
 # [여는 코드(1워드)][예약 데이터(6워드)][닫는 코드(1워드, 여는 코드와 동일값)] 총 8워드를
 # 차지한다. 예약 구간에는 내부 식별자(예: "dces","dloc"," osg","spct")가 들어있는데, 이를
 # 걷어내지 않고 그대로 UTF-16LE로 읽으면 2바이트씩 우연히 한자 유니코드 대역(U+4E00~U+9FFF)
@@ -447,11 +447,25 @@ def _render_cell(tc: ET.Element) -> str:
 # `_INLINE_ANCHOR_CONTROL_CODES`로 여닫는 코드가 정확히 일치하는 8워드 블록을 통째로
 # 걸러낸다(`_decode_para_text`). 목록에 없는 컨트롤 문자는 기존처럼 1워드만 제거한다 —
 # 다른 컨트롤 코드도 같은 구조일 가능성이 높지만 실측으로 확인된 것만 반영한다.
+#
+# 실측(2026-09-22, 법천사지 과업지시서 — 사용자가 "① 사업 개요"가 안 뽑힌다고 재차
+# 제보): 0x17(글자겹치기)은 다른 넷과 달리 단순 노이즈가 아니라 실제 보이는 글자를
+# 담고 있다 — "①" 같은 원문자를 숫자+도형을 겹쳐서 그리는 HWP 기능이고, 겹쳐진
+# 문자는 문단 텍스트가 아니라 별도 CTRL_HEADER 레코드(tag 0x47, 컨트롤ID "spct")
+# 안에 [b"spct"][길이 uint16][그 길이만큼의 UTF-16LE 문자]로 들어있다. 그래서
+# 0x17 블록만 예외적으로: 그냥 버리지 않고, 문서에 나오는 순서대로 수집해둔 spct
+# 컨트롤의 문자로 치환한다(`_hwp_section_paragraphs`가 섹션 전체의 spct 컨트롤을
+# 먼저 큐에 모아 각 문단 디코딩에 넘겨줌) — 순서대로 대응한다는 가정은 HWP가
+# 컨트롤을 참조 순서대로 기록하는 관행에 기반한다(실측 확인, 100% 보장은 아님).
 
 _HWPTAG_PARA_TEXT = 0x43
+_HWPTAG_CTRL_HEADER = 0x47
 
 _INLINE_ANCHOR_CONTROL_CODES = {0x02, 0x0B, 0x10, 0x15, 0x17}
 _INLINE_ANCHOR_BLOCK_LEN = 8  # 여는 코드 + 예약 6워드 + 닫는 코드
+# 글자겹치기(원문자 등) 전용 컨트롤 — 유일하게 겹쳐진 문자를 실제로 복원할 수 있다.
+_CHAR_OVERLAP_ANCHOR_CODE = 0x17
+_CHAR_OVERLAP_CTRL_ID = b"spct"
 
 
 def _extract_hwp_text(data: bytes) -> str:
@@ -515,8 +529,8 @@ def _inflate_raw(data: bytes) -> bytes:
         raise AttachmentError(f"HWP 섹션 압축 해제 실패: {err}") from err
 
 
-def _hwp_section_paragraphs(payload: bytes) -> list[str]:
-    paragraphs = []
+def _iter_hwp_records(payload: bytes):
+    """섹션 페이로드를 (tag_id, record_bytes) 레코드 스트림으로 순회한다."""
     offset = 0
     length = len(payload)
     while offset + 4 <= length:
@@ -531,14 +545,45 @@ def _hwp_section_paragraphs(payload: bytes) -> list[str]:
             offset += 4
         record = payload[offset : offset + size]
         offset += size
+        yield tag_id, record
+
+
+def _extract_char_overlap_text(record: bytes) -> str:
+    """"spct"(글자겹치기) 컨트롤 레코드에서 겹쳐진 문자를 꺼낸다.
+
+    구조(실측): b"spct" + 문자 길이(uint16, UTF-16 코드유닛 수) + 그 길이만큼의
+    UTF-16LE 문자 + 나머지 서식 파라미터(도형 종류 등, 여기선 안 씀). 길이가
+    0인(내용 없는) 컨트롤도 실측상 흔하다 — 그 경우 빈 문자열을 반환한다.
+    """
+    if len(record) < 6 or record[:4] != _CHAR_OVERLAP_CTRL_ID:
+        return ""
+    char_len = int.from_bytes(record[4:6], "little")
+    end = 6 + char_len * 2
+    if char_len <= 0 or end > len(record):
+        return ""
+    return record[6:end].decode("utf-16le", errors="ignore")
+
+
+def _hwp_section_paragraphs(payload: bytes) -> list[str]:
+    records = list(_iter_hwp_records(payload))
+    # 글자겹치기 컨트롤을 문서 순서대로 먼저 모아, 문단 디코딩 중 0x17 앵커를
+    # 만날 때마다 하나씩 꺼내 쓴다(순서 대응 — 모듈 상단 실측 설명 참고).
+    overlap_queue = deque(
+        _extract_char_overlap_text(record)
+        for tag_id, record in records
+        if tag_id == _HWPTAG_CTRL_HEADER and record[:4] == _CHAR_OVERLAP_CTRL_ID
+    )
+
+    paragraphs = []
+    for tag_id, record in records:
         if tag_id == _HWPTAG_PARA_TEXT and record:
-            text = _decode_para_text(record)
+            text = _decode_para_text(record, overlap_queue)
             if text:
                 paragraphs.append(text)
     return paragraphs
 
 
-def _decode_para_text(record: bytes) -> str:
+def _decode_para_text(record: bytes, overlap_queue: "deque[str] | None" = None) -> str:
     """레코드를 문단 텍스트로 디코딩한다.
 
     강제 줄바꿈(0x0A)은 개행으로 살리고, 그 외 컨트롤 문자(<0x20)는 걷어낸다.
@@ -547,7 +592,9 @@ def _decode_para_text(record: bytes) -> str:
     같은 코드가 정확히 7워드 뒤에서 블록을 닫는 걸 확인한 경우에 한해 그 구간
     전체를 건너뛴다 — 예약 슬롯의 내부 식별자가 텍스트로 새어 나가는 걸 막는다
     (검증 없이 무조건 8워드를 건너뛰면 실제로는 짧은 컨트롤인 경우 뒤따르는
-    본문을 삼켜버릴 수 있어, 닫는 코드 일치를 조건으로 둔다).
+    본문을 삼켜버릴 수 있어, 닫는 코드 일치를 조건으로 둔다). 글자겹치기(0x17)
+    블록만은 버리지 않고, `overlap_queue`에서 대응하는 실제 글자를 꺼내 그
+    자리에 채워 넣는다(큐가 없거나 다 썼으면 그냥 건너뛴다).
     """
     chars = record.decode("utf-16le", errors="ignore")
     n = len(chars)
@@ -563,6 +610,8 @@ def _decode_para_text(record: bytes) -> str:
         if code < 0x20:
             block_end = i + _INLINE_ANCHOR_BLOCK_LEN - 1
             if code in _INLINE_ANCHOR_CONTROL_CODES and block_end < n and chars[block_end] == ch:
+                if code == _CHAR_OVERLAP_ANCHOR_CODE and overlap_queue:
+                    out.append(overlap_queue.popleft())
                 i = block_end + 1
             else:
                 i += 1
