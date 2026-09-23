@@ -516,6 +516,7 @@ class TestSaveAttachmentTexts(unittest.TestCase):
                     "qualification_found": 1,
                     "qualification_determined": 0,
                     "deadline_determined": 0,
+                    "content_found": 0,
                 },
             )
 

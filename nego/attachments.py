@@ -32,6 +32,23 @@ log = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = {"hwp", "hwpx", "pdf"}
 
+# 면적(㎡) 언급이 있는 줄 — 점수 계산에는 안 쓰고 리포트 "근거" 팝업에 참고용으로만
+# 보여준다(신규 공고 쪽 면적 파싱은 검증된 적이 없어, 자동으로 규모 축 점수를
+# 매기면 우연한 숫자 일치로 왜곡될 위험이 있다. similarity.PastProject.area_note와
+# 같은 이유).
+_AREA_LINE_RE = re.compile(r"^.*(?:면적|㎡).*$", re.MULTILINE)
+
+
+def _find_area_lines(text: str, limit: int = 3) -> list[str]:
+    lines: list[str] = []
+    for match in _AREA_LINE_RE.finditer(text):
+        line = match.group(0).strip()
+        if line and line not in lines:
+            lines.append(line)
+        if len(lines) >= limit:
+            break
+    return lines
+
 
 class AttachmentError(Exception):
     """다운로드/파싱 단계 실패. 호출측(fetch_attachment_text)이 잡아서 계속 진행한다."""
@@ -201,6 +218,14 @@ def save_attachment_texts(
     표시용일 뿐 후보 목록 자체는 바꾸지 않는다 — 후보/제외는 이미 API 기반 1차
     판정에서 끝난 뒤이기 때문이다.
 
+    같은 원문에서 "과업내용/범위"·"전시내용/구성" 절도 찾아(`section_text` 참고)
+    `candidate.content_task_text`/`content_exhibit_text`에 남긴다 — cli.py가
+    이걸로 `similarity.score()`를 돌려 신규 공고를 제목뿐 아니라 본문까지
+    과거실적과 대조한다. 절을 못 찾으면(예: 목차 재시작 등 흔치 않은 문서 구조)
+    빈 문자열로 남고, 그러면 유사도 매칭은 제목만 쓰는 기존 동작으로 자연히
+    돌아간다(fail-open — qualify 판정과 달리 이건 점수 계산용 참고자료일 뿐이라
+    못 찾아도 위험하지 않다).
+
     마감일정도 같은 방식으로 보충한다 — API의 마감 관련 세 필드가 전부 비어
     `candidate.schedule.earliest`가 None인("일정 미상") 공고에 한해, 첨부파일
     원문에서 제출기한을 찾아(`schedule_text.extract_deadline`)
@@ -209,6 +234,7 @@ def save_attachment_texts(
     from .qualification_text import find_qualification_section
     from .qualify import evaluate_attachment_text, merge_results
     from .schedule_text import extract_deadline
+    from .section_text import find_section
 
     text_dir = output_dir / "attachment_text"
     text_dir.mkdir(parents=True, exist_ok=True)
@@ -222,6 +248,7 @@ def save_attachment_texts(
         "qualification_found": 0,
         "qualification_determined": 0,
         "deadline_determined": 0,
+        "content_found": 0,
     }
     for candidate in candidates:
         notice = candidate.notice
@@ -231,6 +258,9 @@ def save_attachment_texts(
         needs_deadline = schedule is not None and schedule.earliest is None
         all_items: list[str] = []
         deadline = None
+        task_texts: list[str] = []
+        exhibit_texts: list[str] = []
+        area_lines: list[str] = []
 
         for result in collect_notice_attachment_texts(session, notice, timeout=timeout):
             stats["attempted"] += 1
@@ -249,6 +279,16 @@ def save_attachment_texts(
                 (text_dir / f"{base}_참가자격.txt").write_text(summary, encoding="utf-8")
                 all_items.extend(section.items)
 
+            task_section = find_section(result.text, ["과업내용", "과업범위", "과업개요", "사업내용"])
+            if task_section is not None:
+                task_texts.append(task_section.body)
+            exhibit_section = find_section(result.text, ["전시구성", "전시내용", "전시연출", "전시계획"])
+            if exhibit_section is not None:
+                exhibit_texts.append(exhibit_section.body)
+            if task_section is not None or exhibit_section is not None:
+                stats["content_found"] += 1
+            area_lines.extend(_find_area_lines(result.text))
+
             if needs_deadline and deadline is None:
                 deadline = extract_deadline(result.text)
 
@@ -260,6 +300,13 @@ def save_attachment_texts(
             # 다시 계산해야 "잔여일수"(D-N)가 새로 채운 마감/일정과 어긋나지 않는다.
             if hasattr(candidate, "days_left"):
                 candidate.days_left = schedule.days_left(now)
+
+        if task_texts:
+            candidate.content_task_text = "\n\n".join(task_texts)
+        if exhibit_texts:
+            candidate.content_exhibit_text = "\n\n".join(exhibit_texts)
+        if area_lines:
+            candidate.content_area_note = " / ".join(dict.fromkeys(area_lines))
 
         if not needs_check or not all_items:
             continue

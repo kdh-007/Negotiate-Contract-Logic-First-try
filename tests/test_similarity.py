@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from nego.models import notice_from_raw  # noqa: E402
 from nego.similarity import (  # noqa: E402
+    TEXT_ONLY_WEIGHTS,
     PastProject,
     load_past_projects,
     score,
@@ -98,6 +99,27 @@ class TestScore(unittest.TestCase):
         unrelated = PastProject(title="상하수도 정비공사", amount=5_000_000_000)
         result = score(notice, [unrelated, good])
         self.assertEqual(result.matched, good)
+
+    def test_extra_text_from_attachment_content_improves_weak_title_match(self):
+        """공고 제목만으로는 안 겹치더라도(제목이 짧고 포괄적인 협상공고가 흔함),
+        첨부파일에서 뽑은 과업내용·전시내용(`extra_text`)을 넘기면 그 본문이
+        토큰 비교에 들어가 무관한 과거사업보다 순위가 올라가야 한다."""
+        notice = _notice(bidNtceNm="OO시 체험관 조성사업")  # 제목만으로는 과거사업과 거의 안 겹침
+        good = PastProject(
+            title="XX시 어린이과학관",
+            summary_text="야외형 과학체험전시품 신규설치 물레방아 아르키메데스펌프",
+        )
+        unrelated = PastProject(title="상하수도 정비공사", summary_text="관로 교체 및 정비공사 시행")
+
+        without_extra = score(notice, [unrelated, good], weights=TEXT_ONLY_WEIGHTS)
+        with_extra = score(
+            notice,
+            [unrelated, good],
+            weights=TEXT_ONLY_WEIGHTS,
+            extra_text="야외형 과학체험전시품 물레방아 아르키메데스펌프 신규설치",
+        )
+        self.assertEqual(with_extra.matched, good)
+        self.assertGreater(with_extra.score, without_extra.score)
 
     def test_missing_budget_on_either_side_scores_zero_track_record(self):
         """예산 정보가 한쪽이라도 없으면 규모 적합도는 판단 불가로 0점 처리한다(중립값을 주지 않음)."""

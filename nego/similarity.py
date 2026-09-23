@@ -149,16 +149,25 @@ def _content_overlap(notice_tokens: set[str], past: PastProject, df: dict[str, i
     return matched_weight / total_weight
 
 
-def _notice_tokens(notice: Notice) -> set[str]:
-    return tokenize(notice.title) | tokenize(notice.product_class_name)
+def _notice_tokens(notice: Notice, extra_text: str = "") -> set[str]:
+    """공고 제목·품명에다, 있으면 첨부파일에서 뽑은 과업내용·전시내용
+    (`extra_text` — cli.py가 candidate.content_task_text 등을 이어 붙여 넘긴다)
+    까지 더한 토큰 집합. 첨부파일을 안 받았으면(`--fetch-attachment-text` 없이
+    돈 경우) extra_text가 빈 문자열이라 기존과 똑같이 제목만으로 비교한다."""
+    return tokenize(notice.title) | tokenize(notice.product_class_name) | tokenize(extra_text)
 
 
 def _score_one(
-    notice: Notice, past: PastProject, weights: dict[str, float], df: dict[str, int], n_docs: int
+    notice: Notice,
+    past: PastProject,
+    weights: dict[str, float],
+    df: dict[str, int],
+    n_docs: int,
+    extra_text: str,
 ) -> tuple[float, float, float, float]:
     structural = 1.0 if _code_overlap(notice, past) else 0.0
     track_record = _budget_proximity(notice.budget, past.amount)
-    text = _content_overlap(_notice_tokens(notice), past, df, n_docs)
+    text = _content_overlap(_notice_tokens(notice, extra_text), past, df, n_docs)
     total = weights["structural"] * structural + weights["track_record"] * track_record + weights["text"] * text
     return total, structural, track_record, text
 
@@ -167,11 +176,17 @@ def score(
     notice: Notice,
     past_projects: list[PastProject],
     weights: dict[str, float] | None = None,
+    extra_text: str = "",
 ) -> SimilarityResult:
     """공고 1건을 과거 실적 목록 전체와 비교해, 가장 유사한 건 기준으로 점수를 낸다.
 
     평균이 아니라 최댓값을 쓴다 — "이런 걸 한 번이라도 해봤는가"가 중요하지, 무관한
     과거 사업들과 평균 내면 실제로 딱 맞는 실적 하나가 희석되어 버린다.
+
+    `extra_text`: 공고 제목만으로는 정보가 부족해서(협상 공고는 제목이 짧고
+    포괄적인 경우가 많음) 첨부파일(제안요청서·과업지시서)에서 뽑은 과업내용·
+    전시내용 본문을 넘기면 그것도 비교에 쓴다. 비워두면(기본값) 제목·품명만
+    쓰는 기존 동작 그대로다.
     """
     weights = weights or DEFAULT_WEIGHTS
     if not past_projects:
@@ -180,7 +195,7 @@ def score(
     df = _document_frequencies(past_projects)
     n_docs = len(past_projects)
     total, structural, track_record, text, matched = max(
-        (( *_score_one(notice, p, weights, df, n_docs), p) for p in past_projects),
+        (( *_score_one(notice, p, weights, df, n_docs, extra_text), p) for p in past_projects),
         key=lambda row: row[0],
     )
     return SimilarityResult(

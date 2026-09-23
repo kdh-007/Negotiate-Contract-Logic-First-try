@@ -45,6 +45,15 @@ class Candidate:
     # 여기선 채우지 않는다 — cli.py가 save_reports 직전에 config/past_projects.json을
     # 읽어 similarity.score()로 채운다(리포트/저장에서만 쓰이는 파생값이라서).
     similarity: SimilarityResult | None = None
+    # 신규 공고 첨부파일(제안요청서/과업지시서)에서 뽑은 과업내용·전시내용 —
+    # attachments.py의 save_attachment_texts()가 --fetch-attachment-text일 때만
+    # 채운다(qualification과 같은 패턴). 채워지면 similarity.score()가 제목뿐 아니라
+    # 이 본문까지 대조에 쓴다. area_note는 참고 표시용일 뿐 점수엔 안 들어간다
+    # (similarity.PastProject.area_note와 같은 이유 — 비교 대상이 없어 그대로
+    # 점수화하면 우연한 숫자 일치로 왜곡될 위험이 있다).
+    content_task_text: str = ""
+    content_exhibit_text: str = ""
+    content_area_note: str = ""
 
     @property
     def gate_passed(self) -> bool:

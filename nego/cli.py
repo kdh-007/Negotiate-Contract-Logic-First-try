@@ -168,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
             f" · 참가자격 절 발견 {att_stats['qualification_found']}건"
             f" · 첨부파일 자격요건 판정에 반영 {att_stats['qualification_determined']}건"
             f" · 일정 미상 → 첨부파일로 보충 {att_stats['deadline_determined']}건"
+            f" · 과업내용/전시내용 절 발견 {att_stats['content_found']}건"
             f" (저장 위치: {config.output_dir / 'attachment_text'})"
         )
 
@@ -175,7 +176,10 @@ def main(argv: list[str] | None = None) -> int:
     # score()가 0점/matched=None으로 우아하게 처리하므로 별도 분기 없이 항상 실행한다.
     past_projects = load_past_projects_file(DEFAULT_CONFIG_DIR / "past_projects.json")
     for c in candidates:
-        c.similarity = score_similarity(c.notice, past_projects, weights=TEXT_ONLY_WEIGHTS)
+        # --fetch-attachment-text로 첨부파일을 받은 경우에만 채워진다(비어있으면
+        # 제목만으로 비교하는 기존 동작 그대로 — similarity.score() 참고).
+        extra_text = f"{c.content_task_text} {c.content_exhibit_text}".strip()
+        c.similarity = score_similarity(c.notice, past_projects, weights=TEXT_ONLY_WEIGHTS, extra_text=extra_text)
 
     print(render_console(candidates, stats))
 
