@@ -296,37 +296,58 @@ _HTML_HEAD = """<meta charset="utf-8">
 <title>나라장터 입찰 모니터링 주간 리포트</title>
 <style>
   :root {
-    --bg:#fbfbfa; --fg:#1f1e1c; --muted:#6b6a66; --line:#e3e1dc; --accent:#2554c7;
-    --pass-bg:#eaf2fb; --pass-bd:#a8c7e6; --pass-fg:#1d5a99;
-    --fail-bg:#fdeeea; --fail-bd:#e6b8ae; --fail-fg:#9a3412;
-    --unchecked-bg:#fbf3d9; --unchecked-bd:#e3cf8f; --unchecked-fg:#8a6d16;
+    --bg:#0a0c10; --surface:#12151c; --surface-2:#181c26; --fg:#e7e9ee; --muted:#8a90a0;
+    --line:#242836; --accent:#6d8dff;
+    --pass-bg:#152742; --pass-bd:#2f4d7c; --pass-fg:#8db4f5;
+    --fail-bg:#3a1a1a; --fail-bd:#6b2c2c; --fail-fg:#f2938a;
+    --unchecked-bg:#3a3016; --unchecked-bd:#6b5a26; --unchecked-fg:#e6c374;
+    --strong:#e5484d; --strong-bg:#3a1418; --strong-bd:#6b2129;
   }
   body { margin:0; background:var(--bg); color:var(--fg);
          font-family:-apple-system,'Segoe UI','Malgun Gothic',sans-serif; line-height:1.55; }
   .wrap { max-width:1320px; margin:0 auto; padding:32px 20px 64px; }
-  h1 { font-size:1.45rem; margin:0 0 6px; letter-spacing:-0.01em; }
-  .sub { color:var(--muted); font-size:0.85rem; margin-bottom:20px; }
-  .warn { color:#9a3412; font-size:0.85rem; display:block; margin-bottom:16px; }
-  .section { font-size:1.05rem; font-weight:700; margin:28px 0 14px;
-             padding-bottom:8px; border-bottom:2px solid var(--fg); }
-  .tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:#fff; }
-  table { border-collapse:collapse; width:100%; min-width:820px; }
-  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line);
-           vertical-align:top; font-size:0.75rem; line-height:1.4; }
+  .topbar { display:flex; align-items:center; gap:10px; margin-bottom:18px; }
+  .logo { font-weight:800; font-size:0.85rem; letter-spacing:0.03em; color:var(--fg);
+          background:var(--surface-2); border:1px solid var(--line); border-radius:8px;
+          padding:5px 10px; }
+  h1 { font-size:1.3rem; margin:0; letter-spacing:-0.01em; font-weight:700; }
+  .statbar { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center;
+             color:var(--muted); font-size:0.82rem; margin-bottom:18px; }
+  .statbar b { color:var(--fg); font-weight:700; }
+  .warn { color:var(--fail-fg); font-size:0.85rem; display:block; margin-bottom:16px; }
+  .section { font-size:1rem; font-weight:700; margin:26px 0 12px;
+             padding-bottom:8px; border-bottom:1px solid var(--line); }
+  .filters { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+  .filter-chip { border:1px solid var(--line); background:var(--surface);
+                 color:var(--muted); font-size:0.78rem; font-weight:600;
+                 padding:6px 13px; border-radius:999px; cursor:pointer; transition:all .12s ease; }
+  .filter-chip:hover { border-color:var(--accent); color:var(--fg); }
+  .filter-chip.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .filter-chip.active.strong { background:var(--strong); border-color:var(--strong); }
+  .tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:14px; background:var(--surface); }
+  table { border-collapse:separate; border-spacing:0; width:100%; min-width:820px; }
+  th, td { text-align:left; padding:11px 10px; border-bottom:1px solid var(--line);
+           vertical-align:top; font-size:0.76rem; line-height:1.45; }
   /* 셀 내용을 항상 블록(div)으로 감싸서 시작점을 맞춘다 — 뱃지/버튼 같은
      인라인 요소가 셀에 바로 있으면 브라우저가 셀마다 다른 줄상자 높이를
      잡아 계약방법/예가방법/수요기관/개찰일 같은 옆 칸과 첫 줄이 미묘하게
      어긋나 보였다. */
   td > div:first-child { margin-top:0; }
-  thead th { background:#f3f2ee; color:var(--muted); font-weight:700; font-size:0.72rem;
-             letter-spacing:0.01em; border-bottom:2px solid var(--fg); white-space:nowrap; }
-  tbody tr:hover { background:#f6f5f2; }
+  thead th { background:var(--surface-2); color:var(--muted); font-weight:700; font-size:0.68rem;
+             letter-spacing:0.04em; text-transform:uppercase; border-bottom:1px solid var(--line);
+             white-space:nowrap; }
+  tbody tr { transition:background .12s ease; }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr:hover { background:var(--surface-2); }
+  /* 강력추천 행은 왼쪽에 강조색 바를 둬서 카드처럼 한눈에 구분되게 한다
+     (JIIL 참고 UI의 강력추천 카드 좌측 컬러바와 같은 목적). */
+  tbody tr[data-confidence="강력추천"] { box-shadow: inset 3px 0 0 var(--strong); }
   .badges { display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
-  .badge { font-size:0.68rem; padding:2px 8px; border-radius:6px; font-weight:600;
-           border:1px solid var(--line); background:#f6f5f2; color:var(--muted);
+  .badge { font-size:0.68rem; padding:3px 9px; border-radius:6px; font-weight:600;
+           border:1px solid var(--line); background:var(--surface-2); color:var(--muted);
            display:inline-block; white-space:nowrap; line-height:1.3; }
-  .badge.confidence-strong { border-color:#bfd8c4; background:#eef6f0; color:#2f6b45; }
-  .badge.overseas { border-color:#e6b8ae; background:#fdeeea; color:#9a3412; cursor:help;
+  .badge.confidence-strong { border-color:var(--strong-bd); background:var(--strong-bg); color:var(--strong); }
+  .badge.overseas { border-color:var(--fail-bd); background:var(--fail-bg); color:var(--fail-fg); cursor:help;
                     position:relative; margin-left:4px; }
   /* 위치는 JS(_TOOLTIP_POSITION_SCRIPT)가 호버/포커스 시점에 top/left를
      직접 계산해서 인라인으로 넣는다 — 표의 어느 행에 있든(맨 위/맨 아래/
@@ -335,8 +356,8 @@ _HTML_HEAD = """<meta charset="utf-8">
   .badge.overseas .tip {
     visibility:hidden; opacity:0; pointer-events:none;
     position:fixed; top:0; left:0; width:230px;
-    background:#fff; border:1px solid var(--line); border-radius:10px;
-    box-shadow:0 6px 20px rgba(0,0,0,0.14); padding:10px 12px;
+    background:var(--surface-2); border:1px solid var(--line); border-radius:10px;
+    box-shadow:0 12px 28px rgba(0,0,0,0.45); padding:10px 12px;
     font-size:0.74rem; font-weight:400; color:var(--fg); text-align:left;
     line-height:1.5; transition:opacity .12s ease; z-index:20;
   }
@@ -345,7 +366,7 @@ _HTML_HEAD = """<meta charset="utf-8">
   .badge.overseas .tip .tip-row b { color:var(--fg); font-weight:600; }
   .badge.overseas .tip .tip-tag {
     display:inline-block; padding:3px 8px; border-radius:999px;
-    background:#eef6f0; border:1px solid #bfd8c4; color:#2f6b45; font-size:0.68rem;
+    background:var(--pass-bg); border:1px solid var(--pass-bd); color:var(--pass-fg); font-size:0.68rem;
   }
   .rebadge { font-size:0.65rem; padding:1px 6px; border-radius:4px; font-weight:700;
              background:var(--fail-bg); color:var(--fail-fg); border:1px solid var(--fail-bd);
@@ -355,15 +376,15 @@ _HTML_HEAD = """<meta charset="utf-8">
   .notice-title a { color:var(--accent); text-decoration:none; }
   .notice-title a:hover { text-decoration:underline; }
   .title-text { display:block; max-width:175px; overflow:hidden;
-                text-overflow:ellipsis; white-space:nowrap; }
+                text-overflow:ellipsis; white-space:nowrap; color:var(--fg); }
   .kwtags { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; }
   .kwtag { font-size:0.65rem; padding:2px 7px; border-radius:6px;
-           border:1px solid var(--line); background:#f6f5f2; color:var(--muted); }
+           border:1px solid var(--line); background:var(--surface-2); color:var(--muted); }
   .dim { color:var(--muted); }
   .nowrap { white-space:nowrap; }
-  .dday { display:inline-block; font-weight:800; color:#fff; background:#c0392b;
+  .dday { display:inline-block; font-weight:800; color:#fff; background:var(--strong);
           font-size:0.68rem; padding:1px 6px; border-radius:4px; letter-spacing:0.01em; }
-  .dday-closed { display:inline-block; font-weight:800; color:#fff; background:#4a4a4a;
+  .dday-closed { display:inline-block; font-weight:800; color:#c7cad1; background:#3a3f4d;
                  font-size:0.68rem; padding:1px 6px; border-radius:4px; letter-spacing:0.01em; }
   .dl-date { white-space:nowrap; margin-top:4px; font-size:0.72rem; }
   .dl-label { font-size:0.65rem; margin-top:1px; white-space:nowrap; }
@@ -373,9 +394,9 @@ _HTML_HEAD = """<meta charset="utf-8">
               width:26px; height:26px; padding:0; margin:0; border:none; background:none; cursor:help; }
   .qual-dot .circle { width:16px; height:16px; border-radius:50%; display:flex;
                        align-items:center; justify-content:center; }
-  .circle-fail { background:#c0392b; }
-  .circle-pass { background:#2554c7; }
-  .circle-unchecked { background:#e3cf8f; }
+  .circle-fail { background:var(--strong); }
+  .circle-pass { background:var(--accent); }
+  .circle-unchecked { background:var(--unchecked-fg); }
   /* 위/아래로 고정해서 열면(둘 다 실측으로 확인됨) 표의 반대쪽 끝 행에서
      뷰포트 밖으로 잘린다 — 원 오른쪽(공간이 없으면 왼쪽)에, 세로로는
      버튼 위치를 기준으로 뷰포트 안에 들어오게 JS가 top/left를 직접
@@ -383,8 +404,8 @@ _HTML_HEAD = """<meta charset="utf-8">
   .qual-dot .tip {
     visibility:hidden; opacity:0; pointer-events:none;
     position:fixed; top:0; left:0;
-    width:230px; background:#fff; border:1px solid var(--line); border-radius:10px;
-    box-shadow:0 8px 22px rgba(0,0,0,0.16); padding:10px 12px;
+    width:230px; background:var(--surface-2); border:1px solid var(--line); border-radius:10px;
+    box-shadow:0 14px 32px rgba(0,0,0,0.5); padding:10px 12px;
     font-size:0.72rem; font-weight:400; color:var(--fg); text-align:left; line-height:1.5;
     transition:opacity .12s ease; z-index:30;
   }
@@ -400,6 +421,26 @@ _HTML_HEAD = """<meta charset="utf-8">
   @media (max-width:520px) { .wrap { padding:20px 16px 48px; } }
 </style>
 """
+
+# 필터 칩(전체/강력추천/참고용) 클릭 시 표의 해당 행만 보여준다. 서버·백엔드가
+# 없는 정적 HTML이라 새로고침 없이 클라이언트에서만 필터링한다 — 각 <tr>에
+# render_html이 심어둔 data-confidence 속성을 기준으로 매칭한다.
+_FILTER_SCRIPT = """<script>
+(function () {
+  var chips = document.querySelectorAll('.filter-chip');
+  var rows = document.querySelectorAll('tbody tr[data-confidence]');
+  chips.forEach(function (chip) {
+    chip.addEventListener('click', function () {
+      chips.forEach(function (c) { c.classList.remove('active'); });
+      chip.classList.add('active');
+      var f = chip.getAttribute('data-filter');
+      rows.forEach(function (row) {
+        row.style.display = (f === 'all' || row.getAttribute('data-confidence') === f) ? '' : 'none';
+      });
+    });
+  });
+})();
+</script>"""
 
 # 자격판정 원(qual-dot)과 해외의심 배지 팁의 위치를 위/아래로만 고정해서
 # 열면(둘 다 실측으로 확인됨) 표의 반대쪽 끝 행에서 뷰포트 밖으로 잘린다.
@@ -444,12 +485,12 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
         return html.escape(str(text or ""))
 
     parts = [_HTML_HEAD, '<div class="wrap">']
-    parts.append("<h1>나라장터 입찰 모니터링 주간 리포트</h1>")
+    parts.append('<div class="topbar"><span class="logo">JIIL</span><h1>나라장터 입찰 모니터링 주간 리포트</h1></div>')
 
     period = ""
     if stats.period_begin and stats.period_end:
         period = f"조회 기간: {_fmt_kr_date(stats.period_begin)} ~ {_fmt_kr_date(stats.period_end)} · "
-    parts.append(f'<div class="sub">{period}생성 시각: {_fmt_kr_datetime(generated_at)}</div>')
+    parts.append(f'<div class="statbar"><span>{period}생성 시각: {_fmt_kr_datetime(generated_at)}</span></div>')
 
     if stats.failed_operations:
         parts.append(f'<span class="warn">⚠ 조회 실패: {esc(", ".join(stats.failed_operations))}</span>')
@@ -461,6 +502,15 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
     if not candidates:
         parts.append('<div class="empty">조건에 맞는 공고가 없습니다.</div>')
     else:
+        strong_count = sum(1 for c in candidates if c.screen_result.confidence == "강력추천")
+        ref_count = len(candidates) - strong_count
+        parts.append(
+            '<div class="filters">'
+            f'<button type="button" class="filter-chip active" data-filter="all">전체 {len(candidates)}</button>'
+            f'<button type="button" class="filter-chip strong" data-filter="강력추천">강력추천 {strong_count}</button>'
+            f'<button type="button" class="filter-chip" data-filter="참고용">참고용 {ref_count}</button>'
+            "</div>"
+        )
         parts.append('<div class="tablewrap"><table>')
         parts.append(
             "<thead><tr>"
@@ -513,7 +563,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
             money_html = "".join(money_parts) or '<span class="dim">미상</span>'
 
             parts.append(
-                "<tr>"
+                f'<tr data-confidence="{esc(c.screen_result.confidence)}">'
                 '<td><div class="badges">'
                 f'<span class="badge{confidence_cls}">{esc(c.screen_result.confidence)}</span>'
                 f'<span class="badge">{esc(c.notice.work_type)}</span></div></td>'
@@ -534,6 +584,8 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
 
     parts.append("</div>")
     parts.append(_TOOLTIP_FLIP_SCRIPT)
+    if candidates:
+        parts.append(_FILTER_SCRIPT)
     return "\n".join(parts)
 
 
