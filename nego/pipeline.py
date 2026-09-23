@@ -16,6 +16,7 @@ from . import qualify, scope, screen
 from .config import AppConfig
 from .http_client import ApiError, DataGoKrClient
 from .models import Notice, notice_from_raw
+from .similarity import SimilarityResult
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +41,10 @@ class Candidate:
     variant: str | None = None
     is_candidate: bool = True
     excluded_reason: str | None = None
+    # 과거 실적과의 유사도(싱크로율). 파이프라인 자체는 API 응답만으로 끝나므로
+    # 여기선 채우지 않는다 — cli.py가 save_reports 직전에 config/past_projects.json을
+    # 읽어 similarity.score()로 채운다(리포트/저장에서만 쓰이는 파생값이라서).
+    similarity: SimilarityResult | None = None
 
     @property
     def gate_passed(self) -> bool:

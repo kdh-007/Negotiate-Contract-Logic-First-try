@@ -56,6 +56,10 @@ class PastProject:
     product_codes: list[str] = field(default_factory=list)
     industry_names: list[str] = field(default_factory=list)
     summary_text: str = ""
+    # 참고 표시용(리포트의 "근거" 팝업에만 씀) — 신규 공고 쪽엔 면적을 파싱해 넣는
+    # 곳이 아직 없어(첨부파일 파싱 미구현) 점수 계산에는 넣지 않는다. 넣으면 숫자
+    # 하나 우연히 겹치는 걸로 점수가 왜곡될 위험만 있고 실제 비교 대상이 없다.
+    area_note: str = ""
 
     @property
     def tokens(self) -> set[str]:
@@ -83,6 +87,13 @@ class SimilarityResult:
 
 DEFAULT_WEIGHTS: dict[str, float] = {"structural": 1 / 3, "track_record": 1 / 3, "text": 1 / 3}
 
+# config/past_projects.json에 발주기관·금액·업종코드·세부품명번호가 아직 없다
+# (2026-09-23 기준 — 별도 API로 채울 계획). 그 상태에서 DEFAULT_WEIGHTS를 그대로
+# 쓰면 업역·규모 축이 항상 0점이라 아무리 내용이 잘 맞아도 만점의 1/3(33점)을
+# 못 넘는다. 그 두 축이 채워지기 전까지는 이 가중치로 내용(text) 축에만 100%를
+# 몰아준다 — 데이터가 채워지면 DEFAULT_WEIGHTS로 되돌릴 것.
+TEXT_ONLY_WEIGHTS: dict[str, float] = {"structural": 0.0, "track_record": 0.0, "text": 1.0}
+
 
 def _budget_proximity(a: float | None, b: float | None) -> float:
     """예산 규모가 로그스케일로 얼마나 가까운지 0~1.
@@ -105,20 +116,49 @@ def _code_overlap(notice: Notice, past: PastProject) -> bool:
     return any(name and name in industry_text for name in past.industry_names)
 
 
-def _jaccard(a: set[str], b: set[str]) -> float:
-    if not a or not b:
+def _document_frequencies(past_projects: list[PastProject]) -> dict[str, int]:
+    """토큰별로 몇 개 과거사업 요약에 등장하는지. "제작"·"설치"·"사업"처럼 거의
+    모든 과거사업에 등장하는 흔한 단어를 가려내기 위한 예비 집계다(`_idf`가 씀)."""
+    df: dict[str, int] = {}
+    for p in past_projects:
+        for t in p.tokens:
+            df[t] = df.get(t, 0) + 1
+    return df
+
+
+def _idf(token: str, df: dict[str, int], n_docs: int) -> float:
+    """흔한 단어일수록(여러 과거사업에 등장) 가중치를 낮춘다. +1 스무딩으로
+    처음 보는 단어(df=0)도 0이 아닌 값을 받는다."""
+    return math.log((n_docs + 1) / (df.get(token, 0) + 1)) + 1.0
+
+
+def _content_overlap(notice_tokens: set[str], past: PastProject, df: dict[str, int], n_docs: int) -> float:
+    """공고 제목의 단어들이 과거사업 내용(과업내용 키워드+전시내용)에 얼마나
+    담겨 있는지 0~1로 — 자카드(교집합/합집합)를 안 쓰는 이유는, 과거사업
+    요약이 길수록(전시내용 항목이 수십 개인 사업도 있음) 합집합이 커져서
+    실제로 잘 맞는 경우조차 비율이 희석되기 때문이다. 분모를 "공고 제목
+    쪽 토큰 가중치 합"으로 고정하면(오버랩 계수) 과거사업 텍스트 길이에
+    영향을 안 받는다. 거기에 IDF를 곱해 "제작"·"설치"처럼 흔한 단어가
+    겹친 것만으로 점수가 뜨는 걸 막는다."""
+    if not notice_tokens or not past.tokens:
         return 0.0
-    return len(a & b) / len(a | b)
+    total_weight = sum(_idf(t, df, n_docs) for t in notice_tokens)
+    if total_weight == 0:
+        return 0.0
+    matched_weight = sum(_idf(t, df, n_docs) for t in notice_tokens if t in past.tokens)
+    return matched_weight / total_weight
 
 
 def _notice_tokens(notice: Notice) -> set[str]:
     return tokenize(notice.title) | tokenize(notice.product_class_name)
 
 
-def _score_one(notice: Notice, past: PastProject, weights: dict[str, float]) -> tuple[float, float, float, float]:
+def _score_one(
+    notice: Notice, past: PastProject, weights: dict[str, float], df: dict[str, int], n_docs: int
+) -> tuple[float, float, float, float]:
     structural = 1.0 if _code_overlap(notice, past) else 0.0
     track_record = _budget_proximity(notice.budget, past.amount)
-    text = _jaccard(_notice_tokens(notice), past.tokens)
+    text = _content_overlap(_notice_tokens(notice), past, df, n_docs)
     total = weights["structural"] * structural + weights["track_record"] * track_record + weights["text"] * text
     return total, structural, track_record, text
 
@@ -137,8 +177,10 @@ def score(
     if not past_projects:
         return SimilarityResult(score=0.0, structural_score=0.0, track_record_score=0.0, text_score=0.0, matched=None)
 
+    df = _document_frequencies(past_projects)
+    n_docs = len(past_projects)
     total, structural, track_record, text, matched = max(
-        (( *_score_one(notice, p, weights), p) for p in past_projects),
+        (( *_score_one(notice, p, weights, df, n_docs), p) for p in past_projects),
         key=lambda row: row[0],
     )
     return SimilarityResult(
@@ -163,6 +205,7 @@ def load_past_projects(raw: dict[str, Any]) -> list[PastProject]:
                 product_codes=list(item.get("productCodes", [])),
                 industry_names=list(item.get("industryNames", [])),
                 summary_text=item.get("summaryText", ""),
+                area_note=item.get("area", ""),
             )
         )
     return out

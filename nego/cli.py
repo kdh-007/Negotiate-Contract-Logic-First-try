@@ -18,11 +18,12 @@ from pathlib import Path
 
 from . import fields as F
 from . import qualify
-from .config import ConfigError, load_config, redact
+from .config import DEFAULT_CONFIG_DIR, ConfigError, load_config, redact
 from .http_client import ApiError, DataGoKrClient
 from .pipeline import build_candidates, run
 from .report import render_console, save_reports
 from .repository import JsonlRepository
+from .similarity import TEXT_ONLY_WEIGHTS, load_past_projects_file, score as score_similarity
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -169,6 +170,12 @@ def main(argv: list[str] | None = None) -> int:
             f" · 일정 미상 → 첨부파일로 보충 {att_stats['deadline_determined']}건"
             f" (저장 위치: {config.output_dir / 'attachment_text'})"
         )
+
+    # 싱크로율(과거 실적 유사도) — config/past_projects.json이 비어있거나 없어도
+    # score()가 0점/matched=None으로 우아하게 처리하므로 별도 분기 없이 항상 실행한다.
+    past_projects = load_past_projects_file(DEFAULT_CONFIG_DIR / "past_projects.json")
+    for c in candidates:
+        c.similarity = score_similarity(c.notice, past_projects, weights=TEXT_ONLY_WEIGHTS)
 
     print(render_console(candidates, stats))
 

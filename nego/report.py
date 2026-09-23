@@ -349,11 +349,15 @@ _HTML_HEAD = """<meta charset="utf-8">
   .badge.confidence-strong { border-color:var(--strong-bd); background:var(--strong-bg); color:var(--strong); }
   .badge.overseas { border-color:var(--fail-bd); background:var(--fail-bg); color:var(--fail-fg); cursor:help;
                     position:relative; margin-left:4px; }
+  /* 싱크로율(과거 실적 유사도) 배지 — overseas 배지와 같은 호버/포커스 팝업
+     패턴을 쓰되 색만 "긍정" 톤(pass 계열)으로 다르게 준다. */
+  .badge.sim-badge { border-color:var(--pass-bd); background:var(--pass-bg); color:var(--pass-fg);
+                      cursor:help; position:relative; font-weight:700; margin-left:4px; }
   /* 위치는 JS(_TOOLTIP_POSITION_SCRIPT)가 호버/포커스 시점에 top/left를
      직접 계산해서 인라인으로 넣는다 — 표의 어느 행에 있든(맨 위/맨 아래/
      맨 오른쪽 칸) 뷰포트 밖으로 잘리지 않게 하려고. position:fixed라
      스크롤 컨테이너에 안 걸리고 뷰포트 좌표를 그대로 쓸 수 있다. */
-  .badge.overseas .tip {
+  .badge.overseas .tip, .badge.sim-badge .tip {
     visibility:hidden; opacity:0; pointer-events:none;
     position:fixed; top:0; left:0; width:230px;
     background:var(--surface-2); border:1px solid var(--line); border-radius:10px;
@@ -361,9 +365,11 @@ _HTML_HEAD = """<meta charset="utf-8">
     font-size:0.74rem; font-weight:400; color:var(--fg); text-align:left;
     line-height:1.5; transition:opacity .12s ease; z-index:20;
   }
-  .badge.overseas:hover .tip, .badge.overseas:focus-visible .tip { visibility:visible; opacity:1; }
-  .badge.overseas .tip .tip-row { color:var(--muted); margin-bottom:6px; }
-  .badge.overseas .tip .tip-row b { color:var(--fg); font-weight:600; }
+  .badge.overseas:hover .tip, .badge.overseas:focus-visible .tip,
+  .badge.sim-badge:hover .tip, .badge.sim-badge:focus-visible .tip { visibility:visible; opacity:1; }
+  .badge.overseas .tip .tip-row, .badge.sim-badge .tip .tip-row { color:var(--muted); margin-bottom:6px; }
+  .badge.overseas .tip .tip-row b, .badge.sim-badge .tip .tip-row b { color:var(--fg); font-weight:600; }
+  .badge.sim-badge .tip .tip-title { font-weight:700; margin-bottom:6px; color:var(--fg); }
   .badge.overseas .tip .tip-tag {
     display:inline-block; padding:3px 8px; border-radius:999px;
     background:var(--pass-bg); border:1px solid var(--pass-bd); color:var(--pass-fg); font-size:0.68rem;
@@ -472,7 +478,7 @@ _TOOLTIP_FLIP_SCRIPT = """<script>
     tip.style.left = left + 'px';
     tip.style.top = top + 'px';
   }
-  document.querySelectorAll('.qual-dot, .badge.overseas').forEach(function (el) {
+  document.querySelectorAll('.qual-dot, .badge.overseas, .badge.sim-badge').forEach(function (el) {
     el.addEventListener('mouseenter', function () { place(el); });
     el.addEventListener('focus', function () { place(el); });
   });
@@ -545,6 +551,26 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                     "</span>"
                 )
 
+            sim_badge = ""
+            if c.similarity and c.similarity.matched:
+                sim = c.similarity
+                area_row = (
+                    f'<div class="tip-row dim">{esc(sim.matched.area_note)}</div>' if sim.matched.area_note else ""
+                )
+                sim_badge = (
+                    f'<span class="badge sim-badge" tabindex="0">싱크로율 {sim.score:.0f}%'
+                    '<span class="tip">'
+                    '<div class="tip-title">유사 과거사업 (근거)</div>'
+                    f'<div class="tip-row"><b>{esc(sim.matched.title)}</b></div>'
+                    f"{area_row}"
+                    '<div class="tip-row">'
+                    f"업역 {sim.structural_score * 100:.0f}% · 규모 {sim.track_record_score * 100:.0f}% · "
+                    f"내용 {sim.text_score * 100:.0f}%"
+                    "</div>"
+                    "</span>"
+                    "</span>"
+                )
+
             kwtags = ""
             if c.screen_result.matched_keywords:
                 tags = "".join(f'<span class="kwtag">키워드:{esc(k)}</span>' for k in c.screen_result.matched_keywords)
@@ -569,7 +595,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
                 f'<span class="badge">{esc(c.notice.work_type)}</span></div></td>'
                 f'<td><div class="nowrap">{esc(c.notice.contract_method) or "-"}</div></td>'
                 f'<td class="notice-title">'
-                f'<div class="notice-no">{esc(c.notice.notice_no)}{re_badge}{overseas_badge}</div>'
+                f'<div class="notice-no">{esc(c.notice.notice_no)}{re_badge}{overseas_badge}{sim_badge}</div>'
                 f"{title}{kwtags}</td>"
                 f"<td><div>{money_html}</div></td>"
                 f'<td class="center"><div>{_qualification_cell_html(c.qualification, esc)}</div></td>'
