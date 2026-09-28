@@ -1,22 +1,19 @@
 name: 나라장터 공고 수집
 
 # 실행 방법
-#  · 자동 (2026-09-28 다시 켬 — 텔레그램 발송과 함께):
-#      - 매일 08:00 KST   : 어제 게시된 "입찰" 공고 → 텔레그램
-#                           (입찰은 마감이 7일 안쪽인 경우가 있어 매일 보고)
-#      - 매주 월 08:10 KST : 지난 7일 "협상"·"규격가격동시입찰" 공고 → 텔레그램
+#  · 수동: GitHub 저장소 → Actions 탭 → 이 워크플로 선택 → "Run workflow"
+#  · 자동 스케줄은 **꺼둠** (2026-09-28 사용자 결정: 자동 발송·저장은 수집 기능이 모두
+#    완성된 뒤에 켠다). 켤 때는 아래 on: 에 schedule 블록을 넣으면 된다 — 아래
+#    "실행 모드 결정" 단계가 이미 스케줄 문자열로 매일/주간 모드를 가르게 돼 있다:
+#      schedule:
+#        - cron: "0 23 * * *"    # 매일 08:00 KST — 어제 게시된 "입찰" → 텔레그램
+#        - cron: "10 23 * * 0"   # 매주 월 08:10 KST — 지난 7일 "협상·규격가격동시입찰" → 텔레그램
 #    조회 기간을 날짜 단위로 딱 잘라(--complete-days) 주기끼리 겹치지 않으므로
 #    같은 공고가 두 번 발송되지 않는다.
-#  · 수동: GitHub 저장소 → Actions 탭 → 이 워크플로 선택 → "Run workflow"
 #
 # 필요한 저장소 secrets: NARA_SERVICE_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
 #   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (텔레그램 두 개가 없으면 발송만 건너뜀)
 on:
-  schedule:
-    # GitHub Actions의 cron은 UTC 기준이다. 08:00 KST = 23:00 UTC (전날)
-    - cron: "0 23 * * *"
-    # 월요일 08:10 KST = 일요일 23:10 UTC. 매일 실행과 10분 벌려 API 조회가 겹치지 않게 한다.
-    - cron: "10 23 * * 0"
   workflow_dispatch:
     inputs:
       categories:
@@ -36,9 +33,9 @@ on:
         required: false
         default: "false"
       no_supabase:
-        description: "true로 두면 Supabase에 저장하지 않고 리포트만 생성"
+        description: "true(기본)면 Supabase에 저장하지 않고 리포트만 생성. 저장하려면 false — 저장은 수집 기능 완성 후 켜기로 함"
         required: false
-        default: "false"
+        default: "true"
       attempt:
         description: "재시도 회차 (자동 재시도가 채워넣는 값 — 직접 실행할 땐 비워두면 1)"
         required: false
@@ -112,7 +109,7 @@ jobs:
           else
             CATEGORIES="$IN_CATEGORIES"; COMPLETE_DAYS="$IN_COMPLETE_DAYS"
             DAYS="${IN_DAYS:-1}"; TELEGRAM="${IN_TELEGRAM:-false}"
-            NO_SUPABASE="${IN_NO_SUPABASE:-false}"; LLM="${IN_LLM:-false}"; ATTEMPT="${IN_ATTEMPT:-1}"
+            NO_SUPABASE="${IN_NO_SUPABASE:-true}"; LLM="${IN_LLM:-false}"; ATTEMPT="${IN_ATTEMPT:-1}"
           fi
           {
             echo "categories=$CATEGORIES"
