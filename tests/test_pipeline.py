@@ -776,11 +776,13 @@ class TestEndToEnd(unittest.TestCase):
         self.assertNotIn("R26TEST00005", numbers, "설계공모")
         self.assertNotIn("R26TEST00006", numbers, "제외키워드")
         self.assertNotIn("R26TEST00007", numbers, "예산 미달")
-        self.assertNotIn("R26TEST00009", numbers, "자격 미충족 2그룹")
+        self.assertIn("R26TEST00009", numbers, "자격 미충족 2그룹이어도 제외하지 않는다 (공동수급 보완 가능)")
         self.assertNotIn("R26TEST00010", numbers, "키워드 미매칭")
 
+        flagged = next(c for c in candidates if c.notice.notice_no == "R26TEST00009")
+        self.assertIn("자격 미달", flagged.qualification.summary)
         self.assertEqual(stats.cancelled, 1)
-        self.assertEqual(stats.gate_excluded, 1)
+        self.assertEqual(stats.qualification_flagged, 1)
         self.assertEqual(stats.other_category, 2, "적격심사·설계공모는 '입찰' 유형이라 협상 실행에서 빠진다")
         self.assertTrue(all(c.category == "협상" for c in candidates))
 

@@ -228,7 +228,12 @@ def main(argv: list[str] | None = None) -> int:
         held_codes = qualify.load_held_codes(config.held_raw)
         held_code_names = qualify.load_held_code_names(config.held_raw)
         att_stats = save_attachment_texts(
-            candidates, config.output_dir, held_codes=held_codes, held_code_names=held_code_names, now=now
+            candidates,
+            config.output_dir,
+            held_codes=held_codes,
+            held_code_names=held_code_names,
+            now=now,
+            code_names=config.code_names,
         )
         print(
             f"첨부파일 텍스트 추출: 시도 {att_stats['attempted']}건 "
@@ -238,6 +243,13 @@ def main(argv: list[str] | None = None) -> int:
             f" · 일정 미상 → 첨부파일로 보충 {att_stats['deadline_determined']}건"
             f" (저장 위치: {config.output_dir / 'attachment_text'})"
         )
+        if att_stats["unnamed_codes"]:
+            # 리포트에 "이름 미확인(코드)"로 뜨는 미보유 자격. 이름을 확인해
+            # config/code_names.json에 추가하면 다음 실행부터 이름이 붙는다.
+            print(
+                "이름 미확인 코드 (config/code_names.json에 추가하세요): "
+                + ", ".join(att_stats["unnamed_codes"])
+            )
 
     llm_paths: dict[str, Path] = {}
     if args.llm_similarity:

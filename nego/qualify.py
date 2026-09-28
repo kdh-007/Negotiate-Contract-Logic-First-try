@@ -46,6 +46,9 @@ class QualificationResult:
     # 관여하지 않는다. 직접 QualificationResult(...)를 만드는 기존 테스트 코드가
     # 전부 깨지지 않도록 기본값을 빈 리스트로 둔다.
     satisfied_groups: list[LicenseGroup] = field(default_factory=list)
+    # 첨부파일 판정에서 이름을 끝내 못 찾은 미보유 코드. 로그로 알려서
+    # config/code_names.json에 추가하게 한다 (판정 자체와는 무관).
+    unnamed_codes: list[str] = field(default_factory=list)
 
     @property
     def missing_count(self) -> int:
@@ -192,6 +195,13 @@ _PREFIXED_GROUP_RE = re.compile(
     r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?[(\[]([^()\[\]]*)[)\]]"
 )
 _BARE_GROUP_RE = re.compile(r"[(\[]([^()\[\]]*)[)\]]")
+# 키워드가 괄호 **안쪽 맨 앞**에 오는 표기 — 실측(사용자 제보, 2026-09-17):
+# "산업디자인 전문업[업종코드 4440, 4442, 4444]". 이걸 따로 안 잡으면 아래
+# _CODE_REQUIREMENT_RE가 첫 코드(4440)만 잡고, 이름표도 괄호 앞 문장 조각
+# ("산업디자인 전문업[")으로 만들어 리포트에 이상한 이름이 떴다.
+_INNER_PREFIXED_GROUP_RE = re.compile(
+    r"[(\[]\s*(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?([^()\[\]]*)[)\]]"
+)
 _GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{4,10}")
 _BARE_GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{10}")
 _GROUP_ENTRY_STRIP_CHARS = " ,·/;、"
@@ -297,7 +307,22 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
     for line in _merge_wrapped_parens(item).splitlines():
         consumed: list[tuple[int, int]] = []
 
+        # 0. 괄호 안쪽 맨 앞 키워드 + 코드 여러 개 — 코드 뒤에 이름이 없으면 이름표를
+        #    코드만으로 둔다(evaluate_attachment_text가 사전 등에서 이름을 찾아 채운다).
+        #    코드가 하나뿐이면 건너뛴다: "실내건축공사업(업종코드 4990)"은 괄호 앞이
+        #    이름이라 아래 2단계가 이름표를 더 잘 만든다.
+        for group_match in _INNER_PREFIXED_GROUP_RE.finditer(line):
+            entries = _split_group_entries(group_match.group(1), _GROUP_ENTRY_CODE_RE)
+            if len(entries) < 2:
+                continue
+            consumed.append(group_match.span())
+            for code, name in entries:
+                name = _truncate_label(name)
+                results.append((code, f"{name}({code})" if name else code))
+
         for group_match in _PREFIXED_GROUP_RE.finditer(line):
+            if any(_spans_overlap(group_match.span(), span) for span in consumed):
+                continue
             consumed.append(group_match.span())
             for code, name in _split_group_entries(group_match.group(1), _GROUP_ENTRY_CODE_RE):
                 name = _truncate_label(name)
@@ -332,8 +357,27 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
     return results
 
 
+UNNAMED_LABEL = "이름 미확인"
+_TRAILING_CODE_RE = re.compile(r"\(([0-9]{4,10})\)$")
+
+
+def named_codes(items: list[str]) -> dict[str, str]:
+    """참가자격 항목들에서 "이름(코드)"로 이름까지 뽑힌 코드만 {코드: 이름표} 로 모은다.
+    같은 공고 안에서 한 곳은 코드만, 다른 곳은 이름까지 적힌 경우(공고문 vs
+    제안요청서) 코드만 뽑힌 쪽을 채우는 데 쓴다."""
+    found: dict[str, str] = {}
+    for item in items:
+        for code, label in _extract_code_requirements(item):
+            if label != code:
+                found.setdefault(code, label)
+    return found
+
+
 def evaluate_attachment_text(
-    items: list[str], held_codes: set[str], held_code_names: dict[str, str] | None = None
+    items: list[str],
+    held_codes: set[str],
+    held_code_names: dict[str, str] | None = None,
+    code_names: dict[str, str] | None = None,
 ) -> QualificationResult:
     """첨부파일 참가자격 절에서 업종코드·세부품명번호가 명시된 항목만 뽑아,
     API 판정(`evaluate`)과 같은 형태의 결과를 만든다 — 리포트에서 "자격 충족" /
@@ -346,14 +390,32 @@ def evaluate_attachment_text(
     충족(OR), 없으면 나열된 코드를 전부 가지고 있어야 충족(AND)으로 본다
     (실측: 정선군 복합문화센터 공고문 — "라"항은 품목 3개를 모두 소지해야
     하고, "바"항은 "다음 중 어느 하나"로 명시됨).
+
+    문서가 코드만 적고 이름을 안 적으면(예: "[업종코드 4440, 4442, 4444]") 이름표가
+    코드 하나뿐이 된다. 그럴 땐 ① 같은 공고의 다른 표기 ② `held_code_names`(등록증)
+    ③ `code_names`(코드 이름 사전·공고 API 정보 등, 호출 쪽이 모아서 넘김) 순으로
+    이름을 찾아 "이름(코드)"로 채운다. 끝내 못 찾으면 "이름 미확인(코드)"로 두고
+    `unnamed_codes`에 남긴다.
     """
     held_code_names = held_code_names or {}
+    seen_in_notice = named_codes(items)
+    lookup = {**(code_names or {}), **held_code_names}
+
+    def _label(code: str, label: str) -> str:
+        if label != code:
+            return label
+        if code in seen_in_notice:
+            return seen_in_notice[code]
+        if code in lookup:
+            return f"{lookup[code]}({code})"
+        return f"{UNNAMED_LABEL}({code})"
+
     groups: list[LicenseGroup] = []
     missing: list[LicenseGroup] = []
     parsed_labels: dict[str, str] = {}
 
     for idx, item in enumerate(items):
-        requirements = _extract_code_requirements(item)
+        requirements = [(code, _label(code, label)) for code, label in _extract_code_requirements(item)]
         if not requirements:
             continue
 
@@ -394,6 +456,16 @@ def evaluate_attachment_text(
         passes=len(missing) <= MAX_ALLOWED_MISSING_QUALIFICATIONS,
         checked=True,
         satisfied_groups=satisfied_groups,
+        # 미보유로 걸렸는데 이름을 못 찾은 코드만 알린다 — 보유 코드는 충족
+        # 표시에서 등록증 이름을 쓰므로 사전에 없어도 문제없다.
+        unnamed_codes=list(
+            dict.fromkeys(
+                _TRAILING_CODE_RE.search(name).group(1)
+                for g in missing
+                for name in g.allowed_names
+                if name.startswith(UNNAMED_LABEL)
+            )
+        ),
     )
 
 
@@ -444,6 +516,37 @@ def load_held_codes(held_config: dict) -> set[str]:
             if code:
                 codes.add(code)
     return codes
+
+
+_API_NAME_CODE_RE = re.compile(r"^(.+?)\s*/\s*([0-9]{4,10})$")
+
+
+def api_code_names(groups: list[LicenseGroup]) -> dict[str, str]:
+    """면허제한정보 API 그룹의 "업종명/코드" 표기에서 {코드: 이름}을 뽑는다
+    (lcnsLmtNm이 실측상 "실내건축공사업/4990" 형태로 내려온다)."""
+    found: dict[str, str] = {}
+    for g in groups:
+        for name in g.allowed_names:
+            match = _API_NAME_CODE_RE.match(name.strip())
+            if match:
+                found.setdefault(match.group(2), match.group(1).strip())
+    return found
+
+
+def load_code_names(codes_config: dict, code_names_config: dict | None = None) -> dict[str, str]:
+    """코드 이름 사전. `codes.json`(매칭용 코드 목록)의 이름 + `code_names.json`
+    (사람이 추가하는 사전). 같은 코드면 code_names.json이 우선."""
+    names: dict[str, str] = {}
+    for key in ("productCodes", "industryCodes"):
+        for entry in codes_config.get(key, []):
+            code = str(entry.get("code", "")).strip()
+            name = str(entry.get("name", "")).strip()
+            if code and name:
+                names.setdefault(code, name)
+    for code, name in (code_names_config or {}).get("names", {}).items():
+        if str(code).strip() and str(name).strip():
+            names[str(code).strip()] = str(name).strip()
+    return names
 
 
 def load_held_code_names(held_config: dict) -> dict[str, str]:

@@ -73,7 +73,8 @@ class RunStats:
     categories: list[str] | None = None
     screened_out: dict[str, int] = field(default_factory=dict)
     screened_in: int = 0
-    gate_excluded: int = 0
+    # 자격 미달인데 후보에 남긴 공고 수 (공동수급 보완 가능성 때문에 제외하지 않음)
+    qualification_flagged: int = 0
     candidates: int = 0
     license_error: str | None = None
     region_error: str | None = None
@@ -191,12 +192,11 @@ def build_candidates(
 
         stats.screened_in += 1
 
-        if not qualification.passes:
-            stats.gate_excluded += 1
-            record.is_candidate = False
-            record.excluded_reason = qualification.summary  # 이미 "자격 미달(...)" 형태다
-            stats.rejected.append(record)
-            continue
+        # 자격 미달은 후보에서 빼지 않는다 (2026-09-28 사용자 결정: 미보유 자격 개수 무시).
+        # 공동수급으로 보완해 수주하는 경우가 있어, 리포트의 자격판정(빨간 원)과
+        # 공동수급 칸을 보고 담당자가 판단한다. 예전엔 미보유 그룹 2개 이상이면 제외했다.
+        if qualification.checked and qualification.missing_count:
+            stats.qualification_flagged += 1
 
         candidates.append(record)
 
