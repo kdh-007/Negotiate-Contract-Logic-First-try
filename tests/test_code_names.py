@@ -53,6 +53,26 @@ class TestUnheldCodeNames(unittest.TestCase):
         self.assertTrue(any("조명용제어장치(3912110702)" in n for n in names), names)
         self.assertEqual(result.unnamed_codes, ["4511189301"])
 
+    def test_dictionary_name_beats_generic_phrase_from_document(self):
+        """사용자 제보(R26BK01739064 계열): 문서에서 뽑은 이름표가 "직접생산확인증명서"
+        같은 구절이면 사전의 품목명을 써야 한다."""
+        item = "나. 직접생산확인증명서 (세부품명번호 7215409901) 소지자"
+        result = qualify.evaluate_attachment_text(
+            [item], held_codes=set(), code_names={"7215409901": "전시부스설치서비스"}
+        )
+        self.assertEqual(result.summary, "자격 미달(전시부스설치서비스(7215409901))")
+
+    def test_colon_after_keyword_is_recognized(self):
+        result = qualify.evaluate_attachment_text(["다. 세부품명번호: 7215409901"], held_codes=set())
+        self.assertTrue(result.checked)
+        self.assertEqual(result.unnamed_codes, ["7215409901"])
+
+    def test_item_marker_is_stripped_from_parsed_label(self):
+        result = qualify.evaluate_attachment_text(
+            ["라. 조형물(세부품명번호 6012100201)을 등록한 업체"], held_codes=set()
+        )
+        self.assertEqual(result.summary, "자격 미달(조형물(6012100201))")
+
     def test_held_code_is_not_reported_as_unnamed(self):
         result = qualify.evaluate_attachment_text([BARE_ITEM], held_codes={"4440", "4444"})
         self.assertEqual(result.missing_count, 0)

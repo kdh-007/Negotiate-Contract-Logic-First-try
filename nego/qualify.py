@@ -180,7 +180,8 @@ def evaluate(groups: list[LicenseGroup], held_names: list[str]) -> Qualification
 # 10자리로 제한해 일반 괄호 안 숫자(연도·조항 번호 등)를 코드로 오인하지
 # 않게 한다.
 _CODE_REQUIREMENT_RE = re.compile(
-    r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?(?P<code>[0-9]{4,10})"
+    # 실측 표기 중 "세부품명번호: 7215409901"처럼 콜론이 끼는 경우도 받는다.
+    r"(?:업종코드|세부품명번호)\s*[:：]?\s*(?:[0-9]+\s*자리\s*,?\s*)?(?P<code>[0-9]{4,10})"
     r"|\((?P<bare_code>[0-9]{10})\)"
 )
 # 문서마다 괄호를 쓰는지 대괄호를 쓰는지, 코드 여러 개를 콤마로 나열하는지
@@ -227,7 +228,14 @@ _MAX_LABEL_LEN = 20
 _STANDALONE_CODE_RE = re.compile(r"(?<!\d)(?:\d{10}|\d{4})(?!\d)")
 
 
+# 이름표 맨 앞의 항목 번호 — "가.", "1)", "(가)", "①" 등. 참가자격 항목은 대개
+# 번호로 시작해서, 괄호 앞 구절을 이름표로 쓰면 "나. 직접생산확인증명서"처럼 번호가
+# 같이 붙어 나왔다.
+_ITEM_MARKER_RE = re.compile(r"^\s*(?:[가-하]\s*[.)]|[0-9]+\s*[.)]|\([가-하0-9]+\)|[①-⑳])\s*")
+
+
 def _truncate_label(name: str) -> str:
+    name = _ITEM_MARKER_RE.sub("", name)
     if len(name) > _MAX_LABEL_LEN:
         name = name[-_MAX_LABEL_LEN:]
         if " " in name:  # 잘린 앞 단어 조각을 버리고 온전한 단어부터 남긴다
@@ -358,6 +366,9 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
 
 
 UNNAMED_LABEL = "이름 미확인"
+# 문서에서 뽑은 이름표가 품목·업종명이 아니라 서류·분류 체계 이름인 경우 —
+# 이름으로 쓰지 않고 다른 출처(같은 공고의 다른 표기)나 "이름 미확인"으로 넘긴다.
+_GENERIC_LABEL_RE = re.compile(r"증명서|확인서|등록증|물품분류번호|세부품명|업종코드|입찰참가자격|자격을?\s*등록")
 _TRAILING_CODE_RE = re.compile(r"\(([0-9]{4,10})\)$")
 
 
@@ -368,7 +379,7 @@ def named_codes(items: list[str]) -> dict[str, str]:
     found: dict[str, str] = {}
     for item in items:
         for code, label in _extract_code_requirements(item):
-            if label != code:
+            if label != code and not _GENERIC_LABEL_RE.search(label.rsplit("(", 1)[0]):
                 found.setdefault(code, label)
     return found
 
@@ -391,23 +402,26 @@ def evaluate_attachment_text(
     (실측: 정선군 복합문화센터 공고문 — "라"항은 품목 3개를 모두 소지해야
     하고, "바"항은 "다음 중 어느 하나"로 명시됨).
 
-    문서가 코드만 적고 이름을 안 적으면(예: "[업종코드 4440, 4442, 4444]") 이름표가
-    코드 하나뿐이 된다. 그럴 땐 ① 같은 공고의 다른 표기 ② `held_code_names`(등록증)
-    ③ `code_names`(코드 이름 사전·공고 API 정보 등, 호출 쪽이 모아서 넘김) 순으로
-    이름을 찾아 "이름(코드)"로 채운다. 끝내 못 찾으면 "이름 미확인(코드)"로 두고
-    `unnamed_codes`에 남긴다.
+    이름표는 ① `held_code_names`(등록증) ② `code_names`(코드 이름 사전·공고 API 정보
+    등, 호출 쪽이 모아서 넘김)에 있으면 그 이름을 쓰고, 없으면 ③ 문서에서 뽑은 이름표
+    ④ 같은 공고의 다른 곳에 "이름(코드)"로 적힌 이름 순으로 쓴다. 문서가 코드만 적고
+    (예: "[업종코드 4440, 4442, 4444]") 어디에도 이름이 없으면 "이름 미확인(코드)"로
+    두고 `unnamed_codes`에 남긴다.
     """
     held_code_names = held_code_names or {}
     seen_in_notice = named_codes(items)
     lookup = {**(code_names or {}), **held_code_names}
 
     def _label(code: str, label: str) -> str:
-        if label != code:
+        # 사전·등록증·API에 이름이 있으면 그걸 먼저 쓴다 — 문서에서 뽑은 이름표는
+        # 표기가 제각각이라 "직접생산확인증명서(7215409901)"처럼 품목명이 아닌
+        # 구절이 잡히는 경우가 있었다(사용자 제보, 2026-09-28).
+        if code in lookup:
+            return f"{lookup[code]}({code})"
+        if label != code and not _GENERIC_LABEL_RE.search(label.rsplit("(", 1)[0]):
             return label
         if code in seen_in_notice:
             return seen_in_notice[code]
-        if code in lookup:
-            return f"{lookup[code]}({code})"
         return f"{UNNAMED_LABEL}({code})"
 
     groups: list[LicenseGroup] = []
