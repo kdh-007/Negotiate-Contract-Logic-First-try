@@ -241,6 +241,8 @@ def save_attachment_texts(
             stats["ok"] += 1
             base = _safe_filename(f"{notice.notice_no}_{notice.notice_ord}_{result.seq}_{result.file_name}")
             (text_dir / f"{base}.txt").write_text(result.text, encoding="utf-8")
+            if hasattr(candidate, "attachment_text"):
+                candidate.attachment_text += f"\n\n=== {result.file_name} ===\n{result.text}"
 
             section = find_qualification_section(result.text)
             if section is not None:

@@ -17,6 +17,20 @@
   - 목적: 매주 수집 결과를 "수집 완료" 알림이 아니라 **보고서 형태**(후보 목록·발주기관·금액·마감일 등)로 받아보는 것.
   - 아직 구현 시점은 아님 — 사용자가 메신저 기능 추가를 별도로 요청하면 그때 진행.
 
+## 2026-09-28 — LLM 유사도 판정 파이프라인에 추가 (실제 API 호출 검증은 아직)
+
+- `nego/llm_similarity.py`: 후보 공고 1건 + 과거 실적 목록을 Claude API에 보내 실적별로
+  유사 / 부분 유사 / 무관 / 판단 불가 판정. 결과엔 `source="ai"`, 동의 표현 쌍
+  (`equivalent_terms`, 동의어 사전 후보)이 같이 남음. 실패해도 수집·리포트는 그대로 진행.
+- 실행: `python -m nego --fetch-attachment-text --llm-similarity` (첨부 원문 앞 2만 자까지 근거로 씀)
+  또는 수집 없이 `python scripts/llm_similarity_test.py --title "..."`.
+  Actions에선 daily.yml 입력 `llm_similarity=true` + 저장소 secret `ANTHROPIC_API_KEY` 필요.
+- 설정(환경변수): `LLM_MODEL`(기본 claude-opus-5), `LLM_EFFORT`(기본 medium),
+  `LLM_MAX_TEXT_CHARS`(20000), `LLM_MAX_CANDIDATES`(30). 거절 대비 서버 측 폴백(`fallbacks="default"`) 켜둠.
+- 결과: `output/llm_similarity_*.md` / `.json` (Supabase·HTML 리포트엔 아직 안 넣음).
+- **전제**: `config/past_projects.json`에 실제 실적이 있어야 함 — "(예시)" 항목은 자동으로 빠지고,
+  실적이 없으면 API를 부르지 않고 건너뜀.
+
 ## 2026-09-18 — 유사도 판정(로드맵 4~5단계) 논의 정리 — 월요일 이어서 진행
 
 목표: 신규 공고를 회사 과거 실적·제안서와 비교해 "우리가 할 만한 일인가" 유사도 판정하는

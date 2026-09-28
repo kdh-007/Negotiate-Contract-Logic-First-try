@@ -5,6 +5,7 @@
     python -m nego --from-store       # API 호출 없이 저장된 원문으로 재필터링
     python -m nego --verify           # 응답 필드명 진단 (필드가 비어 보일 때)
     python -m nego --fetch-attachment-text  # 후보 공고 첨부파일 텍스트 추출(원문 대조용)
+    python -m nego --fetch-attachment-text --llm-similarity  # + 과거 실적과 LLM 유사도 판정
 """
 
 from __future__ import annotations
@@ -85,6 +86,25 @@ def _save_to_supabase(candidates, stats) -> None:
         logging.error("Supabase 저장 실패 (리포트는 정상 생성됨): %s", err)
 
 
+def _run_llm_similarity(candidates, config, now) -> dict[str, Path]:
+    """LLM 유사도 판정. 자격증명이 없거나 실패해도 수집 결과(리포트/저장)는 그대로 낸다."""
+    from . import llm_similarity
+    from .config import DEFAULT_CONFIG_DIR
+    from .similarity import load_past_projects_file
+
+    llm_config = llm_similarity.LlmConfig.from_env()
+    if llm_config is None:
+        logging.warning("ANTHROPIC_API_KEY 없음 → LLM 유사도 판정 건너뜀")
+        return {}
+
+    projects = load_past_projects_file(DEFAULT_CONFIG_DIR / "past_projects.json")
+    results = llm_similarity.judge_candidates(candidates, projects, llm_config)
+    if not results:
+        return {}
+    print(llm_similarity.render_console(results))
+    return llm_similarity.save_results(results, config.output_dir, now)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="nego", description="나라장터 「협상에 의한 계약」 공고 추출")
     parser.add_argument("--days", type=int, help="조회 기간(일). 기본값은 LOOKBACK_DAYS 환경변수")
@@ -101,6 +121,12 @@ def main(argv: list[str] | None = None) -> int:
         "--fetch-attachment-text",
         action="store_true",
         help="후보 공고의 첨부파일(HWP/HWPX/PDF)을 내려받아 텍스트를 추출한다 (지역제한/면허제한/공동수급 원문 대조용)",
+    )
+    parser.add_argument(
+        "--llm-similarity",
+        action="store_true",
+        help="후보 공고를 과거 실적(config/past_projects.json)과 Claude API로 유사도 판정한다 "
+        "(ANTHROPIC_API_KEY 필요, --fetch-attachment-text와 같이 주면 첨부 원문까지 근거로 씀)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -170,13 +196,17 @@ def main(argv: list[str] | None = None) -> int:
             f" (저장 위치: {config.output_dir / 'attachment_text'})"
         )
 
+    llm_paths: dict[str, Path] = {}
+    if args.llm_similarity:
+        llm_paths = _run_llm_similarity(candidates, config, now)
+
     print(render_console(candidates, stats))
 
     if not args.no_supabase:
         _save_to_supabase(candidates, stats)
 
     paths = save_reports(candidates, stats, config.output_dir, now)
-    for kind, path in paths.items():
+    for kind, path in {**paths, **llm_paths}.items():
         print(f"{kind.upper()} 저장: {path}")
 
     # 일부 조회가 실패했으면 종료코드 2로 구분한다 (CI에서 성공/부분성공 구분).

@@ -40,6 +40,11 @@ class Candidate:
     variant: str | None = None
     is_candidate: bool = True
     excluded_reason: str | None = None
+    # `--fetch-attachment-text`로 뽑은 첨부파일 원문(파일별로 이어붙임). LLM 유사도
+    # 판정(`llm_similarity.py`)에 과업내용 근거로 넘긴다. 첨부를 안 뽑았으면 빈 문자열.
+    attachment_text: str = ""
+    # `--llm-similarity`를 줬을 때만 채워진다 (`llm_similarity.LlmJudgement`).
+    llm_similarity: object | None = None
 
     @property
     def gate_passed(self) -> bool:
