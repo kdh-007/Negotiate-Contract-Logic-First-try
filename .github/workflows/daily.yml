@@ -1,16 +1,40 @@
-name: 협상공고 일일 수집
+name: 나라장터 공고 수집
 
 # 실행 방법
+#  · 자동 (2026-09-28 다시 켬 — 텔레그램 발송과 함께):
+#      - 매일 08:00 KST   : 어제 게시된 "입찰" 공고 → 텔레그램
+#                           (입찰은 마감이 7일 안쪽인 경우가 있어 매일 보고)
+#      - 매주 월 08:10 KST : 지난 7일 "협상"·"규격가격동시입찰" 공고 → 텔레그램
+#    조회 기간을 날짜 단위로 딱 잘라(--complete-days) 주기끼리 겹치지 않으므로
+#    같은 공고가 두 번 발송되지 않는다.
 #  · 수동: GitHub 저장소 → Actions 탭 → 이 워크플로 선택 → "Run workflow"
-#  · 자동 스케줄은 2026-09-23 사용자 요청으로 껐다 — 필요할 때 수동으로만 돌린다.
-#    (다시 켜려면 위 "수동" 줄을 지우고 schedule: 블록을 되살리면 됨 — git 이력에 남아있음)
+#
+# 필요한 저장소 secrets: NARA_SERVICE_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (텔레그램 두 개가 없으면 발송만 건너뜀)
 on:
+  schedule:
+    # GitHub Actions의 cron은 UTC 기준이다. 08:00 KST = 23:00 UTC (전날)
+    - cron: "0 23 * * *"
+    # 월요일 08:10 KST = 일요일 23:10 UTC. 매일 실행과 10분 벌려 API 조회가 겹치지 않게 한다.
+    - cron: "10 23 * * 0"
   workflow_dispatch:
     inputs:
+      categories:
+        description: "공고 유형 (쉼표 구분: 협상, 규격가격동시입찰, 입찰). 비우면 전 유형"
+        required: false
+        default: ""
+      complete_days:
+        description: "오늘을 뺀 직전 N일을 날짜 단위로 조회 (예: 1=어제 하루). 비우면 아래 days 사용"
+        required: false
+        default: ""
       days:
-        description: "조회 기간(일). 비우면 1일"
+        description: "조회 기간(일, 오늘 포함). complete_days가 비었을 때만 쓴다. 비우면 1일"
         required: false
         default: "1"
+      telegram:
+        description: "true로 두면 결과를 텔레그램으로 발송"
+        required: false
+        default: "false"
       no_supabase:
         description: "true로 두면 Supabase에 저장하지 않고 리포트만 생성"
         required: false
@@ -33,6 +57,12 @@ on:
 permissions:
   contents: read
   actions: write
+
+env:
+  # 러너 기본 시간대는 UTC다. 조회 기간("어제")·잔여일수(D-N)를 한국 날짜로 계산하려면
+  # 한국 시간대로 돌려야 한다 — 안 그러면 08:00 KST 실행 시점이 UTC로는 전날이라
+  # "어제"가 한국 기준 이틀 전이 된다.
+  TZ: Asia/Seoul
 
 jobs:
   collect:
@@ -57,6 +87,45 @@ jobs:
       - name: 테스트
         run: python -m unittest discover -s tests -t .
 
+      # 스케줄 실행에는 입력값이 없으므로 여기서 실행 모드를 정한다. 수동 실행은
+      # 입력값을 그대로 쓴다. 아래 수집·재시도 단계는 모두 이 출력값만 본다.
+      - name: 실행 모드 결정
+        id: mode
+        env:
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          IN_CATEGORIES: ${{ github.event.inputs.categories }}
+          IN_COMPLETE_DAYS: ${{ github.event.inputs.complete_days }}
+          IN_DAYS: ${{ github.event.inputs.days }}
+          IN_TELEGRAM: ${{ github.event.inputs.telegram }}
+          IN_NO_SUPABASE: ${{ github.event.inputs.no_supabase }}
+          IN_LLM: ${{ github.event.inputs.llm_similarity }}
+          IN_ATTEMPT: ${{ github.event.inputs.attempt }}
+        run: |
+          if [ "$EVENT" = "schedule" ]; then
+            if [ "$SCHEDULE" = "10 23 * * 0" ]; then
+              CATEGORIES="협상,규격가격동시입찰"; COMPLETE_DAYS="7"
+            else
+              CATEGORIES="입찰"; COMPLETE_DAYS="1"
+            fi
+            DAYS="1"; TELEGRAM="true"; NO_SUPABASE="false"; LLM="false"; ATTEMPT="1"
+          else
+            CATEGORIES="$IN_CATEGORIES"; COMPLETE_DAYS="$IN_COMPLETE_DAYS"
+            DAYS="${IN_DAYS:-1}"; TELEGRAM="${IN_TELEGRAM:-false}"
+            NO_SUPABASE="${IN_NO_SUPABASE:-false}"; LLM="${IN_LLM:-false}"; ATTEMPT="${IN_ATTEMPT:-1}"
+          fi
+          {
+            echo "categories=$CATEGORIES"
+            echo "complete_days=$COMPLETE_DAYS"
+            echo "days=$DAYS"
+            echo "telegram=$TELEGRAM"
+            echo "no_supabase=$NO_SUPABASE"
+            echo "llm=$LLM"
+            echo "attempt=$ATTEMPT"
+          } >> "$GITHUB_OUTPUT"
+          if [ -n "$COMPLETE_DAYS" ]; then PERIOD="오늘 뺀 직전 ${COMPLETE_DAYS}일"; else PERIOD="최근 ${DAYS}일"; fi
+          echo "유형=${CATEGORIES:-전체} / 기간=${PERIOD} / 텔레그램=$TELEGRAM / 시도 ${ATTEMPT}회차"
+
       # 필드명이 비어 보이거나(예: 예가방법에 해당하는 실제 필드명을 모를 때)
       # 원본 응답을 직접 봐야 할 때 쓰는 1회성 진단. 이 스텝을 타면 아래
       # 수집 실행/업로드는 건너뛴다 — Supabase에 아무것도 쓰지 않는다.
@@ -75,21 +144,27 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_TABLE: ${{ vars.SUPABASE_TABLE }}
-          LOOKBACK_DAYS: ${{ github.event.inputs.days || '1' }}
+          LOOKBACK_DAYS: ${{ steps.mode.outputs.days }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           LLM_MODEL: ${{ vars.LLM_MODEL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CATEGORIES: ${{ steps.mode.outputs.categories }}
+          COMPLETE_DAYS: ${{ steps.mode.outputs.complete_days }}
+          TELEGRAM: ${{ steps.mode.outputs.telegram }}
+          NO_SUPABASE: ${{ steps.mode.outputs.no_supabase }}
+          LLM: ${{ steps.mode.outputs.llm }}
         run: |
-          # 후보 공고 첨부파일(HWP/HWPX/PDF)까지 매일 자동으로 텍스트 추출한다
+          # 후보 공고 첨부파일(HWP/HWPX/PDF)까지 자동으로 텍스트 추출한다
           # (지역제한/면허제한/공동수급을 원문과 대조하기 위함). 담당자 연락처는
           # nego/attachments.py가 저장 전에 마스킹한다.
-          ARGS="--fetch-attachment-text"
-          if [ "${{ github.event.inputs.no_supabase }}" = "true" ]; then
-            ARGS="$ARGS --no-supabase"
-          fi
-          if [ "${{ github.event.inputs.llm_similarity }}" = "true" ]; then
-            ARGS="$ARGS --llm-similarity"
-          fi
-          python -m nego $ARGS
+          ARGS=(--fetch-attachment-text)
+          [ -n "$CATEGORIES" ] && ARGS+=(--categories "$CATEGORIES")
+          [ -n "$COMPLETE_DAYS" ] && ARGS+=(--complete-days "$COMPLETE_DAYS")
+          [ "$TELEGRAM" = "true" ] && ARGS+=(--telegram)
+          [ "$NO_SUPABASE" = "true" ] && ARGS+=(--no-supabase)
+          [ "$LLM" = "true" ] && ARGS+=(--llm-similarity)
+          python -m nego "${ARGS[@]}"
 
       # 수집 원문(data/)은 올리지 않는다 — 담당자 연락처가 섞일 수 있다.
       # 리포트(output/)만 아티팩트로 남긴다.
@@ -104,24 +179,41 @@ jobs:
 
       # 용역/물품/공사 중 하나라도 API 재시도(5회)를 다 소진하면 nego/pipeline.py가
       # 전체 실행을 실패로 처리한다(부분 데이터로 리포트를 내지 않는다). 그럴 때
-      # 이 Run은 실패로 끝내고, 같은 입력값으로 새 Run을 자동 큐잉해 재시도한다.
+      # 이 Run은 실패로 끝내고, 같은 실행 모드로 새 Run을 자동 큐잉해 재시도한다.
+      # 스케줄 실행이 실패해도 이 단계가 수동 실행 입력값으로 모드를 넘겨주므로
+      # 재시도 Run도 같은 유형·기간·텔레그램 설정으로 돈다.
       # attempt를 5회로 제한해 API가 계속 죽어있을 때 무한 재시도하지 않는다.
       - name: 실패 시 새 Run 재시도 예약
-        if: steps.collect.outcome == 'failure' && fromJSON(github.event.inputs.attempt || '1') < 5
+        if: steps.collect.outcome == 'failure' && fromJSON(steps.mode.outputs.attempt) < 5
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref_name }}
+          CATEGORIES: ${{ steps.mode.outputs.categories }}
+          COMPLETE_DAYS: ${{ steps.mode.outputs.complete_days }}
+          DAYS: ${{ steps.mode.outputs.days }}
+          TELEGRAM: ${{ steps.mode.outputs.telegram }}
+          NO_SUPABASE: ${{ steps.mode.outputs.no_supabase }}
+          LLM: ${{ steps.mode.outputs.llm }}
+          ATTEMPT: ${{ steps.mode.outputs.attempt }}
         run: |
-          NEXT_ATTEMPT=$(( ${{ github.event.inputs.attempt || '1' }} + 1 ))
+          NEXT_ATTEMPT=$(( ATTEMPT + 1 ))
           echo "수집 실패 — ${NEXT_ATTEMPT}번째 시도로 새 Run을 큐에 올립니다."
+          BODY=$(jq -n \
+            --arg ref "$REF" --arg categories "$CATEGORIES" --arg complete_days "$COMPLETE_DAYS" \
+            --arg days "$DAYS" --arg telegram "$TELEGRAM" --arg no_supabase "$NO_SUPABASE" \
+            --arg llm "$LLM" --arg attempt "$NEXT_ATTEMPT" \
+            '{ref: $ref, inputs: {categories: $categories, complete_days: $complete_days, days: $days,
+              telegram: $telegram, no_supabase: $no_supabase, llm_similarity: $llm, attempt: $attempt}}')
           curl -sS -X POST \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/daily.yml/dispatches" \
-            -d "{\"ref\":\"${{ github.ref_name }}\",\"inputs\":{\"days\":\"${{ github.event.inputs.days || '1' }}\",\"no_supabase\":\"${{ github.event.inputs.no_supabase || 'false' }}\",\"attempt\":\"${NEXT_ATTEMPT}\",\"llm_similarity\":\"${{ github.event.inputs.llm_similarity || 'false' }}\"}}"
+            "https://api.github.com/repos/${REPO}/actions/workflows/daily.yml/dispatches" \
+            -d "$BODY"
 
       - name: 재시도 소진 알림
-        if: steps.collect.outcome == 'failure' && !(fromJSON(github.event.inputs.attempt || '1') < 5)
-        run: echo "::error::${{ github.event.inputs.attempt || '1' }}번째 시도에서도 실패 — 최대 재시도(5회) 소진, 자동 재시도를 중단합니다."
+        if: steps.collect.outcome == 'failure' && !(fromJSON(steps.mode.outputs.attempt) < 5)
+        run: echo "::error::${{ steps.mode.outputs.attempt }}번째 시도에서도 실패 — 최대 재시도(5회) 소진, 자동 재시도를 중단합니다."
 
       - name: 실패 처리
         if: steps.collect.outcome == 'failure'
