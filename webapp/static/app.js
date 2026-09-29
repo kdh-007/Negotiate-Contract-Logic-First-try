@@ -119,27 +119,31 @@ function dday(c) {
   const t = c.days_left < 0 ? "마감" : c.days_left === 0 ? "D-day" : `D-${c.days_left}`;
   return `<span class="b dday${c.days_left > 7 ? " far" : ""}" title="${esc(c.deadline_label)} ${esc(fmtDt(c.deadline))}">마감 ${t}</span>`;
 }
-const QUAL_NOTE = "한 줄이 자격 요건 1개입니다. '또는'으로 이어진 자격은 그중 하나만 있으면 됩니다. 이름 뒤 괄호 숫자는 세부품명번호·업종코드이고, 코드가 없는 항목은 면허제한정보 API에 코드 필드가 없어 이름만 표시됩니다.";
+const QUAL_NOTES = {
+  industry: "자격요건 = 업종·면허(업종코드 4자리). 한 줄이 요건 1개이고, '또는'으로 이어진 자격은 그중 하나만 있으면 됩니다. 코드가 없는 항목은 면허제한정보 API에 코드 필드가 없어 이름만 표시됩니다.",
+  product: "세부품명번호 = 직접생산확인 등 품목 요건(10자리). 한 줄이 요건 1개이고, '또는'으로 이어진 품목은 그중 하나만 있으면 됩니다.",
+};
 function tipList(title, cls, names) {
   if (!names.length) return "";
   return `<div class="tip-title ${cls}">${esc(title)} ${names.length}건</div>` + names.map((n) => `<div class="tip-item">${esc(n)}</div>`).join("");
 }
+function qualButton(label, cls, aria, body) {
+  return `<button type="button" class="b qual ${cls}" aria-label="${esc(aria)}">${esc(label)}<span class="tip" role="tooltip">${body}</span></button>`;
+}
 function qualBadge(q) {
-  // 커서를 대거나(포커스·탭 포함) 누르면 미보유·충족 자격 목록 팝업
-  let label, cls, body;
-  if (!q.checked) {
-    label = "자격 미확인"; cls = "";
-    body = `<div class="tip-title">자격정보 미확인 (통과)</div><div class="tip-note">API·첨부파일 모두 판정 근거가 없어 통과 처리됩니다.</div>`;
-  } else {
-    // 미보유 그룹이 하나라도 있으면 "미달" — q.passes는 미보유 1개까지 통과시키는 옛 게이트 값이라 쓰지 않는다
-    const ok = q.satisfied === q.total;
-    label = `자격 ${q.satisfied}/${q.total} ${ok ? "충족" : "미달"}`;
-    cls = ok ? "good" : "bad";
-    body = tipList("미보유 자격", "bad", q.missing) + tipList("충족된 자격", "good", q.satisfied_names);
-    if (!body) body = `<div class="tip-title ${cls}">${ok ? "자격 충족" : "자격 미달"}</div>`;
-    body += `<div class="tip-note">${esc(QUAL_NOTE)}</div>`;
+  // 자격요건(업종 4자리) / 세부품명번호(10자리)를 나눠 배지 하나씩. 커서를 대면 미보유·충족 목록 팝업
+  if (!q.checked || !(q.parts && q.parts.length)) {
+    return qualButton("자격 미확인", "", q.summary,
+      `<div class="tip-title">자격정보 미확인 (통과)</div><div class="tip-note">API·첨부파일 모두 판정 근거가 없어 통과 처리됩니다.</div>`);
   }
-  return `<button type="button" class="b qual ${cls}" aria-label="${esc(q.summary)}">${esc(label)}<span class="tip" role="tooltip">${body}</span></button>`;
+  return q.parts.map((p) => {
+    // 미보유 요건이 하나라도 있으면 "미달" — q.passes는 미보유 1개까지 통과시키는 옛 게이트 값이라 쓰지 않는다
+    const ok = p.satisfied === p.total;
+    const body = tipList(`미보유 ${p.name}`, "bad", p.missing) + tipList(`충족된 ${p.name}`, "good", p.satisfied_names)
+      + `<div class="tip-note">${esc(QUAL_NOTES[p.key])}</div>`;
+    return qualButton(`${p.name} ${p.satisfied}/${p.total} ${ok ? "충족" : "미달"}`, ok ? "good" : "bad",
+      `${p.name} ${ok ? "충족" : "미달"}`, body);
+  }).join("");
 }
 function badges(c) {
   const out = [dday(c)];

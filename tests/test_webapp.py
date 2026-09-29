@@ -99,6 +99,7 @@ class TestSerialize(unittest.TestCase):
         self.assertEqual(len(q["missing"]), q["total"] - q["satisfied"])
         self.assertTrue(any(" 또는 " in line for line in q["missing"]), q["missing"])
         self.assertIn("g2b.go.kr", flagged["detail_url"])
+        self.assertEqual(sum(p["total"] for p in q["parts"]), q["total"])
         self.assertEqual(flagged["category"], "협상")
         self.assertEqual(flagged["key"], "R26TEST00009-000")
         self.assertEqual(flagged["sync"]["basis"], "공고명만")
@@ -117,6 +118,20 @@ class TestQualificationLines(unittest.TestCase):
         miss = [LicenseGroup("4", ["토목공사업(0001)", "토목건축공사업"])]
         self.assertEqual(_group_labels(sat), ["실내건축공사업(4990)", "실물모형및전시물(6010989901)"])
         self.assertEqual(_group_labels(miss), ["토목공사업(0001) 또는 토목건축공사업"])
+
+    def test_split_industry_and_product(self):
+        from webapp.collect import _split_parts
+
+        parts = _split_parts(
+            missing=["조명용제어장치(3912110702)", "토목공사업(0001) 또는 토목건축공사업"],
+            satisfied=["실내건축공사업(4990)", "실물모형및전시물(6010989901)", "전시사업자"],
+        )
+        by = {p["key"]: p for p in parts}
+        self.assertEqual((by["industry"]["satisfied"], by["industry"]["total"]), (2, 3))
+        self.assertEqual(by["industry"]["missing"], ["토목공사업(0001) 또는 토목건축공사업"])
+        self.assertEqual((by["product"]["satisfied"], by["product"]["total"]), (1, 2))
+        self.assertEqual(by["product"]["missing"], ["조명용제어장치(3912110702)"])
+        self.assertEqual([p["key"] for p in _split_parts([], ["실내건축공사업(4990)"])], ["industry"])
 
     def test_detail_url_fallback(self):
         from nego.models import prespec_from_raw

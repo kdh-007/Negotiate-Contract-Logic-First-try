@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -43,6 +44,26 @@ def _group_labels(groups) -> list[str]:
         if names:
             labels.append(" 또는 ".join(names))
     return list(dict.fromkeys(labels))
+
+
+_CODE_IN_LABEL = re.compile(r"\((\d{4}|\d{10})\)")
+
+
+def _is_product(label: str) -> bool:
+    """세부품명번호(10자리)가 든 요건이면 품명, 그 밖(업종코드 4자리·코드 없는 면허명)은 자격요건."""
+    return any(len(code) == 10 for code in _CODE_IN_LABEL.findall(label))
+
+
+def _split_parts(missing: list[str], satisfied: list[str]) -> list[dict[str, Any]]:
+    """자격요건(업종코드 4자리) / 세부품명번호(10자리) 두 부문으로 나눈 충족·미달. 요건이 없는 부문은 뺀다."""
+    parts = []
+    for key, name, pick in (("industry", "자격요건", lambda x: not _is_product(x)), ("product", "세부품명번호", _is_product)):
+        miss = [x for x in missing if pick(x)]
+        sat = [x for x in satisfied if pick(x)]
+        if miss or sat:
+            parts.append({"key": key, "name": name, "satisfied": len(sat), "total": len(sat) + len(miss),
+                          "missing": miss, "satisfied_names": sat})
+    return parts
 
 
 def _g2b_url(n) -> str | None:
@@ -103,6 +124,7 @@ def serialize(candidate, past: PastIndex) -> dict[str, Any]:
             "total": len(satisfied) + len(missing),
             "missing": missing,
             "satisfied_names": satisfied,
+            "parts": _split_parts(missing, satisfied),
         },
         "has_attachment_text": bool(candidate.attachment_text.strip()),
         "sync": sync,
