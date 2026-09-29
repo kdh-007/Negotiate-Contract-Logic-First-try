@@ -135,9 +135,11 @@ class TestQualificationView(unittest.TestCase):
         q = self._q(satisfied=[["실물모형및전시물(6010989901)", "실내건축공사업(4990)",
                                 "소프트웨어사업자(디지털콘텐츠개발서비스사업)(1469)", "산업디자인전문회사(시각디자인분야)(4440)"]])
         ind, prod = qualview.build(q, self.HELD, {"industry": True, "product": True})
+        # 사용자 지적(2026-09-29 울산박물관): 10자리 품목이 자격요건 칩에 뜨고 세부품명번호는 "제한 없음"이던 문제
         self.assertEqual(ind["status"], "충족")
-        self.assertEqual(len(ind["held"]), 4)
-        self.assertEqual(prod["status"], "제한 없음", "업종이 섞인 '다음 중 하나' 요건은 세부품명 부문이 아니다")
+        self.assertEqual(len(ind["held"]), 3)
+        self.assertEqual(prod["status"], "충족")
+        self.assertEqual(prod["held"], ["실물모형및전시물(6010989901)"])
 
     def test_both_chips_always_present(self):
         from webapp import qualview

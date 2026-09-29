@@ -5,7 +5,8 @@
 - 미보유 쪽은 **요건 단위**로 센다: "A 또는 B"면 둘 중 하나만 있으면 되는 요건 1건.
 - 충족 쪽은 **보유해서 요건을 채운 자격** 단위로 센다 — 같은 자격이 여러 요건을 채우면
   (예: 1469가 "1469 또는 4442", "1469 또는 4444" 두 요건을 모두 채움) 한 번만 나온다.
-- 세부품명번호 부문은 요건 안의 코드가 **전부 10자리**일 때만. 업종·품목이 섞인
+- 충족한 자격은 코드 자릿수대로 부문을 나눈다(10자리 → 세부품명번호, 그 밖 → 자격요건).
+- 미보유 요건은 코드가 **전부 10자리**일 때만 세부품명번호 부문. 업종·품목이 섞인
   "다음 중 하나" 요건은 자격요건 부문에 두고, 항목마다 [업종]/[품명] 표시를 붙인다.
 - 요건이 없으면 "제한 없음"(정보를 봤는데 없음) / "미확인"(볼 정보가 없었음)으로 구분한다.
 """
@@ -62,8 +63,16 @@ def _section_of(items: list[dict[str, Any]]) -> str:
 
 
 def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, bool]) -> list[dict[str, Any]]:
-    """부문 2개를 항상 돌려준다. `had_source[key]`: 그 부문 요건을 찾아볼 정보가 있었는지."""
-    groups: dict[str, dict[str, list]] = {k: {"missing": [], "satisfied": []} for k, _ in SECTIONS}
+    """부문 2개를 항상 돌려준다. `had_source[key]`: 그 부문 요건을 찾아볼 정보가 있었는지.
+
+    충족 쪽은 **보유 자격 하나하나를 그 코드 자릿수로** 부문에 넣는다 — 첨부문서의 "어느 하나"
+    요건처럼 업종·품목이 한 묶음이어도, 10자리 품목(예: 실물모형및전시물 6010989901)은
+    세부품명번호 부문에, 4자리 업종은 자격요건 부문에 나온다.
+    미보유 쪽은 요건 단위라 나눌 수 없어, 전부 10자리일 때만 세부품명번호 부문에 둔다.
+    """
+    missing: dict[str, list] = {k: [] for k, _ in SECTIONS}
+    held_by: dict[str, list[str]] = {k: [] for k, _ in SECTIONS}
+    satisfied_any: dict[str, bool] = {k: False for k, _ in SECTIONS}
     seen: set[tuple] = set()
     for state, source in (("missing", qualification.missing_groups), ("satisfied", qualification.satisfied_groups)):
         for g in source:
@@ -72,30 +81,32 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
             if not items or sig in seen:
                 continue
             seen.add(sig)
-            groups[_section_of(items)][state].append(items)
+            if state == "missing":
+                missing[_section_of(items)].append(items)
+                continue
+            mine = [i for i in items if i["held"]]
+            if mine:
+                for i in mine:
+                    held_by[i["kind"]].append(i["label"])
+                    satisfied_any[i["kind"]] = True
+            else:  # 보유 표시를 못 붙인 요건(이름 표기 차이)은 요건 자체를 적는다
+                key = _section_of(items)
+                held_by[key].append(" 또는 ".join(i["label"] for i in items))
+                satisfied_any[key] = True
 
     parts = []
     for key, name in SECTIONS:
-        missing = groups[key]["missing"]
-        satisfied = groups[key]["satisfied"]
-        # 충족: 요건을 채운 보유 자격(중복 제거). 보유 표시를 못 붙인 요건은(이름 표기 차이) 요건 자체를 적는다.
-        held_labels: list[str] = []
-        for items in satisfied:
-            mine = [i["label"] for i in items if i["held"]]
-            held_labels.extend(mine or [" 또는 ".join(i["label"] for i in items)])
-        held_labels = list(dict.fromkeys(held_labels))
-        mixed = any(len({i["kind"] for i in items if i["code"]}) > 1 for items in missing)
-        if missing:
+        miss = missing[key]
+        if miss:
             status = "미달"
-        elif satisfied:
+        elif satisfied_any[key]:
             status = "충족"
         else:
             status = "제한 없음" if had_source.get(key) else "미확인"
         parts.append({
             "key": key, "name": name, "status": status,
-            "missing": [{"any_of": len(items) > 1, "items": items} for items in missing],
-            "held": held_labels,
-            "mixed": mixed,
+            "missing": [{"any_of": len(items) > 1, "items": items} for items in miss],
+            "held": list(dict.fromkeys(held_by[key])),
         })
     return parts
 
