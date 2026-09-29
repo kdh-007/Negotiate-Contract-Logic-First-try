@@ -143,6 +143,7 @@ def make_handler(app: App):
                         attachments=bool(data.get("attachments", True)),
                         ai=bool(data.get("ai", False)),
                         categories=list(cats) if cats else None,
+                        prespec=bool(data.get("prespec", True)),
                     )
                     return self._json(job.snapshot(), HTTPStatus.ACCEPTED)
                 if url.path == "/api/state":

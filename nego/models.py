@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -50,6 +51,13 @@ class Notice:
     attachments: list[dict[str, str]] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
 
+    # 본공고 / 사전규격. 사전규격은 공고번호 자리에 사전규격등록번호가 들어가고,
+    # 입찰 마감 대신 의견등록 마감이 있으며, 낙찰방법·면허제한·공동수급 정보가 없다.
+    kind: str = "본공고"
+    opinion_deadline: str | None = None
+    # 사전규격이 이미 본공고로 나갔으면 그 입찰공고번호들
+    linked_bid_notices: list[str] = field(default_factory=list)
+
     @property
     def key(self) -> tuple[str, str, str]:
         return (self.work_type, self.notice_no, self.notice_ord)
@@ -96,4 +104,41 @@ def notice_from_raw(raw: dict[str, Any], work_type: str) -> Notice:
         product_class_name=F.pick_field(clean, "product_class_name"),
         attachments=F.extract_attachments(clean),
         raw=clean,
+    )
+
+
+PRESPEC_KIND = "사전규격"
+
+
+def prespec_from_raw(raw: dict[str, Any], work_type: str) -> Notice:
+    """사전규격 1건 → Notice. 본공고와 같은 자료구조로 담아 필터·자격판정을 그대로 태운다."""
+    clean = F.strip_personal_fields(raw)
+
+    def pick(key: str) -> str | None:
+        return F.pick_by(clean, F.PRESPEC_FIELDS, key)
+
+    budget_text = pick("assigned_budget")
+    try:
+        budget = float(budget_text.replace(",", "")) if budget_text else None
+    except ValueError:
+        budget = None
+    linked = [n for n in re.split(r"[\s,;]+", pick("linked_bid_notices") or "") if n]
+    return Notice(
+        work_type=work_type,
+        notice_no=pick("notice_no") or "",
+        notice_ord="000",
+        title=pick("title") or "(제목 없음)",
+        notice_institution=pick("notice_institution"),
+        demand_institution=pick("demand_institution"),
+        detail_url=pick("detail_url"),
+        assigned_budget=budget,
+        posted_at=pick("posted_at"),
+        product_class_no=pick("product_class_no"),
+        attachments=F.extract_attachments(
+            clean, F.PRESPEC_ATTACHMENT_NAME_PREFIX, F.PRESPEC_ATTACHMENT_URL_PREFIX, F.PRESPEC_ATTACHMENT_MAX
+        ),
+        raw=clean,
+        kind=PRESPEC_KIND,
+        opinion_deadline=pick("opinion_deadline"),
+        linked_bid_notices=linked,
     )

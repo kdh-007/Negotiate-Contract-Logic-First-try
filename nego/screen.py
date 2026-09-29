@@ -206,6 +206,8 @@ class Schedule:
     # 제출기한(`attachments.save_attachment_texts` → `schedule_text.extract_deadline`).
     # API 값이 하나라도 있으면 이 필드는 아예 안 쓰인다.
     attachment_deadline: datetime | None = None
+    # 사전규격의 의견등록 마감. 본공고에는 없다(항상 None) — 입찰 마감이 없는 사전규격에서만 쓰인다.
+    opinion_deadline: datetime | None = None
 
     @property
     def earliest(self) -> tuple[str, datetime] | None:
@@ -217,6 +219,8 @@ class Schedule:
         valid = [(label, dt) for label, dt in candidates if dt is not None]
         if valid:
             return min(valid, key=lambda pair: pair[1])
+        if self.opinion_deadline is not None:
+            return ("의견등록 마감", self.opinion_deadline)
         if self.attachment_deadline is not None:
             return ("첨부파일 제출기한", self.attachment_deadline)
         return None
@@ -233,4 +237,5 @@ def build_schedule(notice: Notice) -> Schedule:
         qualification_deadline=parse_datetime(notice.qualification_deadline),
         joint_agreement_deadline=parse_datetime(notice.joint_agreement_deadline),
         bid_deadline=parse_datetime(notice.bid_deadline),
+        opinion_deadline=parse_datetime(notice.opinion_deadline),
     )

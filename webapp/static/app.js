@@ -91,8 +91,7 @@ function renderFilters() {
   const box = $("#filters");
   box.replaceChildren(
     chipRow("추천", "conf", ["전체", "강력추천", "참고용"], false),
-    chipRow("공고", "kind", ["본공고+사전규격", "본공고", "사전규격"], false,
-      { "사전규격": "현재 수집 로직은 본공고만 수집합니다" }),
+    chipRow("공고", "kind", ["본공고+사전규격", "본공고", "사전규격"], false),
     chipRow("낙찰방법", "cat", META ? META.categories : ["협상", "규격가격동시입찰", "입찰"], true),
     chipRow("참가여부", "part", ["미지정", ...(META ? META.statuses : [])], true),
     chipRow("AI 판단", "ai", ["적합", "검토필요", "부적합", "미판정"], true),
@@ -103,7 +102,7 @@ function renderFilters() {
 function stateOf(c) { return STATES[c.key] || {}; }
 function passes(c) {
   if (F.conf !== "전체" && c.confidence !== F.conf) return false;
-  if (F.kind === "사전규격") return false;
+  if (F.kind !== "본공고+사전규격" && c.kind !== F.kind) return false;
   if (F.cat.size && !F.cat.has(c.category)) return false;
   if (F.part.size && !F.part.has(stateOf(c).status || "미지정")) return false;
   if (F.ai.size && !F.ai.has(c.ai ? c.ai.label : "미판정")) return false;
@@ -147,13 +146,19 @@ function badges(c) {
   if (c.confidence === "강력추천") out.push(`<span class="b star">강력추천</span>`);
   else if (c.confidence) out.push(`<span class="b">${esc(c.confidence)}</span>`);
   out.push(`<span class="b">${esc(c.work_type)}</span>`);
-  if (c.category) out.push(`<span class="b info" title="${esc(c.award_method || "")}">${esc(c.category)}</span>`);
+  if (c.kind === "사전규격") {
+    out.push(`<span class="b prespec" title="입찰공고 전 규격 공개 단계 — 의견등록 마감까지 규격 의견을 낼 수 있습니다">사전규격</span>`);
+    if (c.linked_bid_notices && c.linked_bid_notices.length)
+      out.push(`<span class="b good" title="${esc(c.linked_bid_notices.join(", "))}">본공고 게시됨</span>`);
+  } else if (c.category) out.push(`<span class="b info" title="${esc(c.award_method || "")}">${esc(c.category)}</span>`);
   if (c.is_re_notice) out.push(`<span class="b warn">재공고</span>`);
   if (c.ai) out.push(`<span class="b ${c.ai.label === "적합" ? "good" : c.ai.label === "부적합" ? "bad" : "warn"}" title="${esc(c.ai.reason)}">AI ${esc(c.ai.label)}</span>`);
   return out.join("");
 }
 function badges2(c) {
   const out = [qualBadge(c.qualification)];
+  // 사전규격엔 참가가능지역·공동수급 정보가 없다 — "제한 없음"으로 오해하지 않게 아예 표시하지 않는다
+  if (c.kind === "사전규격") return out.join("");
   out.push(c.regions.length
     ? `<span class="b warn" title="${esc(c.regions.join(", "))}">지역제한 ${esc(c.regions.slice(0, 2).join("·"))}${c.regions.length > 2 ? " 외" : ""}</span>`
     : `<span class="b" title="참가가능지역 정보 없음 = 제한 없음 또는 미등록">지역제한 없음</span>`);
@@ -171,7 +176,7 @@ function card(c, withActions = true) {
     <div class="badges">${badges2(c)}</div>
     <div class="title">${c.detail_url ? `<a href="${esc(c.detail_url)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div>
     <dl class="meta">
-      <dt>입찰 마감</dt><dd>${esc(fmtDt(c.deadline))}${c.deadline_label && c.deadline_label !== "입찰 마감" ? ` <span class="why">(${esc(c.deadline_label)})</span>` : ""}</dd>
+      <dt>${c.kind === "사전규격" ? "의견 마감" : "입찰 마감"}</dt><dd>${esc(fmtDt(c.deadline))}${c.deadline_label && !["입찰 마감", "의견등록 마감"].includes(c.deadline_label) ? ` <span class="why">(${esc(c.deadline_label)})</span>` : ""}</dd>
       <dt>수요기관</dt><dd>${esc(c.demand_institution || "-")}</dd>
       <dt>사업금액</dt><dd>${esc(won(c.budget))}</dd>
       ${c.excluded_reason ? `<dt>제외 사유</dt><dd>${esc(c.excluded_reason)}</dd>` : ""}
@@ -238,15 +243,23 @@ function render() {
       + ` · 조회 ${esc(fmtDt(RUN.stats.period_begin))} ~ ${esc(fmtDt(RUN.stats.period_end))} · 수집 ${esc(fmtDt(RUN.finished_at))}`
       + (RUN.params.attachments ? "" : " · <span title='첨부 참가자격 미반영'>첨부 자격판정 안 함</span>")
       + (RUN.stats.license_error ? ` · <span class="job err">면허제한정보 조회 실패</span>` : "")
+      + (RUN.stats.prespec_requested ? ` · 사전규격 ${RUN.stats.prespec_fetched}건 수집` : " · 사전규격 미수집")
+      + (RUN.stats.prespec_error ? ` · <span class="job err" title="${esc(RUN.stats.prespec_error)}">사전규격 조회 실패 (공공데이터포털 활용신청 확인)</span>` : "")
     : "아직 수집 결과가 없습니다. 기간을 고르고 '나라장터에서 불러오기'를 누르세요.";
   const live = $("#liveList");
   if (!RUN) live.replaceChildren();
   else if (!shown.length) live.replaceChildren(emptyBox("조건에 맞는 공고가 없습니다."));
   else {
-    const h = document.createElement("h2");
-    h.className = "section";
-    h.innerHTML = `본공고 ${shown.length}건<small>강력추천 ${strong}건</small>`;
-    live.replaceChildren(h, grid(shown, true));
+    const parts = [];
+    for (const kind of ["본공고", "사전규격"]) {
+      const list = shown.filter((c) => c.kind === kind);
+      if (!list.length) continue;
+      const h = document.createElement("h2");
+      h.className = "section";
+      h.innerHTML = `${kind} ${list.length}건<small>강력추천 ${list.filter((c) => c.confidence === "강력추천").length}건</small>`;
+      parts.push(h, grid(list, true));
+    }
+    live.replaceChildren(...parts);
   }
 
   const rej = RUN ? RUN.rejected : [];
@@ -311,6 +324,7 @@ $("#btnCollect").addEventListener("click", async () => {
   try {
     const job = await api("/api/collect", {
       days: Number($("#period").value), attachments: $("#optAttach").checked, ai: $("#optAi").checked,
+      prespec: $("#optPrespec").checked,
     });
     showJob(job);
   } catch (e) { alert(e.message); }

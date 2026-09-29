@@ -22,6 +22,34 @@ BID_NOTICE_OPERATIONS = {
 }
 
 LICENSE_LIMIT_OPERATION = "getBidPblancListInfoLicenseLimit"
+
+# ── 사전규격 (조달청_나라장터 사전규격정보서비스) ──────────────────
+# 본공고와 **별도 서비스**다. 공공데이터포털에서 이 서비스도 따로 활용신청해야 같은
+# 서비스키로 호출된다(안 하면 SERVICE KEY IS NOT REGISTERED). 주소가 바뀌면 코드 대신
+# 환경변수 PRESPEC_BASE_URL로 덮어쓴다. 필드명은 활용가이드 기준이며 실제 응답으로는
+# 아직 확인 전 — `python -m nego --verify`에 사전규격도 넣어 두었다.
+PRESPEC_BASE_URL = "https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService"
+PRESPEC_OPERATIONS = {
+    "용역": "getPublicPrcureThngInfoServc",
+    "물품": "getPublicPrcureThngInfoThng",
+    "공사": "getPublicPrcureThngInfoCnstwk",
+}
+PRESPEC_FIELDS: dict[str, list[str]] = {
+    "notice_no": ["bfSpecRgstNo"],
+    "title": ["prdctClsfcNoNm", "bsnsNm", "bfSpecNm"],
+    "notice_institution": ["orderInsttNm", "ntceInsttNm"],
+    "demand_institution": ["rlDminsttNm", "dminsttNm"],
+    "assigned_budget": ["asignBdgtAmt"],
+    "posted_at": ["rcptDt", "rgstDt"],
+    "opinion_deadline": ["opinionRgstClseDt", "opninRgstClseDt"],
+    "detail_url": ["bfSpecDtlUrl", "dtlUrl"],
+    "product_class_no": ["dtilPrdctClsfcNo", "prdctClsfcNo"],
+    "linked_bid_notices": ["bidNtceNoList"],
+    "sw_business_yn": ["swBizObjYn"],
+}
+PRESPEC_ATTACHMENT_URL_PREFIX = "specDocFileUrl"
+PRESPEC_ATTACHMENT_NAME_PREFIX = "specDocFileNm"
+PRESPEC_ATTACHMENT_MAX = 5
 REGION_LIMIT_OPERATION = "getBidPblancListInfoPrtcptPsblRgn"
 
 FIELD_CANDIDATES: dict[str, list[str]] = {
@@ -132,16 +160,21 @@ def pick_by(raw: RawItem, fields: dict[str, list[str]], key: str) -> str | None:
     return pick(raw, fields.get(key, []))
 
 
-def extract_attachments(raw: RawItem) -> list[dict[str, str]]:
+def extract_attachments(
+    raw: RawItem,
+    name_prefix: str = ATTACHMENT_NAME_PREFIX,
+    url_prefix: str = ATTACHMENT_URL_PREFIX,
+    max_count: int = ATTACHMENT_MAX,
+) -> list[dict[str, str]]:
     """ntceSpecFileNm1~10 / ntceSpecDocUrl1~10 을 리스트로 정리한다.
 
     오늘 범위에서 첨부파일을 내려받지는 않지만, 목록은 지금부터 저장해 둔다.
     나중에 파싱 단계를 붙일 때 재수집이 필요 없어진다.
     """
     out: list[dict[str, str]] = []
-    for i in range(1, ATTACHMENT_MAX + 1):
-        name = raw.get(f"{ATTACHMENT_NAME_PREFIX}{i}")
-        url = raw.get(f"{ATTACHMENT_URL_PREFIX}{i}")
+    for i in range(1, max_count + 1):
+        name = raw.get(f"{name_prefix}{i}")
+        url = raw.get(f"{url_prefix}{i}")
         name_text = str(name).strip() if name is not None else ""
         url_text = str(url).strip() if url is not None else ""
         if not name_text and not url_text:
@@ -160,6 +193,10 @@ PERSONAL_FIELDS = (
     "dminsttOfclEmailAdrs",
     "exctvNm",
     "crdtrNm",
+    # 사전규격 담당자
+    "ofclNm",
+    "ofclTelNo",
+    "ofclEmail",
 )
 
 

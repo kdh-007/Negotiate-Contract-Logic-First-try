@@ -59,7 +59,15 @@
   넣지 않고 옆에 클론한 jiil 레포에서 읽음(`JIIL_REPO`). 높음 ≥0.65 / 경계선 ≥0.45 (과거 실적끼리 최고값 중앙 0.72 기준).
 - 참가여부·담당·대화는 서버 PC `data/webapp.sqlite3` (Supabase 안 씀). 사내망 공개 시 접속 토큰 `?t=` 자동 발급.
 - **실제 나라장터 호출·사내망 접속 검증은 아직** — 이 환경에선 API·LAN이 막혀 픽스처로만 확인함. 사용자 PC에서 첫 실행 확인 필요.
-- 사전규격은 수집 안 함(칩 비활성). AI 판단은 `ANTHROPIC_API_KEY` 있을 때만.
+- AI 판단은 `ANTHROPIC_API_KEY` 있을 때만.
+- **사전규격 수집 추가** (사용자 요청): `pipeline.collect_prespecs` — 조달청 사전규격정보서비스
+  (`fields.PRESPEC_BASE_URL` = `.../1230000/ao/HrcspSsstndrdInfoService`, 용역·물품·공사). 웹앱은 기본 켬(체크박스),
+  CLI는 `--pre-spec`일 때만(daily.yml·Supabase 흐름은 그대로). 본공고와 같은 키워드·예산 필터, 유형은 "사전규격",
+  마감은 의견등록 마감, 면허제한·공동수급 정보 없음(자격은 첨부 규격서로만). **실패해도 본공고는 계속**(`prespec_error`).
+  - **확인 필요**: ① 공공데이터포털에서 사전규격정보서비스 **별도 활용신청** 했는지 ② 주소·필드명
+    (`bfSpecRgstNo`, `prdctClsfcNoNm`, `opninRgstClseDt`, `specDocFileUrl1~5` 등 — 활용가이드 기준, 실응답 미확인).
+    `python -m nego --verify`에 사전규격 3종 추가해 둠. 주소가 다르면 환경변수 `PRESPEC_BASE_URL`로 덮어씀.
+  - 사전규격 첨부는 파일명 필드가 없어 확장자 없이 내려받고 내용(매직바이트)으로 HWP/HWPX/PDF 판별.
 
 ## 2026-09-29 — main 반영 (텔레그램 제외)
 

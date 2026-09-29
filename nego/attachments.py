@@ -141,7 +141,9 @@ def fetch_attachment_text(
     if not url:
         result.error = "다운로드 URL이 없습니다"
         return result
-    if ext not in SUPPORTED_EXTENSIONS:
+    # 확장자가 아예 없으면(사전규격 문서 URL은 파일명 필드가 없다) 받아서 내용으로 판별한다
+    # (`extract_text`의 `_sniff_ext`). 확장자가 있는데 지원 형식이 아니면 받지 않는다.
+    if ext and ext not in SUPPORTED_EXTENSIONS:
         result.error = f"지원하지 않는 형식입니다: .{ext or '(확장자 없음)'}"
         return result
 

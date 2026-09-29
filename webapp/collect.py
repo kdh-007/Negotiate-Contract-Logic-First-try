@@ -56,7 +56,8 @@ def serialize(candidate, past: PastIndex) -> dict[str, Any]:
         "key": f"{n.notice_no}-{n.notice_ord}",
         "notice_no": n.notice_no,
         "notice_ord": n.notice_ord,
-        "kind": "본공고",
+        "kind": n.kind,
+        "linked_bid_notices": n.linked_bid_notices,
         "title": n.title,
         "work_type": n.work_type,
         "category": candidate.category,
@@ -161,7 +162,8 @@ class Collector:
         self._runner = runner or self._run_nego
         self._config_loader = config_loader
 
-    def start(self, days: int, attachments: bool, ai: bool, categories: list[str] | None) -> Job:
+    def start(self, days: int, attachments: bool, ai: bool, categories: list[str] | None,
+              prespec: bool = True) -> Job:
         if days not in PERIODS:
             raise ValueError(f"기간은 {PERIODS}일 중 하나")
         cats = scope.parse_categories(",".join(categories)) if categories else None
@@ -169,17 +171,18 @@ class Collector:
             if self.job.running:
                 raise RuntimeError("이미 수집 중입니다")
             self.job = Job(running=True, started_at=datetime.now().isoformat(timespec="seconds"),
-                           params={"days": days, "attachments": attachments, "ai": ai,
+                           params={"days": days, "attachments": attachments, "ai": ai, "prespec": prespec,
                                    "categories": sorted(cats) if cats else None})
-        threading.Thread(target=self._work, args=(self.job, days, attachments, ai, cats), daemon=True).start()
+        threading.Thread(target=self._work, args=(self.job, days, attachments, ai, cats, prespec),
+                         daemon=True).start()
         return self.job
 
-    def _run_nego(self, config: AppConfig, days: int, attachments: bool, cats):
+    def _run_nego(self, config: AppConfig, days: int, attachments: bool, cats, prespec: bool = True):
         from nego.pipeline import run
 
         config.lookback_days = days
         now = datetime.now()
-        candidates, stats, _ = run(config, now, cats)
+        candidates, stats, _ = run(config, now, cats, include_prespec=prespec)
         if attachments:
             from nego.attachments import save_attachment_texts
 
@@ -195,7 +198,7 @@ class Collector:
                 log.info("이름 미확인 코드 (config/code_names.json에 추가): %s", ", ".join(att["unnamed_codes"]))
         return candidates, stats
 
-    def _work(self, job: Job, days: int, attachments: bool, ai: bool, cats) -> None:
+    def _work(self, job: Job, days: int, attachments: bool, ai: bool, cats, prespec: bool = True) -> None:
         handler = _JobLogHandler(job)
         root = logging.getLogger()
         root.addHandler(handler)
@@ -206,8 +209,9 @@ class Collector:
             config = self._config_loader()
             if not config.api.service_key:
                 raise RuntimeError("NARA_SERVICE_KEY 환경변수가 없습니다 (서버를 띄운 창에 설정)")
-            log.info("수집 시작: 최근 %d일%s", days, " + 첨부 자격판정" if attachments else "")
-            candidates, stats = self._runner(config, days, attachments, cats)
+            log.info("수집 시작: 최근 %d일%s%s", days, " + 사전규격" if prespec else "",
+                     " + 첨부 자격판정" if attachments else "")
+            candidates, stats = self._runner(config, days, attachments, cats, prespec)
             if ai:
                 import os
                 _judge_ai(candidates, self.past, int(os.environ.get("LLM_MAX_CANDIDATES", "30")))
@@ -220,6 +224,8 @@ class Collector:
                     "screened_out": stats.screened_out, "candidates": stats.candidates,
                     "qualification_flagged": stats.qualification_flagged,
                     "license_error": stats.license_error, "region_error": stats.region_error,
+                    "prespec_requested": stats.prespec_requested, "prespec_fetched": stats.prespec_fetched,
+                    "prespec_error": stats.prespec_error,
                     "period_begin": _iso(stats.period_begin), "period_end": _iso(stats.period_end),
                 },
             }

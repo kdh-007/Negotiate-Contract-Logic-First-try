@@ -49,6 +49,8 @@ def _verify_api(config) -> int:
     targets = [(f"본공고/{w}", F.BID_NOTICE_BASE_URL, op) for w, op in F.BID_NOTICE_OPERATIONS.items()]
     targets.append(("면허제한정보", F.BID_NOTICE_BASE_URL, F.LICENSE_LIMIT_OPERATION))
     targets.append(("참가가능지역", F.BID_NOTICE_BASE_URL, F.REGION_LIMIT_OPERATION))
+    prespec_url = os.environ.get("PRESPEC_BASE_URL", "").strip() or F.PRESPEC_BASE_URL
+    targets += [(f"사전규격/{w}", prespec_url, op) for w, op in F.PRESPEC_OPERATIONS.items()]
 
     for label, base_url, operation in targets:
         print(f"\n── {label} ({operation}) " + "─" * 30)
@@ -62,9 +64,10 @@ def _verify_api(config) -> int:
         if not items:
             print("  응답 0건")
             continue
-        print(f"  {len(items)}건 수신. 첫 건의 필드 키:")
-        for key in sorted(items[0].keys()):
-            value = str(items[0][key])[:40]
+        print(f"  {len(items)}건 수신. 첫 건의 필드 키 (담당자 개인정보 필드는 뺌):")
+        first = F.strip_personal_fields(items[0])
+        for key in sorted(first.keys()):
+            value = str(first[key])[:40]
             print(f"    {key:32s} = {value}")
     return 0
 
@@ -141,6 +144,12 @@ def main(argv: list[str] | None = None) -> int:
         help="조회 기간을 오늘을 뺀 직전 N일로 날짜 단위로 자른다 (매일=1, 주간=7). "
         "정해진 주기로 돌릴 때 기간이 겹치지 않아 같은 공고를 두 번 보내지 않는다",
     )
+    parser.add_argument(
+        "--pre-spec",
+        action="store_true",
+        help="사전규격도 같은 기간으로 수집해 같은 필터·자격판정을 적용한다 "
+        "(공공데이터포털에서 '사전규격정보서비스' 활용신청 필요, 실패해도 본공고는 계속)",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -187,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
             if not config.api.service_key:
                 print("NARA_SERVICE_KEY 환경변수가 필요합니다.", file=sys.stderr)
                 return 1
-            candidates, stats, notices = run(config, now, categories, args.complete_days)
+            candidates, stats, notices = run(config, now, categories, args.complete_days, args.pre_spec)
             added = repo.upsert(notices)
             logging.info("저장 완료: 신규 %d건 / 전체 %d건", added, len(notices))
     except ApiError as err:

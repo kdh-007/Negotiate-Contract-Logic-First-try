@@ -265,6 +265,11 @@ def render_console(candidates: list[Candidate], stats: RunStats) -> str:
         lines.append(f"  ⚠ 조회 실패: {', '.join(stats.failed_operations)}")
     if stats.license_error:
         lines.append("  ⚠ 면허제한정보 조회 실패 → 자격 게이트 미적용 (fail-open)")
+    if stats.prespec_requested:
+        # 위 "수집 N건"은 본공고만 센 값이다. 사전규격은 대상 유형부터 함께 센다.
+        lines.append(f"  사전규격 {stats.prespec_fetched}건 함께 수집 (본공고와 같은 필터 적용)")
+        if stats.prespec_error:
+            lines.append(f"  ⚠ 사전규격 조회 실패 (본공고는 정상): {stats.prespec_error}")
     lines.append("")
 
     if not candidates:

@@ -46,7 +46,7 @@ class FakePast:
         return self.projects
 
 
-def fixture_run(config, days, attachments, cats):
+def fixture_run(config, days, attachments, cats, prespec=False):
     config.screen.keywords = ["전시관", "박물관", "과학관", "체험관", "전시디자인", "전시물"]
     stats = RunStats()
     notices = [notice_from_raw(raw, "용역") for raw in fixtures.service_notices()]

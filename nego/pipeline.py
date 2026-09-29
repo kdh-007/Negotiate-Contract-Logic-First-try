@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -15,7 +16,7 @@ from . import fields as F
 from . import qualify, scope, screen
 from .config import AppConfig
 from .http_client import ApiError, DataGoKrClient
-from .models import Notice, notice_from_raw
+from .models import Notice, notice_from_raw, prespec_from_raw
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +88,10 @@ class RunStats:
     # 리포트 헤더의 "조회 기간" 표시용. --from-store처럼 API를 안 부른 실행에서는 None.
     period_begin: datetime | None = None
     period_end: datetime | None = None
+    # 사전규격: 수집했는지, 몇 건 받았는지, 실패 사유(실패해도 본공고 결과는 그대로 낸다)
+    prespec_requested: bool = False
+    prespec_fetched: int = 0
+    prespec_error: str | None = None
 
 
 def _api_window(now: datetime, lookback_days: int) -> tuple[str, str]:
@@ -139,6 +144,34 @@ def collect_notices(
         collected.extend(notices)
 
     stats.fetched = len(collected)
+    return collected
+
+
+def collect_prespecs(client: DataGoKrClient, begin: str, end: str, stats: RunStats) -> list[Notice]:
+    """사전규격 3종(용역·물품·공사)을 조회한다.
+
+    본공고와 달리 **실패해도 멈추지 않는다** — 사전규격은 별도 서비스라 활용신청이
+    안 돼 있거나 주소가 바뀌어 실패할 수 있는데, 그 때문에 본공고 수집까지 버리면 안 된다.
+    실패한 업무구분은 `stats.prespec_error`에 사유를 남기고 건너뛴다.
+    """
+    stats.prespec_requested = True
+    base_url = os.environ.get("PRESPEC_BASE_URL", "").strip() or F.PRESPEC_BASE_URL
+    collected: list[Notice] = []
+    errors: list[str] = []
+    for work_type, operation in F.PRESPEC_OPERATIONS.items():
+        label = f"사전규격/{work_type}"
+        try:
+            raw_items = client.fetch_all_pages_chunked(base_url, operation, {"inqryDiv": "1"}, begin, end, label)
+        except ApiError as err:
+            log.warning("%s 조회 실패 — 사전규격은 건너뛰고 본공고만 진행합니다: %s", label, err)
+            errors.append(f"{label}: {err}")
+            continue
+        notices = [prespec_from_raw(raw, work_type) for raw in raw_items]
+        notices = [n for n in notices if n.notice_no]
+        log.info("%s 조회 완료: %d건", label, len(notices))
+        collected.extend(notices)
+    stats.prespec_fetched = len(collected)
+    stats.prespec_error = " / ".join(errors) or None
     return collected
 
 
@@ -210,9 +243,11 @@ def run(
     now: datetime | None = None,
     categories: set[str] | None = None,
     complete_days: int | None = None,
+    include_prespec: bool = False,
 ) -> tuple[list[Candidate], RunStats, list[Notice]]:
     """`complete_days`를 주면 조회 기간을 오늘 뺀 직전 N일(날짜 단위)로 잡는다
-    (매일/매주 발송용). 없으면 기존처럼 최근 `lookback_days`일 ~ 지금."""
+    (매일/매주 발송용). 없으면 기존처럼 최근 `lookback_days`일 ~ 지금.
+    `include_prespec`이면 같은 기간의 사전규격도 받아 본공고와 같은 필터·판정을 태운다."""
     now = now or datetime.now()
     stats = RunStats()
     client = DataGoKrClient(config.api)
@@ -232,6 +267,8 @@ def run(
     # cli.py까지 전파해 종료코드 1로 끝나게 둔다 — Actions 워크플로가 그걸 보고
     # 새 Run으로 재시도한다.
     notices = collect_notices(client, begin, end, stats)
+    if include_prespec:
+        notices = notices + collect_prespecs(client, begin, end, stats)
 
     license_groups, license_error = qualify.fetch_license_groups(client, begin, end)
     stats.license_error = license_error
