@@ -132,10 +132,12 @@ function qualBadge(q) {
     label = "자격 미확인"; cls = "";
     body = `<div class="tip-title">자격정보 미확인 (통과)</div><div class="tip-note">API·첨부파일 모두 판정 근거가 없어 통과 처리됩니다.</div>`;
   } else {
-    label = `자격 ${q.satisfied}/${q.total} ${q.passes ? "충족" : "미달"}`;
-    cls = q.passes ? "good" : "bad";
+    // 미보유 그룹이 하나라도 있으면 "미달" — q.passes는 미보유 1개까지 통과시키는 옛 게이트 값이라 쓰지 않는다
+    const ok = q.satisfied === q.total;
+    label = `자격 ${q.satisfied}/${q.total} ${ok ? "충족" : "미달"}`;
+    cls = ok ? "good" : "bad";
     body = tipList("미보유 자격", "bad", q.missing) + tipList("충족된 자격", "good", q.satisfied_names);
-    if (!body) body = `<div class="tip-title ${cls}">${q.passes ? "자격 충족" : "자격 미달"}</div>`;
+    if (!body) body = `<div class="tip-title ${cls}">${ok ? "자격 충족" : "자격 미달"}</div>`;
     body += `<div class="tip-note">${esc(QUAL_NOTE)}</div>`;
   }
   return `<button type="button" class="b qual ${cls}" aria-label="${esc(q.summary)}">${esc(label)}<span class="tip" role="tooltip">${body}</span></button>`;
