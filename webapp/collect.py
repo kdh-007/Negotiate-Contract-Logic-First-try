@@ -30,10 +30,26 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat(timespec="minutes") if dt else None
 
 
-def _group_names(groups) -> list[str]:
-    """HTML 리포트의 자격 팝업과 같은 목록 — "이름(코드)", 코드 없는 중복은 코드 있는 쪽을 남긴다."""
-    names = list(dict.fromkeys(_display_name(n) for g in groups for n in g.allowed_names))
-    return _dedupe_names_preferring_code(names)
+def _group_labels(groups) -> list[str]:
+    """자격 그룹 1개 = 팝업 1줄. 그룹 안의 이름은 '또는'(하나만 있으면 충족)으로 잇는다.
+
+    이름 표기는 HTML 리포트 팝업과 같다("이름(코드)", 코드 없는 중복은 코드 있는 쪽).
+    같은 요건이 여러 그룹으로 중복되면(API 면허명·허용업종 필드, 첨부문서 반복 기재) 한 줄로 합친다 —
+    배지의 분수(충족 n / 전체 m)도 이 줄 수로 세서 팝업과 개수가 어긋나지 않게 한다.
+    """
+    labels: list[str] = []
+    for g in groups:
+        names = _dedupe_names_preferring_code(list(dict.fromkeys(_display_name(n) for n in g.allowed_names)))
+        if names:
+            labels.append(" 또는 ".join(names))
+    return list(dict.fromkeys(labels))
+
+
+def _g2b_url(n) -> str | None:
+    """API가 상세 URL을 안 줄 때 쓰는 나라장터 공고 상세 주소 (bidNtceDtlUrl과 같은 형식)."""
+    if n.kind != "본공고" or not n.notice_no:
+        return None
+    return f"https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo={n.notice_no}&bidPbancOrd={n.notice_ord}"
 
 
 def serialize(candidate, past: PastIndex) -> dict[str, Any]:
@@ -52,6 +68,8 @@ def serialize(candidate, past: PastIndex) -> dict[str, Any]:
             "reason": ai.error or ai.overall_reason,
             "best": getattr(best, "project_title", None) if best else None,
         }
+    missing = _group_labels(q.missing_groups)
+    satisfied = [label for label in _group_labels(q.satisfied_groups) if label not in missing]
     return {
         "key": f"{n.notice_no}-{n.notice_ord}",
         "notice_no": n.notice_no,
@@ -74,17 +92,17 @@ def serialize(candidate, past: PastIndex) -> dict[str, Any]:
         "deadline_label": earliest[0] if earliest else None,
         "deadline": _iso(earliest[1]) if earliest else None,
         "days_left": candidate.days_left,
-        "detail_url": n.detail_url,
+        "detail_url": n.detail_url or _g2b_url(n),
         "regions": candidate.regions,
         "joint": {"label": candidate.joint.label, "allowed": candidate.joint.allowed},
         "qualification": {
             "checked": q.checked,
             "passes": q.passes,
             "summary": q.summary,
-            "satisfied": len(q.satisfied_groups),
-            "total": len(q.satisfied_groups) + len(q.missing_groups),
-            "missing": _group_names(q.missing_groups),
-            "satisfied_names": _group_names(q.satisfied_groups),
+            "satisfied": len(satisfied),
+            "total": len(satisfied) + len(missing),
+            "missing": missing,
+            "satisfied_names": satisfied,
         },
         "has_attachment_text": bool(candidate.attachment_text.strip()),
         "sync": sync,

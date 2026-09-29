@@ -92,16 +92,39 @@ class TestSerialize(unittest.TestCase):
         self.assertTrue(flagged["qualification"]["checked"])
         self.assertFalse(flagged["qualification"]["passes"])
         self.assertTrue(flagged["qualification"]["missing"])
-        # 배지의 분수는 자격 그룹 수, 팝업 목록은 그룹 안 이름을 하나씩 ("이름(코드)", 리포트와 같게)
-        self.assertEqual(flagged["qualification"]["total"], 2)
-        self.assertEqual(flagged["qualification"]["satisfied"], 0)
-        self.assertGreaterEqual(len(flagged["qualification"]["missing"]), 2)
+        # 배지 분수와 팝업 줄 수가 같아야 한다 (사용자 지적: 5/5인데 4줄, 0/2인데 4줄)
+        q = flagged["qualification"]
+        self.assertEqual(q["total"], 2)
+        self.assertEqual(q["satisfied"], 0)
+        self.assertEqual(len(q["missing"]), q["total"] - q["satisfied"])
+        self.assertTrue(any(" 또는 " in line for line in q["missing"]), q["missing"])
+        self.assertIn("g2b.go.kr", flagged["detail_url"])
         self.assertEqual(flagged["category"], "협상")
         self.assertEqual(flagged["key"], "R26TEST00009-000")
         self.assertEqual(flagged["sync"]["basis"], "공고명만")
         json.dumps(flagged, ensure_ascii=False)  # 화면으로 보낼 수 있어야 한다
         rejected = [serialize(x, FakePast()) for x in stats.rejected]
         self.assertTrue(all(r["excluded_reason"] for r in rejected))
+
+
+class TestQualificationLines(unittest.TestCase):
+    def test_duplicate_groups_merge_and_counts_match(self):
+        from nego.qualify import LicenseGroup, QualificationResult
+        from webapp.collect import _group_labels
+
+        sat = [LicenseGroup("1", ["실내건축공사업(4990)"]), LicenseGroup("2", ["실내건축공사업/4990", "실내건축공사업"]),
+               LicenseGroup("3", ["실물모형및전시물(6010989901)"])]
+        miss = [LicenseGroup("4", ["토목공사업(0001)", "토목건축공사업"])]
+        self.assertEqual(_group_labels(sat), ["실내건축공사업(4990)", "실물모형및전시물(6010989901)"])
+        self.assertEqual(_group_labels(miss), ["토목공사업(0001) 또는 토목건축공사업"])
+
+    def test_detail_url_fallback(self):
+        from nego.models import prespec_from_raw
+        from webapp.collect import _g2b_url
+
+        n = notice_from_raw(fixtures.notice("R26BK01745222", bidNtceDtlUrl=""), "공사")
+        self.assertEqual(_g2b_url(n), "https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo=R26BK01745222&bidPbancOrd=000")
+        self.assertIsNone(_g2b_url(prespec_from_raw({"bfSpecRgstNo": "R26BD1"}, "물품")))
 
 
 class TestStore(unittest.TestCase):

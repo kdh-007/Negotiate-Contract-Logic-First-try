@@ -119,7 +119,7 @@ function dday(c) {
   const t = c.days_left < 0 ? "마감" : c.days_left === 0 ? "D-day" : `D-${c.days_left}`;
   return `<span class="b dday${c.days_left > 7 ? " far" : ""}" title="${esc(c.deadline_label)} ${esc(fmtDt(c.deadline))}">마감 ${t}</span>`;
 }
-const QUAL_NOTE = "이름 뒤 괄호 숫자는 세부품명번호·업종코드입니다. 코드가 없는 항목은 면허제한정보 API에 코드 필드 자체가 없어 이름만 표시됩니다.";
+const QUAL_NOTE = "한 줄이 자격 요건 1개입니다. '또는'으로 이어진 자격은 그중 하나만 있으면 됩니다. 이름 뒤 괄호 숫자는 세부품명번호·업종코드이고, 코드가 없는 항목은 면허제한정보 API에 코드 필드가 없어 이름만 표시됩니다.";
 function tipList(title, cls, names) {
   if (!names.length) return "";
   return `<div class="tip-title ${cls}">${esc(title)} ${names.length}건</div>` + names.map((n) => `<div class="tip-item">${esc(n)}</div>`).join("");
@@ -174,7 +174,7 @@ function card(c, withActions = true) {
   el.innerHTML = `
     <div class="badges">${badges(c)}</div>
     <div class="badges">${badges2(c)}</div>
-    <div class="title">${c.detail_url ? `<a href="${esc(c.detail_url)}" target="_blank" rel="noopener">${esc(c.title)}</a>` : esc(c.title)}</div>
+    <div class="title">${c.detail_url ? `<a href="${esc(c.detail_url)}" target="_blank" rel="noopener" title="나라장터에서 공고 열기">${esc(c.title)} <span class="ext" aria-hidden="true">↗</span></a>` : esc(c.title)}</div>
     <dl class="meta">
       <dt>${c.kind === "사전규격" ? "의견 마감" : "입찰 마감"}</dt><dd>${esc(fmtDt(c.deadline))}${c.deadline_label && !["입찰 마감", "의견등록 마감"].includes(c.deadline_label) ? ` <span class="why">(${esc(c.deadline_label)})</span>` : ""}</dd>
       <dt>수요기관</dt><dd>${esc(c.demand_institution || "-")}</dd>
