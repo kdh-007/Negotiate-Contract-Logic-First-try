@@ -34,6 +34,9 @@ class AppConfig:
     api: ApiConfig
     lookback_days: int
     output_dir: Path
+    # 코드 → 이름 사전 (codes.json + code_names.json). 첨부파일이 코드만 적은
+    # 미보유 자격에 이름을 붙이는 데 쓴다.
+    code_names: dict[str, str] | None = None
 
 
 def load_config(config_dir: Path | None = None) -> AppConfig:
@@ -42,8 +45,11 @@ def load_config(config_dir: Path | None = None) -> AppConfig:
     keywords = _read_json(directory / "keywords.json")
     codes = _read_json(directory / "codes.json")
     held = _read_json(directory / "held_qualifications.json")
+    # 선택 파일 — 없어도 동작한다.
+    code_names_path = directory / "code_names.json"
+    code_names_raw = _read_json(code_names_path) if code_names_path.exists() else {}
 
-    from .qualify import load_held_names
+    from .qualify import load_code_names, load_held_names
 
     service_key = os.environ.get("NARA_SERVICE_KEY", "").strip()
 
@@ -72,6 +78,7 @@ def load_config(config_dir: Path | None = None) -> AppConfig:
         api=api,
         lookback_days=int(os.environ.get("LOOKBACK_DAYS", "1")),
         output_dir=Path(os.environ.get("OUTPUT_DIR", "output")),
+        code_names=load_code_names(codes, code_names_raw),
     )
 
 

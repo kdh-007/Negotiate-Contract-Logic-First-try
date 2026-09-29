@@ -46,6 +46,9 @@ class QualificationResult:
     # 관여하지 않는다. 직접 QualificationResult(...)를 만드는 기존 테스트 코드가
     # 전부 깨지지 않도록 기본값을 빈 리스트로 둔다.
     satisfied_groups: list[LicenseGroup] = field(default_factory=list)
+    # 첨부파일 판정에서 이름을 끝내 못 찾은 미보유 코드. 로그로 알려서
+    # config/code_names.json에 추가하게 한다 (판정 자체와는 무관).
+    unnamed_codes: list[str] = field(default_factory=list)
 
     @property
     def missing_count(self) -> int:
@@ -177,6 +180,7 @@ def evaluate(groups: list[LicenseGroup], held_names: list[str]) -> Qualification
 # 10자리로 제한해 일반 괄호 안 숫자(연도·조항 번호 등)를 코드로 오인하지
 # 않게 한다.
 _CODE_REQUIREMENT_RE = re.compile(
+    # 실측 표기 중 "세부품명번호: 7215409901"처럼 콜론이 끼는 경우도 받는다.
     r"(?:업종코드|세부품명번호)\s*[:：]?\s*(?:[0-9]+\s*자리\s*,?\s*)?(?P<code>[0-9]{4,10})"
     r"|\((?P<bare_code>[0-9]{10})\)"
 )
@@ -192,6 +196,13 @@ _PREFIXED_GROUP_RE = re.compile(
     r"(?:업종코드|세부품명번호)\s*[:：]?\s*(?:[0-9]+\s*자리\s*,?\s*)?[(\[]([^()\[\]]*)[)\]]"
 )
 _BARE_GROUP_RE = re.compile(r"[(\[]([^()\[\]]*)[)\]]")
+# 키워드가 괄호 **안쪽 맨 앞**에 오는 표기 — 실측(사용자 제보, 2026-09-17):
+# "산업디자인 전문업[업종코드 4440, 4442, 4444]". 이걸 따로 안 잡으면 아래
+# _CODE_REQUIREMENT_RE가 첫 코드(4440)만 잡고, 이름표도 괄호 앞 문장 조각
+# ("산업디자인 전문업[")으로 만들어 리포트에 이상한 이름이 떴다.
+_INNER_PREFIXED_GROUP_RE = re.compile(
+    r"[(\[]\s*(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?([^()\[\]]*)[)\]]"
+)
 _GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{4,10}")
 _BARE_GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{10}")
 _GROUP_ENTRY_STRIP_CHARS = " ,·/;、"
@@ -231,7 +242,14 @@ _MAX_LABEL_LEN = 20
 _STANDALONE_CODE_RE = re.compile(r"(?<!\d)(?:\d{10}|\d{4})(?!\d)")
 
 
+# 이름표 맨 앞의 항목 번호 — "가.", "1)", "(가)", "①" 등. 참가자격 항목은 대개
+# 번호로 시작해서, 괄호 앞 구절을 이름표로 쓰면 "나. 직접생산확인증명서"처럼 번호가
+# 같이 붙어 나왔다.
+_ITEM_MARKER_RE = re.compile(r"^\s*(?:[가-하]\s*[.)]|[0-9]+\s*[.)]|\([가-하0-9]+\)|[①-⑳])\s*")
+
+
 def _truncate_label(name: str) -> str:
+    name = _ITEM_MARKER_RE.sub("", name)
     if len(name) > _MAX_LABEL_LEN:
         name = name[-_MAX_LABEL_LEN:]
         if " " in name:  # 잘린 앞 단어 조각을 버리고 온전한 단어부터 남긴다
@@ -324,7 +342,23 @@ def _locate_code_requirements(item: str) -> tuple[str, list[tuple[int, int, str,
         base = offset
         offset += len(line) + 1
 
+        # 0. 괄호 안쪽 맨 앞 키워드 + 코드 여러 개 — 코드 뒤에 이름이 없으면 이름표를
+        #    코드만으로 둔다(evaluate_attachment_text가 사전 등에서 이름을 찾아 채운다).
+        #    코드가 하나뿐이면 건너뛴다: "실내건축공사업(업종코드 4990)"은 괄호 앞이
+        #    이름이라 아래 2단계가 이름표를 더 잘 만든다.
+        for group_match in _INNER_PREFIXED_GROUP_RE.finditer(line):
+            entries = _split_group_entries(group_match.group(1), _GROUP_ENTRY_CODE_RE)
+            if len(entries) < 2:
+                continue
+            consumed.append(group_match.span())
+            for pos, code, name in entries:
+                name = _truncate_label(name)
+                start = base + group_match.start(1) + pos
+                results.append((start, start + len(code), code, f"{name}({code})" if name else code))
+
         for group_match in _PREFIXED_GROUP_RE.finditer(line):
+            if any(_spans_overlap(group_match.span(), span) for span in consumed):
+                continue
             consumed.append(group_match.span())
             for pos, code, name in _split_group_entries(group_match.group(1), _GROUP_ENTRY_CODE_RE):
                 name = _truncate_label(name)
@@ -407,8 +441,30 @@ def _or_groups(item: str) -> list[list[tuple[str, str]]]:
     return groups
 
 
+UNNAMED_LABEL = "이름 미확인"
+# 문서에서 뽑은 이름표가 품목·업종명이 아니라 서류·분류 체계 이름인 경우 —
+# 이름으로 쓰지 않고 다른 출처(같은 공고의 다른 표기)나 "이름 미확인"으로 넘긴다.
+_GENERIC_LABEL_RE = re.compile(r"증명서|확인서|등록증|물품분류번호|세부품명|업종코드|입찰참가자격|자격을?\s*등록")
+_TRAILING_CODE_RE = re.compile(r"\(([0-9]{4,10})\)$")
+
+
+def named_codes(items: list[str]) -> dict[str, str]:
+    """참가자격 항목들에서 "이름(코드)"로 이름까지 뽑힌 코드만 {코드: 이름표} 로 모은다.
+    같은 공고 안에서 한 곳은 코드만, 다른 곳은 이름까지 적힌 경우(공고문 vs
+    제안요청서) 코드만 뽑힌 쪽을 채우는 데 쓴다."""
+    found: dict[str, str] = {}
+    for item in items:
+        for code, label in _extract_code_requirements(item):
+            if label != code and not _GENERIC_LABEL_RE.search(label.rsplit("(", 1)[0]):
+                found.setdefault(code, label)
+    return found
+
+
 def evaluate_attachment_text(
-    items: list[str], held_codes: set[str], held_code_names: dict[str, str] | None = None
+    items: list[str],
+    held_codes: set[str],
+    held_code_names: dict[str, str] | None = None,
+    code_names: dict[str, str] | None = None,
 ) -> QualificationResult:
     """첨부파일 참가자격 절에서 업종코드·세부품명번호가 명시된 항목만 뽑아,
     API 판정(`evaluate`)과 같은 형태의 결과를 만든다 — 리포트에서 "자격 충족" /
@@ -423,14 +479,35 @@ def evaluate_attachment_text(
     이어진 코드끼리만 OR 묶음이 되고, 묶음(과 홀로 선 코드)은 전부 충족해야
     항목이 충족이다(`_or_groups`) — 예: "모두 소지: (A 또는 B), C"에서 B만
     보유하고 C가 없으면 미달.
+
+    이름표는 ① `held_code_names`(등록증) ② `code_names`(코드 이름 사전·공고 API 정보
+    등, 호출 쪽이 모아서 넘김)에 있으면 그 이름을 쓰고, 없으면 ③ 문서에서 뽑은 이름표
+    ④ 같은 공고의 다른 곳에 "이름(코드)"로 적힌 이름 순으로 쓴다. 문서가 코드만 적고
+    (예: "[업종코드 4440, 4442, 4444]") 어디에도 이름이 없으면 "이름 미확인(코드)"로
+    두고 `unnamed_codes`에 남긴다.
     """
     held_code_names = held_code_names or {}
+    seen_in_notice = named_codes(items)
+    lookup = {**(code_names or {}), **held_code_names}
+
+    def _label(code: str, label: str) -> str:
+        # 사전·등록증·API에 이름이 있으면 그걸 먼저 쓴다 — 문서에서 뽑은 이름표는
+        # 표기가 제각각이라 "직접생산확인증명서(7215409901)"처럼 품목명이 아닌
+        # 구절이 잡히는 경우가 있었다(사용자 제보, 2026-09-28).
+        if code in lookup:
+            return f"{lookup[code]}({code})"
+        if label != code and not _GENERIC_LABEL_RE.search(label.rsplit("(", 1)[0]):
+            return label
+        if code in seen_in_notice:
+            return seen_in_notice[code]
+        return f"{UNNAMED_LABEL}({code})"
+
     groups: list[LicenseGroup] = []
     missing: list[LicenseGroup] = []
     parsed_labels: dict[str, str] = {}
 
     for idx, item in enumerate(items):
-        or_groups = _or_groups(item)
+        or_groups = [[(code, _label(code, label)) for code, label in bundle] for bundle in _or_groups(item)]
         if not or_groups:
             continue
 
@@ -473,6 +550,16 @@ def evaluate_attachment_text(
         passes=len(missing) <= MAX_ALLOWED_MISSING_QUALIFICATIONS,
         checked=True,
         satisfied_groups=satisfied_groups,
+        # 미보유로 걸렸는데 이름을 못 찾은 코드만 알린다 — 보유 코드는 충족
+        # 표시에서 등록증 이름을 쓰므로 사전에 없어도 문제없다.
+        unnamed_codes=list(
+            dict.fromkeys(
+                _TRAILING_CODE_RE.search(name).group(1)
+                for g in missing
+                for name in g.allowed_names
+                if name.startswith(UNNAMED_LABEL)
+            )
+        ),
     )
 
 
@@ -523,6 +610,37 @@ def load_held_codes(held_config: dict) -> set[str]:
             if code:
                 codes.add(code)
     return codes
+
+
+_API_NAME_CODE_RE = re.compile(r"^(.+?)\s*/\s*([0-9]{4,10})$")
+
+
+def api_code_names(groups: list[LicenseGroup]) -> dict[str, str]:
+    """면허제한정보 API 그룹의 "업종명/코드" 표기에서 {코드: 이름}을 뽑는다
+    (lcnsLmtNm이 실측상 "실내건축공사업/4990" 형태로 내려온다)."""
+    found: dict[str, str] = {}
+    for g in groups:
+        for name in g.allowed_names:
+            match = _API_NAME_CODE_RE.match(name.strip())
+            if match:
+                found.setdefault(match.group(2), match.group(1).strip())
+    return found
+
+
+def load_code_names(codes_config: dict, code_names_config: dict | None = None) -> dict[str, str]:
+    """코드 이름 사전. `codes.json`(매칭용 코드 목록)의 이름 + `code_names.json`
+    (사람이 추가하는 사전). 같은 코드면 code_names.json이 우선."""
+    names: dict[str, str] = {}
+    for key in ("productCodes", "industryCodes"):
+        for entry in codes_config.get(key, []):
+            code = str(entry.get("code", "")).strip()
+            name = str(entry.get("name", "")).strip()
+            if code and name:
+                names.setdefault(code, name)
+    for code, name in (code_names_config or {}).get("names", {}).items():
+        if str(code).strip() and str(name).strip():
+            names[str(code).strip()] = str(name).strip()
+    return names
 
 
 def load_held_code_names(held_config: dict) -> dict[str, str]:

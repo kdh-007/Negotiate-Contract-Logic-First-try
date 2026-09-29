@@ -19,7 +19,7 @@ import zlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from xml.etree import ElementTree as ET
 
 import requests
@@ -179,7 +179,8 @@ def save_attachment_texts(
     held_codes: set[str] | None = None,
     held_code_names: dict[str, str] | None = None,
     now: datetime | None = None,
-) -> dict[str, int]:
+    code_names: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """후보 공고의 첨부파일을 내려받아 텍스트를 `output_dir/attachment_text/`에 저장한다.
 
     지역제한/면허제한/공동수급을 원문과 대조해볼 수 있도록 평문만 남기는
@@ -205,9 +206,14 @@ def save_attachment_texts(
     `candidate.schedule.earliest`가 None인("일정 미상") 공고에 한해, 첨부파일
     원문에서 제출기한을 찾아(`schedule_text.extract_deadline`)
     `candidate.schedule.attachment_deadline`을 채운다.
+
+    첨부문서가 미보유 자격을 코드만 적은 경우 이름을 붙이려고 공고마다 이름
+    정보를 모아 넘긴다: `code_names`(코드 이름 사전) + 앞서 처리한 다른 공고에서
+    "이름(코드)"로 나온 코드 + 이 공고의 대표 세부품명 + 이 공고의 면허제한정보
+    "업종명/코드". 그래도 못 찾은 코드는 `stats["unnamed_codes"]`로 돌려준다.
     """
     from .qualification_text import find_qualification_section
-    from .qualify import evaluate_attachment_text, merge_results
+    from .qualify import api_code_names, evaluate_attachment_text, merge_results, named_codes
     from .schedule_text import extract_deadline
 
     text_dir = output_dir / "attachment_text"
@@ -222,7 +228,11 @@ def save_attachment_texts(
         "qualification_found": 0,
         "qualification_determined": 0,
         "deadline_determined": 0,
+        "unnamed_codes": [],
     }
+    # 이번 실행에서 다른 공고 문서가 "이름(코드)"로 적어준 코드 — 뒤에 오는 공고가
+    # 같은 코드를 이름 없이 적었을 때 쓴다.
+    learned_names: dict[str, str] = {}
     for candidate in candidates:
         notice = candidate.notice
         qualification = getattr(candidate, "qualification", None)
@@ -241,6 +251,8 @@ def save_attachment_texts(
             stats["ok"] += 1
             base = _safe_filename(f"{notice.notice_no}_{notice.notice_ord}_{result.seq}_{result.file_name}")
             (text_dir / f"{base}.txt").write_text(result.text, encoding="utf-8")
+            if hasattr(candidate, "attachment_text"):
+                candidate.attachment_text += f"\n\n=== {result.file_name} ===\n{result.text}"
 
             section = find_qualification_section(result.text)
             if section is not None:
@@ -264,7 +276,25 @@ def save_attachment_texts(
         if not needs_check or not all_items:
             continue
 
-        result = evaluate_attachment_text(all_items, held_codes, held_code_names)
+        lookup = dict(code_names or {})
+        lookup.update(learned_names)
+        product_no = getattr(notice, "product_class_no", None)
+        product_name = getattr(notice, "product_class_name", None)
+        if product_no and product_name:
+            lookup[product_no] = product_name
+        lookup.update(
+            api_code_names(
+                list(getattr(qualification, "missing_groups", []))
+                + list(getattr(qualification, "satisfied_groups", []))
+            )
+        )
+
+        result = evaluate_attachment_text(all_items, held_codes, held_code_names, lookup)
+        for code, label in named_codes(all_items).items():
+            learned_names.setdefault(code, label.rsplit("(", 1)[0])
+        for code in result.unnamed_codes:
+            if code not in stats["unnamed_codes"]:
+                stats["unnamed_codes"].append(code)
         if result.checked:
             candidate.qualification = merge_results(qualification, result)
             stats["qualification_determined"] += 1

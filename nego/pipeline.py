@@ -1,4 +1,4 @@
-"""수집 → 협상 스코프 → 스크리닝 → 자격 게이트 → 후보 산출.
+"""수집 → 수집 범위(공고 유형) → 스크리닝 → 자격 게이트 → 후보 산출.
 
 이 파이프라인 자체는 API 응답만으로 끝난다. 첨부파일 다운로드·텍스트 추출은
 `attachments.py`가 별도로 맡고, `cli.py`의 `--fetch-attachment-text` 옵션을 줬을 때만
@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class Candidate:
-    """협상 스코프에 든 공고 1건.
+    """수집 범위(수의계약 제외 경쟁입찰)에 든 공고 1건.
 
     후보로 살아남은 것과 걸러진 것을 **같은 자료구조로** 담는다.
     걸러진 공고도 마감·공동수급·자격 같은 파생값을 그대로 갖게 하려는 것이다.
@@ -38,8 +38,15 @@ class Candidate:
     days_left: int | None = None
     is_re_notice: bool = False
     variant: str | None = None
+    # 공고 유형: 협상 / 규격가격동시입찰 / 입찰 (`scope.bid_category`)
+    category: str | None = None
     is_candidate: bool = True
     excluded_reason: str | None = None
+    # `--fetch-attachment-text`로 뽑은 첨부파일 원문(파일별로 이어붙임). LLM 유사도
+    # 판정(`llm_similarity.py`)에 과업내용 근거로 넘긴다. 첨부를 안 뽑았으면 빈 문자열.
+    attachment_text: str = ""
+    # `--llm-similarity`를 줬을 때만 채워진다 (`llm_similarity.LlmJudgement`).
+    llm_similarity: object | None = None
 
     @property
     def gate_passed(self) -> bool:
@@ -58,16 +65,20 @@ class RunStats:
     fetched: int = 0
     failed_operations: list[str] = field(default_factory=list)
     cancelled: int = 0
-    not_negotiated: int = 0
+    private_contract: int = 0  # 수의계약이라 뺀 공고
+    other_category: int = 0  # 이번 실행 유형(--categories) 밖이라 뺀 공고
     old_ordinal: int = 0
-    negotiated: int = 0
+    in_scope: int = 0  # 수집 범위(+유형)에 든 공고
+    # 이번 실행에서 고른 유형. None이면 전 유형. 리포트 제목/발송 메시지에 쓴다.
+    categories: list[str] | None = None
     screened_out: dict[str, int] = field(default_factory=dict)
     screened_in: int = 0
-    gate_excluded: int = 0
+    # 자격 미달인데 후보에 남긴 공고 수 (공동수급 보완 가능성 때문에 제외하지 않음)
+    qualification_flagged: int = 0
     candidates: int = 0
     license_error: str | None = None
     region_error: str | None = None
-    # 협상 공고인데 후보에서 빠진 것들. 후보와 같은 Candidate 자료구조를 쓴다
+    # 수집 범위에 들었는데 후보에서 빠진 것들. 후보와 같은 Candidate 자료구조를 쓴다
     # (is_candidate=False, excluded_reason에 사유). 저장 단계에서 함께 기록된다.
     rejected: list["Candidate"] = field(default_factory=list)
     # 부가 API가 실제로 몇 건을 돌려줬는지. 0이면 "제한 없음"이 아니라 "정보 없음"이다.
@@ -81,6 +92,19 @@ class RunStats:
 def _api_window(now: datetime, lookback_days: int) -> tuple[str, str]:
     begin = now - timedelta(days=lookback_days)
     return begin.strftime("%Y%m%d0000"), now.strftime("%Y%m%d%H%M")
+
+
+def complete_days_window(now: datetime, days: int) -> tuple[datetime, datetime]:
+    """오늘을 뺀 직전 `days`일을 날짜 단위로 딱 자른 구간 [시작일 00:00, 어제 23:59].
+
+    매일/매주 정해진 주기로 돌려도 구간이 겹치거나 비지 않는다 — "이미 보낸 공고를
+    다시 보내지 않는다"를 따로 발송 기록 없이 지키기 위함이다. Actions 스케줄이
+    몇십 분 늦게 돌아도 구간은 그대로다.
+    """
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    begin = today - timedelta(days=days)
+    end = today - timedelta(minutes=1)
+    return begin, end
 
 
 def collect_notices(
@@ -125,12 +149,15 @@ def build_candidates(
     regions: dict[str, list[str]],
     now: datetime,
     stats: RunStats,
+    categories: set[str] | None = None,
 ) -> list[Candidate]:
-    scope_result = scope.apply_scope(notices)
+    scope_result = scope.apply_scope(notices, categories)
     stats.cancelled = scope_result.dropped_cancelled
-    stats.not_negotiated = scope_result.dropped_not_negotiated
+    stats.private_contract = scope_result.dropped_private
+    stats.other_category = scope_result.dropped_other_category
     stats.old_ordinal = scope_result.dropped_old_ordinal
-    stats.negotiated = len(scope_result.kept)
+    stats.in_scope = len(scope_result.kept)
+    stats.categories = sorted(categories, key=scope.CATEGORIES.index) if categories else None
 
     candidates: list[Candidate] = []
 
@@ -151,6 +178,7 @@ def build_candidates(
             days_left=schedule.days_left(now),
             is_re_notice=scope.is_re_notice(notice),
             variant=scope.negotiation_variant(notice),
+            category=scope.bid_category(notice),
         )
 
         if not screen_result.matched:
@@ -164,12 +192,11 @@ def build_candidates(
 
         stats.screened_in += 1
 
-        if not qualification.passes:
-            stats.gate_excluded += 1
-            record.is_candidate = False
-            record.excluded_reason = qualification.summary  # 이미 "자격 미달(...)" 형태다
-            stats.rejected.append(record)
-            continue
+        # 자격 미달은 후보에서 빼지 않는다 (2026-09-28 사용자 결정: 미보유 자격 개수 무시).
+        # 공동수급으로 보완해 수주하는 경우가 있어, 리포트의 자격판정(빨간 원)과
+        # 공동수급 칸을 보고 담당자가 판단한다. 예전엔 미보유 그룹 2개 이상이면 제외했다.
+        if qualification.checked and qualification.missing_count:
+            stats.qualification_flagged += 1
 
         candidates.append(record)
 
@@ -178,14 +205,26 @@ def build_candidates(
     return candidates
 
 
-def run(config: AppConfig, now: datetime | None = None) -> tuple[list[Candidate], RunStats, list[Notice]]:
+def run(
+    config: AppConfig,
+    now: datetime | None = None,
+    categories: set[str] | None = None,
+    complete_days: int | None = None,
+) -> tuple[list[Candidate], RunStats, list[Notice]]:
+    """`complete_days`를 주면 조회 기간을 오늘 뺀 직전 N일(날짜 단위)로 잡는다
+    (매일/매주 발송용). 없으면 기존처럼 최근 `lookback_days`일 ~ 지금."""
     now = now or datetime.now()
     stats = RunStats()
     client = DataGoKrClient(config.api)
 
-    begin, end = _api_window(now, config.lookback_days)
-    stats.period_begin = now - timedelta(days=config.lookback_days)
-    stats.period_end = now
+    if complete_days:
+        period_begin, period_end = complete_days_window(now, complete_days)
+        begin, end = period_begin.strftime("%Y%m%d%H%M"), period_end.strftime("%Y%m%d%H%M")
+        stats.period_begin, stats.period_end = period_begin, period_end
+    else:
+        begin, end = _api_window(now, config.lookback_days)
+        stats.period_begin = now - timedelta(days=config.lookback_days)
+        stats.period_end = now
     log.info("조회 기간: %s ~ %s", begin, end)
 
     # collect_notices()가 세 부문 중 하나라도 실패하면 바로 ApiError를 올린다
@@ -210,5 +249,5 @@ def run(config: AppConfig, now: datetime | None = None) -> tuple[list[Candidate]
     else:
         log.info("참가가능지역: 공고 %d건분 수신", len(region_map))
 
-    candidates = build_candidates(notices, config, license_groups, region_map, now, stats)
+    candidates = build_candidates(notices, config, license_groups, region_map, now, stats, categories)
     return candidates, stats, notices

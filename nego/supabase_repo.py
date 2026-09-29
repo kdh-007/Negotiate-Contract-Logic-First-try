@@ -162,6 +162,20 @@ def candidate_to_row(candidate: Candidate) -> dict[str, Any]:
     }
 
 
+def rejected_row(candidate: Candidate) -> dict[str, Any]:
+    """제외된 공고 행. 협상이 아닌 유형(입찰·규격가격동시입찰)은 원본 응답(raw)을 뺀다.
+
+    2026-09-28 수집 범위를 경쟁입찰 전체로 넓히면서 제외 공고가 하루 수천 건으로
+    늘어난다. raw까지 다 넣으면 Supabase 무료 한도(500MB)를 두어 달 안에 채우므로,
+    "왜 걸러졌나"를 다시 보는 데 필요한 요약 칸(제목·기관·금액·제외 사유 등)만 남긴다.
+    협상 공고는 건수가 적어 기존처럼 raw까지 저장한다.
+    """
+    row = candidate_to_row(candidate)
+    if candidate.category != "협상":
+        row["raw"] = None
+    return row
+
+
 @dataclass
 class SupabaseConfig:
     url: str
@@ -281,5 +295,5 @@ class SupabaseRepository:
     def save(self, candidates: Iterable[Candidate], rejected: Iterable[Candidate]) -> int:
         """후보와 제외된 공고를 한 번에 저장한다. 둘 다 Candidate라 변환 함수가 하나면 된다."""
         rows = [candidate_to_row(c) for c in candidates]
-        rows += [candidate_to_row(c) for c in rejected]
+        rows += [rejected_row(c) for c in rejected]
         return self.upsert_rows(rows)

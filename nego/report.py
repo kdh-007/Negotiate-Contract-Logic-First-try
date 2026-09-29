@@ -21,6 +21,7 @@ CSV_COLUMNS = [
     "업무구분",
     "추정가격",
     "신뢰도",
+    "공고유형",
     "협상유형",
     "재공고",
     "해외의심",
@@ -212,6 +213,7 @@ def _row(index: int, c: Candidate) -> dict[str, str]:
         "업무구분": c.notice.work_type,
         "추정가격": _fmt_money(c.notice.budget),
         "신뢰도": c.screen_result.confidence or "",
+        "공고유형": c.category or "",
         "협상유형": c.variant or "",
         "재공고": "Y" if c.is_re_notice else "",
         "해외의심": "🌐 몽골" if c.screen_result.overseas_flag else "",
@@ -235,18 +237,27 @@ def write_csv(candidates: list[Candidate], path: Path) -> Path:
     return path
 
 
+def report_title(stats: RunStats) -> str:
+    """리포트/발송 메시지 제목. 매일 실행(입찰)과 주간 실행(협상·규격가격)을 구분한다."""
+    kinds = " · ".join(stats.categories) if stats.categories else "전체 유형"
+    return f"나라장터 입찰 모니터링 리포트 ({kinds})"
+
+
 def render_console(candidates: list[Candidate], stats: RunStats) -> str:
     lines: list[str] = []
     lines.append("=" * 78)
-    lines.append("협상에 의한 계약 — 검토 후보")
+    lines.append(f"{report_title(stats)} — 검토 후보")
     lines.append("=" * 78)
     lines.append(
-        f"수집 {stats.fetched}건 → 협상 {stats.negotiated}건 → 업역 {stats.screened_in}건 → 후보 {stats.candidates}건"
+        f"수집 {stats.fetched}건 → 대상 유형 {stats.in_scope}건 → 업역 {stats.screened_in}건 → 후보 {stats.candidates}건"
     )
+    other = f" / 다른 유형 {stats.other_category}" if stats.other_category else ""
     lines.append(
-        f"  (취소공고 제외 {stats.cancelled} / 협상 아님 {stats.not_negotiated} / "
-        f"이전 차수 {stats.old_ordinal} / 자격 미달 {stats.gate_excluded})"
+        f"  (취소공고 제외 {stats.cancelled} / 수의계약 {stats.private_contract}{other} / "
+        f"이전 차수 {stats.old_ordinal})"
     )
+    if stats.qualification_flagged:
+        lines.append(f"  후보 중 자격 미달 표시 {stats.qualification_flagged}건 (제외하지 않음 — 공동수급 확인)")
     if stats.screened_out:
         detail = " · ".join(f"{k} {v}" for k, v in sorted(stats.screened_out.items()))
         lines.append(f"  업역 스크리닝 제외: {detail}")
@@ -273,7 +284,7 @@ def render_console(candidates: list[Candidate], stats: RunStats) -> str:
         deadline = f"D-{c.days_left}" if c.days_left is not None else "일정 미상"
         deadline_kind = f" ({earliest[0]})" if earliest else ""
 
-        lines.append(f"[{i:2d}] {c.notice.title}")
+        lines.append(f"[{i:2d}] [{c.category or '유형 미상'}] {c.notice.title}")
         lines.append(
             f"     {deadline}{deadline_kind}  ·  {c.notice.notice_institution or '발주기관 미상'}"
             f"  ·  {_fmt_money(c.notice.budget) or '금액 미상'}"
@@ -293,7 +304,7 @@ def render_console(candidates: list[Candidate], stats: RunStats) -> str:
 
 
 _HTML_HEAD = """<meta charset="utf-8">
-<title>나라장터 입찰 모니터링 주간 리포트</title>
+<title>나라장터 입찰 모니터링 리포트</title>
 <style>
   :root {
     --bg:#fbfbfa; --fg:#1f1e1c; --muted:#6b6a66; --line:#e3e1dc; --accent:#2554c7;
@@ -326,6 +337,7 @@ _HTML_HEAD = """<meta charset="utf-8">
            border:1px solid var(--line); background:#f6f5f2; color:var(--muted);
            display:inline-block; white-space:nowrap; line-height:1.3; }
   .badge.confidence-strong { border-color:#bfd8c4; background:#eef6f0; color:#2f6b45; }
+  .badge.category { border-color:#c9d4e6; background:#eef2f9; color:#34507a; }
   .badge.overseas { border-color:#e6b8ae; background:#fdeeea; color:#9a3412; cursor:help;
                     position:relative; margin-left:4px; }
   /* 위치는 JS(_TOOLTIP_POSITION_SCRIPT)가 호버/포커스 시점에 top/left를
@@ -444,7 +456,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
         return html.escape(str(text or ""))
 
     parts = [_HTML_HEAD, '<div class="wrap">']
-    parts.append("<h1>나라장터 입찰 모니터링 주간 리포트</h1>")
+    parts.append(f"<h1>{esc(report_title(stats))}</h1>")
 
     period = ""
     if stats.period_begin and stats.period_end:
@@ -515,6 +527,7 @@ def render_html(candidates: list[Candidate], stats: RunStats, generated_at: date
             parts.append(
                 "<tr>"
                 '<td><div class="badges">'
+                f'<span class="badge category">{esc(c.category or "유형 미상")}</span>'
                 f'<span class="badge{confidence_cls}">{esc(c.screen_result.confidence)}</span>'
                 f'<span class="badge">{esc(c.notice.work_type)}</span></div></td>'
                 f'<td><div class="nowrap">{esc(c.notice.contract_method) or "-"}</div></td>'
@@ -543,8 +556,9 @@ def save_reports(
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = generated_at.strftime("%Y%m%d_%H%M")
 
-    csv_path = write_csv(candidates, output_dir / f"협상공고_{stamp}.csv")
-    html_path = output_dir / f"협상공고_{stamp}.html"
+    prefix = "_".join(stats.categories) if stats.categories else "전체"
+    csv_path = write_csv(candidates, output_dir / f"공고_{prefix}_{stamp}.csv")
+    html_path = output_dir / f"공고_{prefix}_{stamp}.html"
     html_path.write_text(render_html(candidates, stats, generated_at), encoding="utf-8")
 
     return {"csv": csv_path, "html": html_path}
