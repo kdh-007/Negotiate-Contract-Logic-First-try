@@ -1,20 +1,20 @@
 :root {
   --bg: #f6f7f9; --panel: #ffffff; --ink: #1c2330; --muted: #6b7384; --line: #e2e5eb;
-  --accent: #2f6fed; --accent-ink: #fff; --chip: #f1f3f7; --chip-ink: #4a5263; --chip-line: #c9ced8;
+  --accent: #2f6fed; --accent-ink: #fff; --chip: #f1f3f7; --chip-ink: #4a5263; --chip-line: #c9ced8; --card-line: #b9c0cc; --card-shadow: 0 1px 3px rgba(20,30,50,.08);
   --good: #17803f; --good-bg: #e6f5eb; --warn: #a86506; --warn-bg: #fdf1dc;
   --bad: #c53030; --bad-bg: #fdeaea; --info: #2d5fc8; --info-bg: #e8effd; --star: #7a3fc7; --star-bg: #f2eafc;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #12151b; --panel: #1b2029; --ink: #e6e9ef; --muted: #98a0b0; --line: #2c3340;
-    --accent: #5b8cff; --chip: #252c38; --chip-ink: #b4bccb; --chip-line: #3a4353;
+    --accent: #5b8cff; --chip: #252c38; --chip-ink: #b4bccb; --chip-line: #3a4353; --card-line: #465063; --card-shadow: 0 1px 3px rgba(0,0,0,.4);
     --good: #4cc987; --good-bg: #173726; --warn: #e3a64a; --warn-bg: #3a2d14;
     --bad: #f07575; --bad-bg: #3d1d1f; --info: #7ea2ff; --info-bg: #1d2a47; --star: #b88cf2; --star-bg: #2f2244;
   }
 }
 :root[data-theme="dark"] {
   --bg: #12151b; --panel: #1b2029; --ink: #e6e9ef; --muted: #98a0b0; --line: #2c3340;
-  --accent: #5b8cff; --chip: #252c38; --chip-ink: #b4bccb; --chip-line: #3a4353;
+  --accent: #5b8cff; --chip: #252c38; --chip-ink: #b4bccb; --chip-line: #3a4353; --card-line: #465063; --card-shadow: 0 1px 3px rgba(0,0,0,.4);
   --good: #4cc987; --good-bg: #173726; --warn: #e3a64a; --warn-bg: #3a2d14;
   --bad: #f07575; --bad-bg: #3d1d1f; --info: #7ea2ff; --info-bg: #1d2a47; --star: #b88cf2; --star-bg: #2f2244;
 }
@@ -59,9 +59,9 @@ main { padding: 16px 24px 48px; max-width: 1400px; }
 h2.section { font-size: 16px; margin: 16px 0 8px; }
 h2.section small { color: var(--star); font-weight: 600; margin-left: 6px; }
 .grid { display: flex; flex-direction: column; gap: 12px; }
-.card { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--card-line); border-left: 4px solid var(--card-line); box-shadow: var(--card-shadow); border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
 .card.urgent { border-left-color: var(--bad); }
-.card.mine { border-color: var(--accent); border-left-color: var(--accent); }
+.card.mine { border-color: var(--accent); border-left-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--card-shadow); }
 .card-body { display: flex; gap: 20px; align-items: stretch; }
 .card-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .badges { display: flex; gap: 6px; flex-wrap: wrap; }
