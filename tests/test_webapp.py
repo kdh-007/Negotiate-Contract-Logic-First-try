@@ -92,8 +92,10 @@ class TestSerialize(unittest.TestCase):
         self.assertTrue(flagged["qualification"]["checked"])
         self.assertFalse(flagged["qualification"]["passes"])
         self.assertTrue(flagged["qualification"]["missing"])
-        self.assertEqual(flagged["qualification"]["total"],
-                         flagged["qualification"]["satisfied"] + len(flagged["qualification"]["missing"]))
+        # 배지의 분수는 자격 그룹 수, 팝업 목록은 그룹 안 이름을 하나씩 ("이름(코드)", 리포트와 같게)
+        self.assertEqual(flagged["qualification"]["total"], 2)
+        self.assertEqual(flagged["qualification"]["satisfied"], 0)
+        self.assertGreaterEqual(len(flagged["qualification"]["missing"]), 2)
         self.assertEqual(flagged["category"], "협상")
         self.assertEqual(flagged["key"], "R26TEST00009-000")
         self.assertEqual(flagged["sync"]["basis"], "공고명만")

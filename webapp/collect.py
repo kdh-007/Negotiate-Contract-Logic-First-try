@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from nego import qualify, scope
 from nego.config import AppConfig, load_config, redact
+from nego.report import _dedupe_names_preferring_code, _display_name
 
 from .store import Store
 from .sync import PastIndex
@@ -30,7 +31,9 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 def _group_names(groups) -> list[str]:
-    return list(dict.fromkeys("/".join(dict.fromkeys(g.allowed_names)) for g in groups))
+    """HTML 리포트의 자격 팝업과 같은 목록 — "이름(코드)", 코드 없는 중복은 코드 있는 쪽을 남긴다."""
+    names = list(dict.fromkeys(_display_name(n) for g in groups for n in g.allowed_names))
+    return _dedupe_names_preferring_code(names)
 
 
 def serialize(candidate, past: PastIndex) -> dict[str, Any]:
