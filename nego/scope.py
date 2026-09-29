@@ -1,9 +1,16 @@
-"""「협상에 의한 계약」 스코프 판별.
+"""수집 범위(공고 유형) 판별.
 
-핵심: 협상에 의한 계약은 **계약체결방법이 아니라 낙찰자결정방법**이다.
- - 낙찰자결정방법 `sucsfbidMthdNm` = "협상에의한계약-…"   ← 여기로 판별한다
- - 계약체결방법 `cntrctCnclsMthdNm` = 일반경쟁 / 제한경쟁 / …  ← 직교. 필터축이 아니다
+2026-09-28부터 협상에 의한 계약만이 아니라 **수의계약을 뺀 경쟁입찰 전부**를 수집한다.
+공고마다 세 유형 중 하나로 분류한다 — 발송 주기가 유형마다 다르기 때문이다
+(입찰은 마감이 7일 안쪽인 경우가 있어 매일, 나머지는 주 1회).
 
+  - 협상            : 낙찰자결정방법 `sucsfbidMthdNm`이 "협상에의한계약"으로 시작
+  - 규격가격동시입찰 : 낙찰자결정방법이 "규격가격동시입찰"로 시작
+  - 입찰            : 그 밖의 경쟁입찰 전부 (적격심사, 최저가, 설계공모 등)
+  - 범위 밖         : 계약체결방법 `cntrctCnclsMthdNm`(또는 낙찰자결정방법)에 "수의"가 든 공고
+
+협상 여부는 **계약체결방법이 아니라 낙찰자결정방법**으로 판별한다
+(계약체결방법 = 일반경쟁 / 제한경쟁 / … 는 협상 여부와 직교).
 접미 괄호가 붙은 변형이 여러 개라 완전일치가 아닌 **접두어 매칭**을 쓴다.
   협상에의한계약-협상에 의한 낙찰자 결정
   협상에의한계약-협상에 의한 낙찰자 결정(SW사업)
@@ -19,6 +26,13 @@ from dataclasses import dataclass
 from .models import Notice
 
 NEGOTIATED_PREFIX = "협상에의한계약"
+SPEC_PRICE_PREFIX = "규격가격동시입찰"
+PRIVATE_CONTRACT_MARK = "수의"
+
+CATEGORY_NEGOTIATED = "협상"
+CATEGORY_SPEC_PRICE = "규격가격동시입찰"
+CATEGORY_BID = "입찰"
+CATEGORIES = (CATEGORY_NEGOTIATED, CATEGORY_SPEC_PRICE, CATEGORY_BID)
 
 # 협상은 아니지만 제안서로 겨루는 방식이라 업역이 겹친다.
 # 제외하지 않고 태그만 달아 둔다 — 나중에 판단할 수 있게.
@@ -38,6 +52,37 @@ def is_negotiated(notice: Notice) -> bool:
 def is_adjacent(notice: Notice) -> bool:
     normalized = _normalize(notice.award_method)
     return any(normalized.startswith(p) for p in ADJACENT_PREFIXES)
+
+
+def is_private_contract(notice: Notice) -> bool:
+    """수의계약(소액수의 등 포함). 계약체결방법에 "수의"가 들어가면 범위 밖이다.
+    낙찰자결정방법 쪽에 수의가 적힌 경우도 있을 수 있어 함께 본다."""
+    return PRIVATE_CONTRACT_MARK in _normalize(notice.contract_method) or _normalize(
+        notice.award_method
+    ).startswith(PRIVATE_CONTRACT_MARK)
+
+
+def bid_category(notice: Notice) -> str | None:
+    """공고 유형. 수의계약이면 None(수집 범위 밖)."""
+    if is_private_contract(notice):
+        return None
+    award = _normalize(notice.award_method)
+    if award.startswith(NEGOTIATED_PREFIX):
+        return CATEGORY_NEGOTIATED
+    if award.startswith(SPEC_PRICE_PREFIX):
+        return CATEGORY_SPEC_PRICE
+    return CATEGORY_BID
+
+
+def parse_categories(text: str | None) -> set[str] | None:
+    """"입찰,협상" 같은 쉼표 목록 → 유형 집합. 비어 있으면 None(전 유형)."""
+    if not text or not text.strip():
+        return None
+    chosen = {part.strip() for part in text.split(",") if part.strip()}
+    unknown = chosen - set(CATEGORIES)
+    if unknown:
+        raise ValueError(f"알 수 없는 공고 유형: {', '.join(sorted(unknown))} (가능: {', '.join(CATEGORIES)})")
+    return chosen
 
 
 def is_cancelled(notice: Notice) -> bool:
@@ -84,12 +129,15 @@ class ScopeResult:
     kept: list[Notice]
     adjacent: list[Notice]
     dropped_cancelled: int
-    dropped_not_negotiated: int
+    dropped_private: int
     dropped_old_ordinal: int
+    # 이번 실행에서 고른 유형(`categories`) 밖이라 뺀 공고 수 (예: 매일 실행에서 협상 공고)
+    dropped_other_category: int = 0
 
 
-def apply_scope(notices: list[Notice]) -> ScopeResult:
-    """수집된 전체 공고에서 협상 스코프만 남긴다.
+def apply_scope(notices: list[Notice], categories: set[str] | None = None) -> ScopeResult:
+    """수집된 전체 공고에서 수집 범위(수의계약 제외 경쟁입찰)만 남긴다.
+    `categories`를 주면 그 유형만 남긴다 (None이면 전 유형).
 
     **순서가 중요하다. 최신 차수를 먼저 고르고, 그 다음에 취소 여부를 본다.**
     취소를 먼저 걷어내면 "000 등록공고 → 001 취소공고"인 사업에서 001만 사라지고
@@ -104,16 +152,21 @@ def apply_scope(notices: list[Notice]) -> ScopeResult:
     alive = [n for n in latest if not is_cancelled(n)]
     dropped_cancelled = len(latest) - len(alive)
 
-    negotiated = [n for n in alive if is_negotiated(n)]
-    adjacent = [n for n in alive if is_adjacent(n)]
-    dropped_not_negotiated = len(alive) - len(negotiated)
+    competitive = [n for n in alive if bid_category(n) is not None]
+    dropped_private = len(alive) - len(competitive)
+
+    kept = competitive
+    if categories is not None:
+        kept = [n for n in competitive if bid_category(n) in categories]
+    adjacent = [n for n in kept if is_adjacent(n)]
 
     return ScopeResult(
-        kept=negotiated,
+        kept=kept,
         adjacent=adjacent,
         dropped_cancelled=dropped_cancelled,
-        dropped_not_negotiated=dropped_not_negotiated,
+        dropped_private=dropped_private,
         dropped_old_ordinal=dropped_old_ordinal,
+        dropped_other_category=len(competitive) - len(kept),
     )
 
 

@@ -5,6 +5,9 @@
     python -m nego --from-store       # API 호출 없이 저장된 원문으로 재필터링
     python -m nego --verify           # 응답 필드명 진단 (필드가 비어 보일 때)
     python -m nego --fetch-attachment-text  # 후보 공고 첨부파일 텍스트 추출(원문 대조용)
+    python -m nego --fetch-attachment-text --llm-similarity  # + 과거 실적과 LLM 유사도 판정
+    python -m nego --categories 입찰 --complete-days 1   # 어제 게시된 입찰 공고만
+    python -m nego --categories 협상,규격가격동시입찰 --complete-days 7  # 지난 7일
 """
 
 from __future__ import annotations
@@ -12,12 +15,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from . import fields as F
-from . import qualify
+from . import qualify, scope
 from .config import ConfigError, load_config, redact
 from .http_client import ApiError, DataGoKrClient
 from .pipeline import build_candidates, run
@@ -85,6 +89,25 @@ def _save_to_supabase(candidates, stats) -> None:
         logging.error("Supabase 저장 실패 (리포트는 정상 생성됨): %s", err)
 
 
+def _run_llm_similarity(candidates, config, now) -> dict[str, Path]:
+    """LLM 유사도 판정. 자격증명이 없거나 실패해도 수집 결과(리포트/저장)는 그대로 낸다."""
+    from . import llm_similarity
+    from .config import DEFAULT_CONFIG_DIR
+    from .similarity import load_past_projects_file
+
+    llm_config = llm_similarity.LlmConfig.from_env()
+    if llm_config is None:
+        logging.warning("ANTHROPIC_API_KEY 없음 → LLM 유사도 판정 건너뜀")
+        return {}
+
+    projects = load_past_projects_file(DEFAULT_CONFIG_DIR / "past_projects.json")
+    results = llm_similarity.judge_candidates(candidates, projects, llm_config)
+    if not results:
+        return {}
+    print(llm_similarity.render_console(results))
+    return llm_similarity.save_results(results, config.output_dir, now)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="nego", description="나라장터 「협상에 의한 계약」 공고 추출")
     parser.add_argument("--days", type=int, help="조회 기간(일). 기본값은 LOOKBACK_DAYS 환경변수")
@@ -102,6 +125,22 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="후보 공고의 첨부파일(HWP/HWPX/PDF)을 내려받아 텍스트를 추출한다 (지역제한/면허제한/공동수급 원문 대조용)",
     )
+    parser.add_argument(
+        "--llm-similarity",
+        action="store_true",
+        help="후보 공고를 과거 실적(config/past_projects.json)과 Claude API로 유사도 판정한다 "
+        "(ANTHROPIC_API_KEY 필요, --fetch-attachment-text와 같이 주면 첨부 원문까지 근거로 씀)",
+    )
+    parser.add_argument(
+        "--categories",
+        help="이번 실행에서 다룰 공고 유형 (쉼표 구분: 협상, 규격가격동시입찰, 입찰). 비우면 전 유형",
+    )
+    parser.add_argument(
+        "--complete-days",
+        type=int,
+        help="조회 기간을 오늘을 뺀 직전 N일로 날짜 단위로 자른다 (매일=1, 주간=7). "
+        "정해진 주기로 돌릴 때 기간이 겹치지 않아 같은 공고를 두 번 보내지 않는다",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -110,6 +149,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = load_config()
     except ConfigError as err:
+        print(f"설정 오류: {err}", file=sys.stderr)
+        return 1
+
+    try:
+        categories = scope.parse_categories(args.categories)
+    except ValueError as err:
         print(f"설정 오류: {err}", file=sys.stderr)
         return 1
 
@@ -137,12 +182,12 @@ def main(argv: list[str] | None = None) -> int:
             from .pipeline import RunStats
 
             stats = RunStats(fetched=len(notices))
-            candidates = build_candidates(notices, config, {}, {}, now, stats)
+            candidates = build_candidates(notices, config, {}, {}, now, stats, categories)
         else:
             if not config.api.service_key:
                 print("NARA_SERVICE_KEY 환경변수가 필요합니다.", file=sys.stderr)
                 return 1
-            candidates, stats, notices = run(config, now)
+            candidates, stats, notices = run(config, now, categories, args.complete_days)
             added = repo.upsert(notices)
             logging.info("저장 완료: 신규 %d건 / 전체 %d건", added, len(notices))
     except ApiError as err:
@@ -159,7 +204,12 @@ def main(argv: list[str] | None = None) -> int:
         held_codes = qualify.load_held_codes(config.held_raw)
         held_code_names = qualify.load_held_code_names(config.held_raw)
         att_stats = save_attachment_texts(
-            candidates, config.output_dir, held_codes=held_codes, held_code_names=held_code_names, now=now
+            candidates,
+            config.output_dir,
+            held_codes=held_codes,
+            held_code_names=held_code_names,
+            now=now,
+            code_names=config.code_names,
         )
         print(
             f"첨부파일 텍스트 추출: 시도 {att_stats['attempted']}건 "
@@ -169,6 +219,17 @@ def main(argv: list[str] | None = None) -> int:
             f" · 일정 미상 → 첨부파일로 보충 {att_stats['deadline_determined']}건"
             f" (저장 위치: {config.output_dir / 'attachment_text'})"
         )
+        if att_stats["unnamed_codes"]:
+            # 리포트에 "이름 미확인(코드)"로 뜨는 미보유 자격. 이름을 확인해
+            # config/code_names.json에 추가하면 다음 실행부터 이름이 붙는다.
+            print(
+                "이름 미확인 코드 (config/code_names.json에 추가하세요): "
+                + ", ".join(att_stats["unnamed_codes"])
+            )
+
+    llm_paths: dict[str, Path] = {}
+    if args.llm_similarity:
+        llm_paths = _run_llm_similarity(candidates, config, now)
 
     print(render_console(candidates, stats))
 
@@ -176,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
         _save_to_supabase(candidates, stats)
 
     paths = save_reports(candidates, stats, config.output_dir, now)
-    for kind, path in paths.items():
+    for kind, path in {**paths, **llm_paths}.items():
         print(f"{kind.upper()} 저장: {path}")
 
     # 일부 조회가 실패했으면 종료코드 2로 구분한다 (CI에서 성공/부분성공 구분).

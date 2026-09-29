@@ -80,11 +80,48 @@ class TestScope(unittest.TestCase):
         n = notice_from_raw(fixtures.notice("X", award=fixtures.NEGO_SW), "용역")
         self.assertEqual(scope.negotiation_variant(n), "SW사업")
 
+    def test_categories(self):
+        cases = [
+            (fixtures.NEGO, "제한경쟁", "협상"),
+            (fixtures.NEGO_SW, "일반경쟁", "협상"),
+            ("규격가격동시입찰-규격가격동시입찰", "제한경쟁", "규격가격동시입찰"),
+            (fixtures.QUALIFY, "제한경쟁", "입찰"),
+            (fixtures.DESIGN_CONTEST, "일반경쟁", "입찰"),
+            (fixtures.QUALIFY, "수의계약", None),
+            (fixtures.QUALIFY, "수의(소액)", None),
+        ]
+        for award, contract, expected in cases:
+            with self.subTest(award=award, contract=contract):
+                n = notice_from_raw(fixtures.notice("X", award=award, cntrctCnclsMthdNm=contract), "용역")
+                self.assertEqual(scope.bid_category(n), expected)
+
+    def test_private_contract_dropped_competitive_bids_kept(self):
+        raws = [
+            fixtures.notice("R-NEGO"),
+            fixtures.notice("R-BID", award=fixtures.QUALIFY),
+            fixtures.notice("R-PRIVATE", award=fixtures.QUALIFY, cntrctCnclsMthdNm="수의계약"),
+        ]
+        result = scope.apply_scope([notice_from_raw(r, "용역") for r in raws])
+        self.assertEqual({n.notice_no for n in result.kept}, {"R-NEGO", "R-BID"})
+        self.assertEqual(result.dropped_private, 1)
+
+    def test_category_filter_keeps_only_chosen(self):
+        raws = [fixtures.notice("R-NEGO"), fixtures.notice("R-BID", award=fixtures.QUALIFY)]
+        result = scope.apply_scope([notice_from_raw(r, "용역") for r in raws], {"입찰"})
+        self.assertEqual([n.notice_no for n in result.kept], ["R-BID"])
+        self.assertEqual(result.dropped_other_category, 1)
+
+    def test_parse_categories(self):
+        self.assertIsNone(scope.parse_categories(""))
+        self.assertEqual(scope.parse_categories("입찰, 협상"), {"입찰", "협상"})
+        with self.assertRaises(ValueError):
+            scope.parse_categories("수의계약")
+
     def test_cancelled_dropped_and_latest_ordinal_kept(self):
-        result = scope.apply_scope(_notices())
+        result = scope.apply_scope(_notices(), {"협상"})
         numbers = {n.notice_no for n in result.kept}
         self.assertNotIn("R26TEST00003", numbers, "취소공고가 남아 있으면 안 된다")
-        self.assertNotIn("R26TEST00004", numbers, "협상이 아닌 공고가 남아 있으면 안 된다")
+        self.assertNotIn("R26TEST00004", numbers, "협상만 고르면 적격심사 공고는 빠져야 한다")
         ords = {n.notice_no: n.notice_ord for n in result.kept}
         self.assertEqual(ords["R26TEST00002"], "001", "최신 차수만 남아야 한다")
         self.assertEqual(result.dropped_cancelled, 1)
@@ -783,7 +820,7 @@ class TestEndToEnd(unittest.TestCase):
         stats = RunStats()
         license_groups = qualify.group_license_rows(fixtures.license_rows())
 
-        candidates = build_candidates(_notices(), config, license_groups, {}, NOW, stats)
+        candidates = build_candidates(_notices(), config, license_groups, {}, NOW, stats, {"협상"})
         numbers = [c.notice.notice_no for c in candidates]
 
         self.assertIn("R26TEST00001", numbers)
@@ -794,11 +831,26 @@ class TestEndToEnd(unittest.TestCase):
         self.assertNotIn("R26TEST00005", numbers, "설계공모")
         self.assertNotIn("R26TEST00006", numbers, "제외키워드")
         self.assertNotIn("R26TEST00007", numbers, "예산 미달")
-        self.assertNotIn("R26TEST00009", numbers, "자격 미충족 2그룹")
+        self.assertIn("R26TEST00009", numbers, "자격 미충족 2그룹이어도 제외하지 않는다 (공동수급 보완 가능)")
         self.assertNotIn("R26TEST00010", numbers, "키워드 미매칭")
 
+        flagged = next(c for c in candidates if c.notice.notice_no == "R26TEST00009")
+        self.assertIn("자격 미달", flagged.qualification.summary)
         self.assertEqual(stats.cancelled, 1)
-        self.assertEqual(stats.gate_excluded, 1)
+        self.assertEqual(stats.qualification_flagged, 1)
+        self.assertEqual(stats.other_category, 2, "적격심사·설계공모는 '입찰' 유형이라 협상 실행에서 빠진다")
+        self.assertTrue(all(c.category == "협상" for c in candidates))
+
+    def test_all_categories_include_competitive_bids(self):
+        """유형을 고르지 않으면 적격심사(입찰)·설계공모(입찰)도 후보가 될 수 있다."""
+        config = load_config()
+        config.screen.keywords = ["전시관", "박물관"]
+        stats = RunStats()
+        candidates = build_candidates(_notices(), config, {}, {}, NOW, stats)
+        by_no = {c.notice.notice_no: c.category for c in candidates}
+        self.assertEqual(by_no.get("R26TEST00004"), "입찰")
+        self.assertEqual(by_no.get("R26TEST00005"), "입찰")
+        self.assertEqual(by_no.get("R26TEST00002"), "협상")
 
     def test_sorted_by_deadline_first(self):
         config = load_config()
