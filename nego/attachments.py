@@ -1,4 +1,4 @@
-"""공고 첨부파일(HWP/HWPX/PDF) 다운로드 및 텍스트 추출.
+"""공고 첨부파일(HWP/HWPX/PDF, 그리고 이것들을 묶은 ZIP) 다운로드 및 텍스트 추출.
 
 API가 안 주는 정보(과업내용·평가기준)를 다루기 위한 밑작업이다. 오늘 범위는
 **평문 텍스트 추출까지만** — 지역제한/면허제한/공동수급처럼 API로 이미 수집한
@@ -30,7 +30,13 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-SUPPORTED_EXTENSIONS = {"hwp", "hwpx", "pdf"}
+SUPPORTED_EXTENSIONS = {"hwp", "hwpx", "pdf", "zip"}
+
+# ZIP 안전장치 — 발주기관이 올린 압축 파일이라도 압축 폭탄·거대 파일로 수집이 멈추면 안 된다.
+ZIP_MAX_MEMBERS = 60  # 압축 안에서 읽을 최대 파일 수
+ZIP_MAX_MEMBER_BYTES = 80 * 1024 * 1024  # 파일 하나 최대(풀었을 때)
+ZIP_MAX_TOTAL_BYTES = 300 * 1024 * 1024  # 압축 하나에서 푸는 총량
+ZIP_MAX_DEPTH = 1  # zip 안의 zip은 한 겹까지만
 
 
 class AttachmentError(Exception):
@@ -99,32 +105,119 @@ _ZIP_MAGIC_PREFIXES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 _PDF_MAGIC = b"%PDF"
 
 
+def _is_hwpx_zip(data: bytes) -> bool:
+    """zip 형식 중 HWPX(한글 문서)인지 — 그냥 압축 파일(입찰서류.zip 등)과 구분한다."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            names = zf.namelist()
+            if any(_HWPX_SECTION_RE.match(n) for n in names):
+                return True
+            if "mimetype" in names:
+                return b"hwp" in zf.read("mimetype")[:64].lower()
+    except (zipfile.BadZipFile, KeyError, OSError):
+        return False
+    return False
+
+
 def _sniff_ext(data: bytes) -> str | None:
     if data.startswith(_PDF_MAGIC):
         return "pdf"
     if data.startswith(_ZIP_MAGIC_PREFIXES):
-        return "hwpx"
+        return "hwpx" if _is_hwpx_zip(data) else "zip"
     if data.startswith(_OLE_MAGIC):
         return "hwp"
     return None
 
 
 def extract_text(data: bytes, ext: str) -> str:
+    return redact_personal_contacts(_extract_raw(data, ext, depth=0))
+
+
+def _extract_raw(data: bytes, ext: str, depth: int) -> str:
     ext = ext.lower().lstrip(".")
     sniffed = _sniff_ext(data)
     if sniffed and sniffed != ext and sniffed in SUPPORTED_EXTENSIONS:
-        log.info("확장자(.%s)와 실제 파일 내용(.%s)이 달라 실제 내용 기준으로 처리합니다", ext, sniffed)
+        if ext:
+            log.info("확장자(.%s)와 실제 파일 내용(.%s)이 달라 실제 내용 기준으로 처리합니다", ext, sniffed)
+        else:
+            log.info("파일 이름에 확장자가 없어 내용으로 형식을 판별했습니다: .%s", sniffed)
         ext = sniffed
 
     if ext == "pdf":
-        text = _extract_pdf_text(data)
-    elif ext == "hwpx":
-        text = _extract_hwpx_text(data)
-    elif ext == "hwp":
-        text = _extract_hwp_text(data)
-    else:
-        raise AttachmentError(f"지원하지 않는 형식입니다: .{ext or '(확장자 없음)'}")
-    return redact_personal_contacts(text)
+        return _extract_pdf_text(data)
+    if ext == "hwpx":
+        return _extract_hwpx_text(data)
+    if ext == "hwp":
+        return _extract_hwp_text(data)
+    if ext == "zip":
+        if depth >= ZIP_MAX_DEPTH + 1:
+            raise AttachmentError("압축 파일 안의 압축 파일이 너무 깊습니다")
+        return _extract_zip_text(data, depth)
+    raise AttachmentError(f"지원하지 않는 형식입니다: .{ext or '(확장자 없음)'}")
+
+
+def _zip_member_name(info: zipfile.ZipInfo) -> str:
+    """한국 관공서 zip은 파일명을 CP949로 넣고 UTF-8 표시(플래그 0x800)를 안 켠 경우가 많다 —
+    그러면 zipfile이 CP437로 읽어 이름이 깨진다. 되돌려서 CP949로 다시 읽는다."""
+    name = info.filename
+    if info.flag_bits & 0x800:
+        return name
+    try:
+        return name.encode("cp437").decode("cp949")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return name
+
+
+def _extract_zip_text(data: bytes, depth: int = 0) -> str:
+    """압축 파일 안의 HWP/HWPX/PDF(와 한 겹 안쪽 zip)를 모두 읽어 파일별로 이어 붙인다.
+
+    파일 하나를 못 읽어도 나머지는 계속 읽는다. 하나도 못 읽으면 AttachmentError.
+    이어 붙인 결과가 곧 이 첨부파일의 원문이 되므로 참가자격 절 찾기·자격판정·
+    마감 보충·싱크로율이 다른 첨부와 똑같이 적용된다.
+    """
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as err:
+        raise AttachmentError(f"ZIP 파싱 실패: {err}") from err
+
+    parts: list[str] = []
+    skipped: list[str] = []
+    total = 0
+    with zf:
+        members = [i for i in zf.infolist() if not i.is_dir()]
+        for info in members[:ZIP_MAX_MEMBERS]:
+            name = _zip_member_name(info)
+            base = name.rsplit("/", 1)[-1]
+            if not base or base.startswith(("._", "~$")) or "__MACOSX" in name:
+                continue
+            ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+            if ext and ext not in SUPPORTED_EXTENSIONS:
+                skipped.append(f"{base}(.{ext})")
+                continue
+            if info.file_size > ZIP_MAX_MEMBER_BYTES or total + info.file_size > ZIP_MAX_TOTAL_BYTES:
+                skipped.append(f"{base}(너무 큼)")
+                continue
+            try:
+                inner = zf.read(info)
+                total += len(inner)
+                text = _extract_raw(inner, ext, depth + 1)
+            except AttachmentError as err:
+                skipped.append(f"{base}({err})")
+                continue
+            except Exception as err:  # 파일 하나 때문에 압축 전체를 버리지 않는다
+                skipped.append(f"{base}(예상 못한 오류: {err})")
+                continue
+            if text.strip():
+                parts.append(f"=== [압축 안] {name} ===\n{text}")
+        if len(members) > ZIP_MAX_MEMBERS:
+            skipped.append(f"그 밖 {len(members) - ZIP_MAX_MEMBERS}개(파일 수 제한)")
+
+    if skipped:
+        log.info("압축 파일에서 읽지 않은 파일: %s", ", ".join(skipped[:10]) + (" 외" if len(skipped) > 10 else ""))
+    if not parts:
+        raise AttachmentError("압축 파일 안에 읽을 수 있는 문서(HWP/HWPX/PDF)가 없습니다"
+                              + (f" — {', '.join(skipped[:5])}" if skipped else ""))
+    return "\n\n".join(parts)
 
 
 def fetch_attachment_text(

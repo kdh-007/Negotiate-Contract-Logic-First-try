@@ -68,6 +68,10 @@
     (`bfSpecRgstNo`, `prdctClsfcNoNm`, `opninRgstClseDt`, `specDocFileUrl1~5` 등 — 활용가이드 기준, 실응답 미확인).
     `python -m nego --verify`에 사전규격 3종 추가해 둠. 주소가 다르면 환경변수 `PRESPEC_BASE_URL`로 덮어씀.
   - 사전규격 첨부는 파일명 필드가 없어 확장자 없이 내려받고 내용(매직바이트)으로 HWP/HWPX/PDF 판별.
+- **ZIP 첨부 읽기 추가** (사용자 요청, 실측 계기: 가양4단지 R26BK01745222 "입찰서류_최종.zip"): `attachments._extract_zip_text` —
+  압축 안 HWP/HWPX/PDF를 "=== [압축 안] 파일명 ===" 구분으로 이어 붙여 그 첨부의 원문으로 씀(자격판정·마감·싱크로율 동일 적용).
+  CP949 파일명 복원, zip 안 zip 한 겹까지, 파일 60개·개당 80MB·총 300MB 제한. zip 형식은 Contents/section*.xml 있으면 HWPX로 구분.
+  xlsx(내역서) 등은 계속 건너뜀.
 
 ## 2026-09-29 — main 반영 (텔레그램 제외)
 

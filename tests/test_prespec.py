@@ -142,7 +142,7 @@ class TestExtensionlessAttachment(unittest.TestCase):
             def get(self, url, timeout):
                 raise AssertionError("받으면 안 된다")
 
-        result = attachments.fetch_attachment_text(Session(), {"seq": "1", "file_name": "a.zip", "url": "http://x", "ext": "zip"})
+        result = attachments.fetch_attachment_text(Session(), {"seq": "1", "file_name": "a.xlsx", "url": "http://x", "ext": "xlsx"})
         self.assertIn("지원하지 않는 형식", result.error)
 
 
