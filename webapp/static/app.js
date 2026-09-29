@@ -120,29 +120,37 @@ function dday(c) {
   return `<span class="b dday${c.days_left > 7 ? " far" : ""}" title="${esc(c.deadline_label)} ${esc(fmtDt(c.deadline))}">마감 ${t}</span>`;
 }
 const QUAL_NOTES = {
-  industry: "자격요건 = 업종·면허(업종코드 4자리). 한 줄이 요건 1개이고, '또는'으로 이어진 자격은 그중 하나만 있으면 됩니다. 코드가 없는 항목은 면허제한정보 API에 코드 필드가 없어 이름만 표시됩니다.",
-  product: "세부품명번호 = 직접생산확인 등 품목 요건(10자리). 한 줄이 요건 1개이고, '또는'으로 이어진 품목은 그중 하나만 있으면 됩니다.",
+  industry: "자격요건 = 업종·면허(업종코드 4자리). 미보유는 요건 단위로 셉니다 — '아래 중 하나' 요건은 그중 하나만 있으면 충족입니다.",
+  product: "세부품명번호 = 직접생산확인 등 품목 요건(10자리). 첨부 공고문을 읽었을 때만 판정됩니다.",
 };
-function tipList(title, cls, names) {
-  if (!names.length) return "";
-  return `<div class="tip-title ${cls}">${esc(title)} ${names.length}건</div>` + names.map((n) => `<div class="tip-item">${esc(n)}</div>`).join("");
+const QUAL_EMPTY = {
+  industry: { "제한 없음": "면허제한정보·첨부 참가자격에 업종 요건이 없습니다.", "미확인": "업종 요건을 확인할 정보가 없습니다 (사전규격 등)." },
+  product: { "제한 없음": "첨부 공고문에 세부품명번호 요건이 없습니다.", "미확인": "첨부 공고문을 읽지 않아 확인하지 못했습니다 ('첨부 자격판정'을 켜고 불러오기)." },
+};
+const KIND_TAG = { industry: "업종", product: "품명" };
+function reqHtml(req, mixed) {
+  const item = (i) => `<div class="tip-sub ${i.held ? "held" : ""}">${i.held ? "✓" : "✗"} ${mixed ? `<span class="kind">${KIND_TAG[i.kind]}</span> ` : ""}${esc(i.label)}</div>`;
+  if (!req.any_of) return `<div class="tip-item">${esc(req.items[0].label)}</div>`;
+  return `<div class="tip-item"><span class="why">아래 중 하나</span>${req.items.map(item).join("")}</div>`;
 }
 function qualButton(label, cls, aria, body) {
   return `<button type="button" class="b qual ${cls}" aria-label="${esc(aria)}">${esc(label)}<span class="tip" role="tooltip">${body}</span></button>`;
 }
 function qualBadge(q) {
-  // 자격요건(업종 4자리) / 세부품명번호(10자리)를 나눠 배지 하나씩. 커서를 대면 미보유·충족 목록 팝업
-  if (!q.checked || !(q.parts && q.parts.length)) {
-    return qualButton("자격 미확인", "", q.summary,
-      `<div class="tip-title">자격정보 미확인 (통과)</div><div class="tip-note">API·첨부파일 모두 판정 근거가 없어 통과 처리됩니다.</div>`);
-  }
-  return q.parts.map((p) => {
-    // 미보유 요건이 하나라도 있으면 "미달" — q.passes는 미보유 1개까지 통과시키는 옛 게이트 값이라 쓰지 않는다
-    const ok = p.satisfied === p.total;
-    const body = tipList(`미보유 ${p.name}`, "bad", p.missing) + tipList(`충족된 ${p.name}`, "good", p.satisfied_names)
-      + `<div class="tip-note">${esc(QUAL_NOTES[p.key])}</div>`;
-    return qualButton(`${p.name} ${p.satisfied}/${p.total} ${ok ? "충족" : "미달"}`, ok ? "good" : "bad",
-      `${p.name} ${ok ? "충족" : "미달"}`, body);
+  // 자격요건(업종 4자리) / 세부품명번호(10자리) 배지 두 개. 커서를 대면 미보유·보유 목록 팝업
+  const parts = q.parts || [];
+  return parts.map((p) => {
+    let label = `${p.name} ${p.status}`, cls = "", body = "";
+    if (p.status === "미달") {
+      cls = "bad"; label += ` ${p.missing.length}건`;
+      const mixed = p.missing.some((r) => new Set(r.items.map((i) => i.kind)).size > 1);
+      body += `<div class="tip-title bad">미보유 ${esc(p.name)} ${p.missing.length}건</div>` + p.missing.map((r) => reqHtml(r, mixed)).join("");
+    } else if (p.status === "충족") cls = "good";
+    if (p.held.length)
+      body += `<div class="tip-title good">보유로 충족한 자격 ${p.held.length}건</div>` + p.held.map((n) => `<div class="tip-item">✓ ${esc(n)}</div>`).join("");
+    if (!body) body = `<div class="tip-title">${esc(p.name)} ${esc(p.status)}</div><div class="tip-note">${esc(QUAL_EMPTY[p.key][p.status] || "")}</div>`;
+    else body += `<div class="tip-note">${esc(QUAL_NOTES[p.key])}</div>`;
+    return qualButton(label, cls, `${p.name} ${p.status}`, body);
   }).join("");
 }
 function badges(c) {
@@ -386,7 +394,7 @@ function openDetail(c) {
   $("#detailTitle").textContent = c.title;
   const ai = c.ai ? `<p><b>AI 판단: ${esc(c.ai.label)}</b> (${esc(c.ai.overall)})${c.ai.best ? ` · 가장 비슷: ${esc(c.ai.best)}` : ""}<br><span class="why">${esc(c.ai.reason)}</span></p>` : "";
   const q = c.qualification;
-  const qual = `<p><b>자격</b>: ${esc(q.summary)}${q.satisfied_names.length ? `<br><span class="why">충족: ${esc(q.satisfied_names.join(", "))}</span>` : ""}</p>`;
+  const qual = `<p><b>자격</b>: ${esc(q.summary)}${(q.held || []).length ? `<br><span class="why">보유로 충족: ${esc(q.held.join(", "))}</span>` : ""}</p>`;
   $("#detailBody").innerHTML = qual + ai + syncDetailHtml(c.sync);
   $("#detail").showModal();
 }

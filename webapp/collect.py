@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import logging
-import re
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -16,8 +15,8 @@ from typing import Any, Callable
 
 from nego import qualify, scope
 from nego.config import AppConfig, load_config, redact
-from nego.report import _dedupe_names_preferring_code, _display_name
 
+from . import qualview
 from .store import Store
 from .sync import PastIndex
 
@@ -31,41 +30,6 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat(timespec="minutes") if dt else None
 
 
-def _group_labels(groups) -> list[str]:
-    """자격 그룹 1개 = 팝업 1줄. 그룹 안의 이름은 '또는'(하나만 있으면 충족)으로 잇는다.
-
-    이름 표기는 HTML 리포트 팝업과 같다("이름(코드)", 코드 없는 중복은 코드 있는 쪽).
-    같은 요건이 여러 그룹으로 중복되면(API 면허명·허용업종 필드, 첨부문서 반복 기재) 한 줄로 합친다 —
-    배지의 분수(충족 n / 전체 m)도 이 줄 수로 세서 팝업과 개수가 어긋나지 않게 한다.
-    """
-    labels: list[str] = []
-    for g in groups:
-        names = _dedupe_names_preferring_code(list(dict.fromkeys(_display_name(n) for n in g.allowed_names)))
-        if names:
-            labels.append(" 또는 ".join(names))
-    return list(dict.fromkeys(labels))
-
-
-_CODE_IN_LABEL = re.compile(r"\((\d{4}|\d{10})\)")
-
-
-def _is_product(label: str) -> bool:
-    """세부품명번호(10자리)가 든 요건이면 품명, 그 밖(업종코드 4자리·코드 없는 면허명)은 자격요건."""
-    return any(len(code) == 10 for code in _CODE_IN_LABEL.findall(label))
-
-
-def _split_parts(missing: list[str], satisfied: list[str]) -> list[dict[str, Any]]:
-    """자격요건(업종코드 4자리) / 세부품명번호(10자리) 두 부문으로 나눈 충족·미달. 요건이 없는 부문은 뺀다."""
-    parts = []
-    for key, name, pick in (("industry", "자격요건", lambda x: not _is_product(x)), ("product", "세부품명번호", _is_product)):
-        miss = [x for x in missing if pick(x)]
-        sat = [x for x in satisfied if pick(x)]
-        if miss or sat:
-            parts.append({"key": key, "name": name, "satisfied": len(sat), "total": len(sat) + len(miss),
-                          "missing": miss, "satisfied_names": sat})
-    return parts
-
-
 def _g2b_url(n) -> str | None:
     """API가 상세 URL을 안 줄 때 쓰는 나라장터 공고 상세 주소 (bidNtceDtlUrl과 같은 형식)."""
     if n.kind != "본공고" or not n.notice_no:
@@ -73,7 +37,7 @@ def _g2b_url(n) -> str | None:
     return f"https://www.g2b.go.kr/link/PNPE027_01/single/?bidPbancNo={n.notice_no}&bidPbancOrd={n.notice_ord}"
 
 
-def serialize(candidate, past: PastIndex) -> dict[str, Any]:
+def serialize(candidate, past: PastIndex, held: tuple[set[str], set[str]] = (set(), set())) -> dict[str, Any]:
     """Candidate 1건 → 카드 1장. 후보/제외 공고 모두 같은 모양."""
     n = candidate.notice
     q = candidate.qualification
@@ -89,8 +53,10 @@ def serialize(candidate, past: PastIndex) -> dict[str, Any]:
             "reason": ai.error or ai.overall_reason,
             "best": getattr(best, "project_title", None) if best else None,
         }
-    missing = _group_labels(q.missing_groups)
-    satisfied = [label for label in _group_labels(q.satisfied_groups) if label not in missing]
+    has_text = bool(candidate.attachment_text.strip())
+    # 자격요건은 본공고면 면허제한정보 API를 봤고, 세부품명번호는 첨부 원문을 읽었을 때만 볼 수 있다
+    parts = qualview.build(q, held, {"industry": n.kind == "본공고" or has_text, "product": has_text})
+    missing = qualview.flat_missing(parts)
     return {
         "key": f"{n.notice_no}-{n.notice_ord}",
         "notice_no": n.notice_no,
@@ -120,13 +86,11 @@ def serialize(candidate, past: PastIndex) -> dict[str, Any]:
             "checked": q.checked,
             "passes": q.passes,
             "summary": q.summary,
-            "satisfied": len(satisfied),
-            "total": len(satisfied) + len(missing),
             "missing": missing,
-            "satisfied_names": satisfied,
-            "parts": _split_parts(missing, satisfied),
+            "held": [label for p in parts for label in p["held"]],
+            "parts": parts,
         },
-        "has_attachment_text": bool(candidate.attachment_text.strip()),
+        "has_attachment_text": has_text,
         "sync": sync,
         "ai": ai_row,
     }
@@ -255,9 +219,10 @@ class Collector:
             if ai:
                 import os
                 _judge_ai(candidates, self.past, int(os.environ.get("LLM_MAX_CANDIDATES", "30")))
+            held = qualview.held_lookup(config.held_raw)
             payload = {
-                "candidates": [serialize(c, self.past) for c in candidates],
-                "rejected": [serialize(c, self.past) for c in stats.rejected],
+                "candidates": [serialize(c, self.past, held) for c in candidates],
+                "rejected": [serialize(c, self.past, held) for c in stats.rejected],
                 "stats": {
                     "fetched": stats.fetched, "in_scope": stats.in_scope,
                     "private_contract": stats.private_contract, "cancelled": stats.cancelled,

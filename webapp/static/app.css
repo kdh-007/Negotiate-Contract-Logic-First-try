@@ -79,6 +79,10 @@ button.b.qual { border: 0; cursor: help; position: relative; font: inherit; font
 .tip-title { font-weight: 700; font-size: 12.5px; margin: 2px 0 4px; }
 .tip-title.good { color: var(--good); } .tip-title.bad { color: var(--bad); }
 .tip-item { font-size: 12.5px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.tip-sub { padding: 2px 0 0 10px; color: var(--bad); }
+.tip-sub.held { color: var(--good); }
+.tip-sub .kind { font-size: 10.5px; padding: 0 5px; border-radius: 4px; background: var(--chip); color: var(--muted); }
+.tip-item .why { display: block; font-size: 11px; }
 .tip-note { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
 .title { font-weight: 700; font-size: 15px; line-height: 1.4; }
 .title a { color: inherit; text-decoration: none; }

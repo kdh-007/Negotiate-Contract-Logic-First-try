@@ -92,14 +92,12 @@ class TestSerialize(unittest.TestCase):
         self.assertTrue(flagged["qualification"]["checked"])
         self.assertFalse(flagged["qualification"]["passes"])
         self.assertTrue(flagged["qualification"]["missing"])
-        # 배지 분수와 팝업 줄 수가 같아야 한다 (사용자 지적: 5/5인데 4줄, 0/2인데 4줄)
         q = flagged["qualification"]
-        self.assertEqual(q["total"], 2)
-        self.assertEqual(q["satisfied"], 0)
-        self.assertEqual(len(q["missing"]), q["total"] - q["satisfied"])
+        self.assertEqual([p["key"] for p in q["parts"]], ["industry", "product"])
+        self.assertEqual(q["parts"][0]["status"], "미달")
+        self.assertEqual(len(q["parts"][0]["missing"]), 2)
         self.assertTrue(any(" 또는 " in line for line in q["missing"]), q["missing"])
         self.assertIn("g2b.go.kr", flagged["detail_url"])
-        self.assertEqual(sum(p["total"] for p in q["parts"]), q["total"])
         self.assertEqual(flagged["category"], "협상")
         self.assertEqual(flagged["key"], "R26TEST00009-000")
         self.assertEqual(flagged["sync"]["basis"], "공고명만")
@@ -108,31 +106,59 @@ class TestSerialize(unittest.TestCase):
         self.assertTrue(all(r["excluded_reason"] for r in rejected))
 
 
-class TestQualificationLines(unittest.TestCase):
-    def test_duplicate_groups_merge_and_counts_match(self):
+class TestQualificationView(unittest.TestCase):
+    """2026-09-29 사용자 지적 3건을 그대로 재현한다."""
+
+    HELD = ({"1469", "4440", "4442", "4444", "4990", "6010989901"}, set())
+
+    def _q(self, missing=(), satisfied=()):
         from nego.qualify import LicenseGroup, QualificationResult
-        from webapp.collect import _group_labels
 
-        sat = [LicenseGroup("1", ["실내건축공사업(4990)"]), LicenseGroup("2", ["실내건축공사업/4990", "실내건축공사업"]),
-               LicenseGroup("3", ["실물모형및전시물(6010989901)"])]
-        miss = [LicenseGroup("4", ["토목공사업(0001)", "토목건축공사업"])]
-        self.assertEqual(_group_labels(sat), ["실내건축공사업(4990)", "실물모형및전시물(6010989901)"])
-        self.assertEqual(_group_labels(miss), ["토목공사업(0001) 또는 토목건축공사업"])
+        mk = lambda names: [LicenseGroup(str(i), list(n)) for i, n in enumerate(names)]
+        m, sat = mk(missing), mk(satisfied)
+        return QualificationResult(total_groups=len(m) + len(sat), missing_groups=m, passes=not m, checked=True,
+                                   satisfied_groups=sat)
 
-    def test_split_industry_and_product(self):
-        from webapp.collect import _split_parts
+    def test_same_held_qualification_listed_once(self):
+        from webapp import qualview
 
-        parts = _split_parts(
-            missing=["조명용제어장치(3912110702)", "토목공사업(0001) 또는 토목건축공사업"],
-            satisfied=["실내건축공사업(4990)", "실물모형및전시물(6010989901)", "전시사업자"],
-        )
-        by = {p["key"]: p for p in parts}
-        self.assertEqual((by["industry"]["satisfied"], by["industry"]["total"]), (2, 3))
-        self.assertEqual(by["industry"]["missing"], ["토목공사업(0001) 또는 토목건축공사업"])
-        self.assertEqual((by["product"]["satisfied"], by["product"]["total"]), (1, 2))
-        self.assertEqual(by["product"]["missing"], ["조명용제어장치(3912110702)"])
-        self.assertEqual([p["key"] for p in _split_parts([], ["실내건축공사업(4990)"])], ["industry"])
+        sw = "소프트웨어사업자(디지털콘텐츠개발서비스사업)(1469)"
+        q = self._q(satisfied=[[sw, "산업디자인전문회사(환경디자인분야)(4442)"],
+                               [sw, "산업디자인전문회사(종합디자인분야)(4444)"]])
+        ind = qualview.build(q, self.HELD, {"industry": True, "product": True})[0]
+        self.assertEqual(ind["status"], "충족")
+        self.assertEqual(ind["held"].count(sw), 1, "1469가 두 요건을 채워도 한 번만")
 
+    def test_mixed_any_of_requirement_goes_to_industry(self):
+        from webapp import qualview
+
+        q = self._q(satisfied=[["실물모형및전시물(6010989901)", "실내건축공사업(4990)",
+                                "소프트웨어사업자(디지털콘텐츠개발서비스사업)(1469)", "산업디자인전문회사(시각디자인분야)(4440)"]])
+        ind, prod = qualview.build(q, self.HELD, {"industry": True, "product": True})
+        self.assertEqual(ind["status"], "충족")
+        self.assertEqual(len(ind["held"]), 4)
+        self.assertEqual(prod["status"], "제한 없음", "업종이 섞인 '다음 중 하나' 요건은 세부품명 부문이 아니다")
+
+    def test_both_chips_always_present(self):
+        from webapp import qualview
+
+        q = self._q(missing=[["조명용제어장치(3912110702)"]])
+        ind, prod = qualview.build(q, self.HELD, {"industry": True, "product": True})
+        self.assertEqual((ind["status"], prod["status"]), ("제한 없음", "미달"))
+        self.assertEqual(len(prod["missing"]), 1)
+        ind, prod = qualview.build(self._q(), self.HELD, {"industry": False, "product": False})
+        self.assertEqual((ind["status"], prod["status"]), ("미확인", "미확인"))
+
+    def test_missing_counts_requirements_and_marks_held(self):
+        from webapp import qualview
+
+        q = self._q(missing=[["토목공사업(0001)", "토목건축공사업"], ["상·하수도설비공사업(4996)", "지반조성·포장공사업(4989)"]])
+        ind = qualview.build(q, self.HELD, {"industry": True, "product": False})[0]
+        self.assertEqual((ind["status"], len(ind["missing"])), ("미달", 2))
+        self.assertTrue(all(r["any_of"] for r in ind["missing"]))
+        self.assertFalse(any(i["held"] for r in ind["missing"] for i in r["items"]))
+
+class _Url(unittest.TestCase):
     def test_detail_url_fallback(self):
         from nego.models import prespec_from_raw
         from webapp.collect import _g2b_url
