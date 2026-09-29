@@ -254,6 +254,11 @@ function render() {
     for (const kind of ["본공고", "사전규격"]) {
       const list = shown.filter((c) => c.kind === kind);
       if (!list.length) continue;
+      if (parts.length) {
+        const hr = document.createElement("hr");
+        hr.className = "section-divider";
+        parts.push(hr);
+      }
       const h = document.createElement("h2");
       h.className = "section";
       h.innerHTML = `${kind} ${list.length}건<small>강력추천 ${list.filter((c) => c.confidence === "강력추천").length}건</small>`;
