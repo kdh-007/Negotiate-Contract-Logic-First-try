@@ -345,6 +345,41 @@ class TestQualification(unittest.TestCase):
         result = qualify.evaluate_attachment_text(items, held_codes={"6484"})
         self.assertEqual(result.summary, "자격 충족", "OR그룹은 코드 하나만 있어도 충족")
 
+    # 실측: 2026 대한민국 지방시대 엑스포(R26BK01739064) — 키워드 뒤 콜론 때문에
+    # 이름표가 코드만 남고, "또는" 나열을 AND로 봐서 보유 품목이 있는데도 미달로 떴다.
+    _EXPO_ITEM = (
+        "가. 아래 직접생산확인증명서를 소지한 자\n"
+        " · 전시부스설치및디자인서비스(세부품명번호 : 7215409901) 또는\n"
+        " 전시홍보관설치및디자인서비스(세부품명번호 : 7215409902)이 기재된 직접생산확인증명서"
+    )
+
+    def test_extract_code_requirements_allows_colon_after_keyword(self):
+        self.assertEqual(
+            qualify._extract_code_requirements(self._EXPO_ITEM),
+            [
+                ("7215409901", "전시부스설치및디자인서비스(7215409901)"),
+                ("7215409902", "전시홍보관설치및디자인서비스(7215409902)"),
+            ],
+        )
+
+    def test_extract_code_requirements_label_ignores_previous_requirement_on_same_line(self):
+        one_line = self._EXPO_ITEM.replace(" 또는\n", " 또는 ")
+        labels = [label for _, label in qualify._extract_code_requirements(one_line)]
+        self.assertEqual(labels[1], "전시홍보관설치및디자인서비스(7215409902)")
+
+    def test_evaluate_attachment_text_or_between_codes_needs_only_one(self):
+        result = qualify.evaluate_attachment_text([self._EXPO_ITEM], held_codes={"7215409902"})
+        self.assertEqual(result.summary, "자격 충족", "코드 뒤 '또는'은 OR")
+
+    def test_evaluate_attachment_text_unrelated_or_word_keeps_and(self):
+        items = [
+            "라. 공동수급 또는 단독으로 참가하는 자로서 다음을 모두 소지한 자\n"
+            "    - 실물모형 및 전시물(세부품명번호 6010989901)\n"
+            "    - 책장(세부품명번호 5610150701)"
+        ]
+        result = qualify.evaluate_attachment_text(items, held_codes={"6010989901"})
+        self.assertIn("자격 미달", result.summary, "코드와 무관한 '또는'은 OR로 보지 않는다")
+
     def test_evaluate_attachment_text_and_group_needs_every_code(self):
         items = [
             "라. 다음 직접생산확인증명서를 모두 소지한 자이어야 합니다.\n"

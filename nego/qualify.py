@@ -177,7 +177,7 @@ def evaluate(groups: list[LicenseGroup], held_names: list[str]) -> Qualification
 # 10자리로 제한해 일반 괄호 안 숫자(연도·조항 번호 등)를 코드로 오인하지
 # 않게 한다.
 _CODE_REQUIREMENT_RE = re.compile(
-    r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?(?P<code>[0-9]{4,10})"
+    r"(?:업종코드|세부품명번호)\s*[:：]?\s*(?:[0-9]+\s*자리\s*,?\s*)?(?P<code>[0-9]{4,10})"
     r"|\((?P<bare_code>[0-9]{10})\)"
 )
 # 문서마다 괄호를 쓰는지 대괄호를 쓰는지, 코드 여러 개를 콤마로 나열하는지
@@ -189,13 +189,21 @@ _CODE_REQUIREMENT_RE = re.compile(
 # 항목) 세부품명번호 자릿수(정확히 10자리)일 때만 코드로 인정한다 — 키워드가
 # 없어 짧은 숫자는 법조문·연도 인용과 구분할 수 없기 때문이다.
 _PREFIXED_GROUP_RE = re.compile(
-    r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?[(\[]([^()\[\]]*)[)\]]"
+    r"(?:업종코드|세부품명번호)\s*[:：]?\s*(?:[0-9]+\s*자리\s*,?\s*)?[(\[]([^()\[\]]*)[)\]]"
 )
 _BARE_GROUP_RE = re.compile(r"[(\[]([^()\[\]]*)[)\]]")
 _GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{4,10}")
 _BARE_GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{10}")
 _GROUP_ENTRY_STRIP_CHARS = " ,·/;、"
-_OR_MARKER_RE = re.compile(r"어느\s*하나")
+# "다음 중 어느 하나" 외에, 코드 바로 뒤에 "또는/혹은"이 이어지는 나열도 OR다
+# (실측: 2026 대한민국 지방시대 엑스포 R26BK01739064 — "전시부스설치및디자인서비스
+# (세부품명번호 : 7215409901) 또는 전시홍보관설치및디자인서비스(세부품명번호 :
+# 7215409902)"). "또는"을 항목 어디서나 OR로 보면 "공동수급 또는 단독" 같은 무관한
+# 문장에도 걸리므로, 코드(와 닫는 괄호) 바로 뒤에 오는 경우로만 좁힌다.
+_OR_MARKER_RE = re.compile(r"어느\s*하나|[0-9]{4,10}\s*[)\]]?\s*,?\s*(?:또는|혹은)")
+# 같은 줄에 요건이 둘 이상 나열되면(PDF 등) 뒷 요건의 이름표 앞에 앞 요건의
+# 괄호와 접속어가 딸려온다 — 닫는 괄호 이후만 남기고 앞머리 접속어를 뗀다.
+_LEADING_CONJUNCTION_RE = re.compile(r"^(?:또는|혹은|및|그리고)\s+")
 # 이름표에서 떼어낼 절차성 어구. 법령 인용("~에 따른/따라/의하여")과, 실측으로
 # 확인된 마감 안내 어구("~까지")를 둘 다 다룬다 — 실측(사용자 제보,
 # 2026-09-17): "...규정」에 의하여 국가종합전자조달시스템G2B(나라장터)에
@@ -314,9 +322,11 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
                 name = inside_paren
             else:
                 before_paren = prefix.rsplit("(", 1)[0] if "(" in prefix else prefix
+                before_paren = re.split(r"[)\]]", before_paren)[-1]
                 # 실측: 인용부호로 감싼 품목명("조합놀이대")도 있어 대괄호/낫표류
                 # 인용 문장부호와 함께 일반 인용부호("'')도 선행 문자로 떼어낸다.
                 before_paren = re.sub(r"^[\s\-·「『\"'“‘]+", "", before_paren)
+                before_paren = _LEADING_CONJUNCTION_RE.sub("", before_paren)
                 segments = [s for s in _LABEL_CONNECTOR_RE.split(before_paren) if s.strip()]
                 name = (segments[-1] if segments else before_paren).strip()
                 name = name.strip("\"'“‘”’").strip()
