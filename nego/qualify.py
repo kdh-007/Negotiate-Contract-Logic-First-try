@@ -177,7 +177,7 @@ def evaluate(groups: list[LicenseGroup], held_names: list[str]) -> Qualification
 # 10자리로 제한해 일반 괄호 안 숫자(연도·조항 번호 등)를 코드로 오인하지
 # 않게 한다.
 _CODE_REQUIREMENT_RE = re.compile(
-    r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?(?P<code>[0-9]{4,10})"
+    r"(?:업종코드|세부품명번호)\s*[:：]?\s*(?:[0-9]+\s*자리\s*,?\s*)?(?P<code>[0-9]{4,10})"
     r"|\((?P<bare_code>[0-9]{10})\)"
 )
 # 문서마다 괄호를 쓰는지 대괄호를 쓰는지, 코드 여러 개를 콤마로 나열하는지
@@ -189,13 +189,27 @@ _CODE_REQUIREMENT_RE = re.compile(
 # 항목) 세부품명번호 자릿수(정확히 10자리)일 때만 코드로 인정한다 — 키워드가
 # 없어 짧은 숫자는 법조문·연도 인용과 구분할 수 없기 때문이다.
 _PREFIXED_GROUP_RE = re.compile(
-    r"(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?[(\[]([^()\[\]]*)[)\]]"
+    r"(?:업종코드|세부품명번호)\s*[:：]?\s*(?:[0-9]+\s*자리\s*,?\s*)?[(\[]([^()\[\]]*)[)\]]"
 )
 _BARE_GROUP_RE = re.compile(r"[(\[]([^()\[\]]*)[)\]]")
 _GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{4,10}")
 _BARE_GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{10}")
 _GROUP_ENTRY_STRIP_CHARS = " ,·/;、"
+# "다음 중 어느 하나"는 항목 전체를 OR로 만든다.
 _OR_MARKER_RE = re.compile(r"어느\s*하나")
+# 코드 바로 뒤(닫는 괄호 다음)에 "또는/혹은"이 오면 그 앞뒤 두 코드만 OR로 묶는다
+# (실측: 2026 대한민국 지방시대 엑스포 R26BK01739064 — "전시부스설치및디자인서비스
+# (세부품명번호 : 7215409901) 또는 전시홍보관설치및디자인서비스(세부품명번호 :
+# 7215409902)"). 항목 전체를 OR로 만들면 "다음을 모두 소지: (A 또는 B), C"에서
+# C 미보유를 놓친다 — 그래서 "또는"으로 이어진 코드끼리만 묶고 묶음 사이는 AND다.
+# "A, B 또는 C"처럼 쉼표 나열 끝에 "또는"이 오면 A·B·C 전체가 하나의 OR 묶음이다.
+# "또는"을 항목 어디서나 보면 "공동수급 또는 단독" 같은 무관한 문장에도 걸리므로
+# 코드 바로 뒤에 오는 경우로만 좁힌다.
+_OR_LINK_RE = re.compile(r"[ \t\u3000]*[)\]]?[ \t\u3000]*,?\s*(?:또는|혹은)")
+_COMMA_LINK_RE = re.compile(r"[ \t\u3000]*[)\]]?[ \t\u3000]*,")
+# 같은 줄에 요건이 둘 이상 나열되면(PDF 등) 뒷 요건의 이름표 앞에 앞 요건의
+# 괄호와 접속어가 딸려온다 — 닫는 괄호 이후만 남기고 앞머리 접속어를 뗀다.
+_LEADING_CONJUNCTION_RE = re.compile(r"^(?:또는|혹은|및|그리고)\s+")
 # 이름표에서 떼어낼 절차성 어구. 법령 인용("~에 따른/따라/의하여")과, 실측으로
 # 확인된 마감 안내 어구("~까지")를 둘 다 다룬다 — 실측(사용자 제보,
 # 2026-09-17): "...규정」에 의하여 국가종합전자조달시스템G2B(나라장터)에
@@ -225,7 +239,7 @@ def _truncate_label(name: str) -> str:
     return name
 
 
-def _split_group_entries(content: str, code_re: re.Pattern) -> list[tuple[str, str]]:
+def _split_group_entries(content: str, code_re: re.Pattern) -> list[tuple[int, str, str]]:
     """괄호/대괄호 안 내용에서 코드-이름 쌍을 뽑는다. 콤마·세미콜론·공백 등
     구분자가 무엇이든 상관없이, 코드 숫자 뒤부터 다음 코드 앞까지를 그
     코드의 이름표로 본다(실측 표기가 "코드 이름, 코드 이름" 순이라 이렇게
@@ -235,7 +249,7 @@ def _split_group_entries(content: str, code_re: re.Pattern) -> list[tuple[str, s
     for i, match in enumerate(matches):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
         name = content[match.end() : end].strip(_GROUP_ENTRY_STRIP_CHARS)
-        pairs.append((match.group(0), name))
+        pairs.append((match.start(), match.group(0), name))
     return pairs
 
 
@@ -293,43 +307,104 @@ def _extract_code_requirements(item: str) -> list[tuple[str, str]]:
          키워드가 없어 확신할 수 없으므로 정확히 10자리(세부품명번호 자릿수)인
          경우만 코드로 인정한다.
     """
-    results = []
-    for line in _merge_wrapped_parens(item).splitlines():
+    _, located = _locate_code_requirements(item)
+    return [(code, label) for _, _, code, label in located]
+
+
+def _locate_code_requirements(item: str) -> tuple[str, list[tuple[int, int, str, str]]]:
+    """`_extract_code_requirements`와 같은 추출을 하되, 괄호 줄바꿈을 합친 원문과
+    각 코드의 원문상 위치(시작, 끝)를 같이 돌려준다 — "또는"으로 이어진 코드끼리
+    묶을 때(`_or_groups`) 코드 사이 글자를 봐야 해서다. 목록 순서는 추출 단계
+    순서(`_extract_code_requirements`와 동일)이고 위치순이 아니다."""
+    merged = _merge_wrapped_parens(item)
+    results: list[tuple[int, int, str, str]] = []
+    offset = 0
+    for line in merged.split("\n"):
         consumed: list[tuple[int, int]] = []
+        base = offset
+        offset += len(line) + 1
 
         for group_match in _PREFIXED_GROUP_RE.finditer(line):
             consumed.append(group_match.span())
-            for code, name in _split_group_entries(group_match.group(1), _GROUP_ENTRY_CODE_RE):
+            for pos, code, name in _split_group_entries(group_match.group(1), _GROUP_ENTRY_CODE_RE):
                 name = _truncate_label(name)
-                results.append((code, f"{name}({code})" if name else code))
+                start = base + group_match.start(1) + pos
+                results.append((start, start + len(code), code, f"{name}({code})" if name else code))
 
         for match in _CODE_REQUIREMENT_RE.finditer(line):
             if any(_spans_overlap(match.span(), span) for span in consumed):
                 continue
             consumed.append(match.span())
-            code = match.group("code") or match.group("bare_code")
+            code_group = "code" if match.group("code") else "bare_code"
+            code = match.group(code_group)
             prefix = line[: match.start()]
             inside_paren = prefix.rsplit("(", 1)[1].strip(" ,") if "(" in prefix else ""
             if inside_paren and len(inside_paren) <= _MAX_LABEL_LEN:
                 name = inside_paren
             else:
                 before_paren = prefix.rsplit("(", 1)[0] if "(" in prefix else prefix
+                before_paren = re.split(r"[)\]]", before_paren)[-1]
                 # 실측: 인용부호로 감싼 품목명("조합놀이대")도 있어 대괄호/낫표류
                 # 인용 문장부호와 함께 일반 인용부호("'')도 선행 문자로 떼어낸다.
                 before_paren = re.sub(r"^[\s\-·「『\"'“‘]+", "", before_paren)
+                before_paren = _LEADING_CONJUNCTION_RE.sub("", before_paren)
                 segments = [s for s in _LABEL_CONNECTOR_RE.split(before_paren) if s.strip()]
                 name = (segments[-1] if segments else before_paren).strip()
                 name = name.strip("\"'“‘”’").strip()
                 name = _truncate_label(name)
-            results.append((code, f"{name}({code})" if name else code))
+            start = base + match.start(code_group)
+            results.append((start, start + len(code), code, f"{name}({code})" if name else code))
 
         for bare_match in _BARE_GROUP_RE.finditer(line):
             if any(_spans_overlap(bare_match.span(), span) for span in consumed):
                 continue
-            for code, name in _split_group_entries(bare_match.group(1), _BARE_GROUP_ENTRY_CODE_RE):
+            for pos, code, name in _split_group_entries(bare_match.group(1), _BARE_GROUP_ENTRY_CODE_RE):
                 name = _truncate_label(name)
-                results.append((code, f"{name}({code})" if name else code))
-    return results
+                start = base + bare_match.start(1) + pos
+                results.append((start, start + len(code), code, f"{name}({code})" if name else code))
+    return merged, results
+
+
+def _or_groups(item: str) -> list[list[tuple[str, str]]]:
+    """항목 안 코드 요건을 "하나만 있으면 되는" 묶음들로 나눈다. 묶음 사이는 AND다.
+
+    - 항목에 "어느 하나"가 있으면 항목 전체가 한 묶음(OR).
+    - 코드 뒤에 "또는/혹은"이 오면 그 앞뒤 코드를 한 묶음으로 잇는다.
+    - "A, B 또는 C"처럼 쉼표로 이어지다 "또는"으로 끝나는 나열은 전체를 한 묶음으로.
+    - 그 밖은 코드마다 따로(= 모두 보유해야 충족).
+    """
+    merged, located = _locate_code_requirements(item)
+    if not located:
+        return []
+    ordered = sorted(located, key=lambda r: r[0])
+    pairs = [(code, label) for _, _, code, label in ordered]
+    if _OR_MARKER_RE.search(item):
+        return [pairs]
+
+    # links[i]: ordered[i]와 ordered[i+1] 사이 연결 — "or" / "comma" / "and"
+    links = []
+    for cur, nxt in zip(ordered, ordered[1:]):
+        between = merged[cur[1] : nxt[0]]
+        if _OR_LINK_RE.match(between):
+            links.append("or")
+        elif _COMMA_LINK_RE.match(between):
+            links.append("comma")
+        else:
+            links.append("and")
+    # 쉼표 연결은 그 뒤로 이어지는 연결이 "또는"으로 끝날 때만 OR로 승격한다.
+    joined = [False] * len(links)
+    carry = False
+    for i in range(len(links) - 1, -1, -1):
+        carry = links[i] == "or" or (links[i] == "comma" and carry)
+        joined[i] = carry
+
+    groups = [[pairs[0]]]
+    for i, pair in enumerate(pairs[1:]):
+        if joined[i]:
+            groups[-1].append(pair)
+        else:
+            groups.append([pair])
+    return groups
 
 
 def evaluate_attachment_text(
@@ -343,9 +418,11 @@ def evaluate_attachment_text(
     구성 방식 등)는 판정 대상에서 뺀다 — 문장만 보고 "이게 자격요건이다"를
     추정하면 오탈락 위험이 크지만, 코드는 문서에 명시된 값 그대로라 비교가
     정확하다. "다음 중 어느 하나"가 있으면 그 항목 안 코드 중 하나만 있어도
-    충족(OR), 없으면 나열된 코드를 전부 가지고 있어야 충족(AND)으로 본다
-    (실측: 정선군 복합문화센터 공고문 — "라"항은 품목 3개를 모두 소지해야
-    하고, "바"항은 "다음 중 어느 하나"로 명시됨).
+    충족(OR)이다(실측: 정선군 복합문화센터 공고문 — "라"항은 품목 3개를 모두
+    소지해야 하고, "바"항은 "다음 중 어느 하나"로 명시됨). 그 밖에는 "또는"으로
+    이어진 코드끼리만 OR 묶음이 되고, 묶음(과 홀로 선 코드)은 전부 충족해야
+    항목이 충족이다(`_or_groups`) — 예: "모두 소지: (A 또는 B), C"에서 B만
+    보유하고 C가 없으면 미달.
     """
     held_code_names = held_code_names or {}
     groups: list[LicenseGroup] = []
@@ -353,24 +430,26 @@ def evaluate_attachment_text(
     parsed_labels: dict[str, str] = {}
 
     for idx, item in enumerate(items):
-        requirements = _extract_code_requirements(item)
-        if not requirements:
+        or_groups = _or_groups(item)
+        if not or_groups:
             continue
 
         group_no = str(idx)
-        groups.append(LicenseGroup(group_no=group_no, allowed_names=[label for _, label in requirements]))
-        for code, label in requirements:
-            parsed_labels.setdefault(code, label)
+        all_labels = [label for bundle in or_groups for _, label in bundle]
+        groups.append(LicenseGroup(group_no=group_no, allowed_names=all_labels))
+        for bundle in or_groups:
+            for code, label in bundle:
+                parsed_labels.setdefault(code, label)
 
-        is_or = bool(_OR_MARKER_RE.search(item))
-        held_flags = [code in held_codes for code, _ in requirements]
-        satisfied = any(held_flags) if is_or else all(held_flags)
-        if not satisfied:
-            missing_labels = (
-                [label for _, label in requirements]
-                if is_or
-                else [label for (_, label), ok in zip(requirements, held_flags) if not ok]
-            )
+        # 묶음 안에서는 하나만 보유해도 충족, 묶음끼리는 전부 충족해야 항목 충족.
+        # 미달 개수는 예전처럼 항목당 1건으로 센다(MAX_ALLOWED_MISSING_QUALIFICATIONS 기준 유지).
+        missing_labels = [
+            label
+            for bundle in or_groups
+            if not any(code in held_codes for code, _ in bundle)
+            for _, label in bundle
+        ]
+        if missing_labels:
             missing.append(LicenseGroup(group_no=group_no, allowed_names=missing_labels))
 
     if not groups:
