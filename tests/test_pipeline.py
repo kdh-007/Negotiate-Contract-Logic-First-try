@@ -371,6 +371,26 @@ class TestQualification(unittest.TestCase):
         result = qualify.evaluate_attachment_text([self._EXPO_ITEM], held_codes={"7215409902"})
         self.assertEqual(result.summary, "자격 충족", "코드 뒤 '또는'은 OR")
 
+    _MIXED_ITEM = (
+        "가. 다음 직접생산확인증명서를 모두 소지한 자\n"
+        "  - 전시부스설치서비스(세부품명번호 7215409901) 또는 전시홍보관설치서비스(세부품명번호 7215409902)\n"
+        "  - 조명용제어장치(세부품명번호 3912110702)"
+    )
+
+    def test_evaluate_attachment_text_or_pair_inside_all_list_still_needs_other_codes(self):
+        result = qualify.evaluate_attachment_text([self._MIXED_ITEM], held_codes={"7215409902"})
+        self.assertEqual(result.summary, "자격 미달(조명용제어장치(3912110702))",
+                         "'또는' 묶음은 충족이어도 '모두' 안의 나머지 미보유는 미달")
+
+    def test_evaluate_attachment_text_or_pair_inside_all_list_passes_when_rest_held(self):
+        result = qualify.evaluate_attachment_text([self._MIXED_ITEM], held_codes={"7215409902", "3912110702"})
+        self.assertEqual(result.summary, "자격 충족")
+
+    def test_evaluate_attachment_text_comma_list_ending_in_or_is_one_or_group(self):
+        item = "가. A(세부품명번호 1111111111), B(세부품명번호 2222222222) 또는 C(세부품명번호 7215409902)"
+        result = qualify.evaluate_attachment_text([item], held_codes={"7215409902"})
+        self.assertEqual(result.summary, "자격 충족", "'A, B 또는 C'는 셋 중 하나")
+
     def test_evaluate_attachment_text_unrelated_or_word_keeps_and(self):
         items = [
             "라. 공동수급 또는 단독으로 참가하는 자로서 다음을 모두 소지한 자\n"
