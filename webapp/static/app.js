@@ -179,30 +179,40 @@ function badges2(c) {
 }
 
 function card(c, withActions = true) {
+  // 가로 전체를 쓰는 리스트 한 줄: [배지·공고명·정보 3칸 | 싱크로율] + 아래 참가여부·담당·대화
   const st = stateOf(c);
   const el = document.createElement("article");
-  el.className = "card" + (st.assignee && st.assignee === myName() ? " mine" : "");
+  const urgent = c.days_left != null && c.days_left <= 3;
+  el.className = "card" + (st.assignee && st.assignee === myName() ? " mine" : "") + (urgent ? " urgent" : "");
   const s = c.sync;
+  const note = c.deadline_label && !["입찰 마감", "의견등록 마감"].includes(c.deadline_label) ? `<span class="why">${esc(c.deadline_label)}</span>` : "";
+  const dd = c.days_left == null ? "" : ` <span class="dd">${c.days_left < 0 ? "마감" : c.days_left === 0 ? "D-day" : `D-${c.days_left}`}</span>`;
   el.innerHTML = `
-    <div class="badges">${badges(c)}</div>
-    <div class="badges">${badges2(c)}</div>
-    <div class="title">${c.detail_url ? `<a href="${esc(c.detail_url)}" target="_blank" rel="noopener" title="나라장터에서 공고 열기">${esc(c.title)} <span class="ext" aria-hidden="true">↗</span></a>` : esc(c.title)}</div>
-    <dl class="meta">
-      <dt>${c.kind === "사전규격" ? "의견 마감" : "입찰 마감"}</dt><dd>${esc(fmtDt(c.deadline))}${c.deadline_label && !["입찰 마감", "의견등록 마감"].includes(c.deadline_label) ? ` <span class="why">(${esc(c.deadline_label)})</span>` : ""}</dd>
-      <dt>수요기관</dt><dd>${esc(c.demand_institution || "-")}</dd>
-      <dt>사업금액</dt><dd>${esc(won(c.budget))}</dd>
-      ${c.excluded_reason ? `<dt>제외 사유</dt><dd>${esc(c.excluded_reason)}</dd>` : ""}
-    </dl>
-    <div class="syncrow lv-${esc(s.level)}" title="눌러서 비슷한 과거 실적 보기">
-      <span class="why">싱크로율</span>
-      <span class="bar"><i class="lv-${esc(s.level)}" style="width:${Math.round((s.score || 0) * 100)}%"></i></span>
-      <span class="pct">${pct(s.score)}</span>
-    </div>
-    <div class="why">${esc(s.level)} · 근거: ${esc(s.basis)}${s.top[0] ? ` · 최다 유사: (${esc(s.top[0].year)}) ${esc(s.top[0].title)}` : ""}</div>`;
-  $(".syncrow", el).addEventListener("click", () => openDetail(c));
+    <div class="card-body">
+      <div class="card-main">
+        <div class="badges">${badges(c)}${badges2(c)}</div>
+        <div class="title">${c.detail_url ? `<a href="${esc(c.detail_url)}" target="_blank" rel="noopener" title="나라장터에서 공고 열기">${esc(c.title)} <span class="ext" aria-hidden="true">↗</span></a>` : esc(c.title)}</div>
+        <dl class="meta">
+          <div><dt>${c.kind === "사전규격" ? "의견등록 마감" : "입찰 마감"}</dt><dd>${esc(fmtDt(c.deadline))}${dd} ${note}</dd></div>
+          <div><dt>수요기관</dt><dd>${esc(c.demand_institution || "-")}</dd></div>
+          <div><dt>사업금액</dt><dd>${esc(won(c.budget))}</dd></div>
+          ${c.excluded_reason ? `<div class="wide"><dt>제외 사유</dt><dd>${esc(c.excluded_reason)}</dd></div>` : ""}
+        </dl>
+        <div class="why simline">최다 유사: ${s.top[0] ? `(${esc(s.top[0].year)}) ${esc(s.top[0].title)}` : "없음"} · 근거: ${esc(s.basis)}</div>
+      </div>
+      <button type="button" class="card-side lv-${esc(s.level)}" title="눌러서 비슷한 과거 실적 보기">
+        <span class="pct">${pct(s.score)}</span>
+        <span class="bar"><i class="lv-${esc(s.level)}" style="width:${Math.round((s.score || 0) * 100)}%"></i></span>
+        <span class="why">싱크로율 · ${esc(s.level)}</span>
+      </button>
+    </div>`;
+  $(".card-side", el).addEventListener("click", () => openDetail(c));
   if (withActions) {
+    const foot = document.createElement("div");
+    foot.className = "foot";
     const part = document.createElement("div");
     part.className = "part";
+    part.innerHTML = `<span class="lbl">참가여부</span>`;
     for (const status of META.statuses) {
       const b = document.createElement("button");
       b.dataset.s = status;
@@ -211,20 +221,19 @@ function card(c, withActions = true) {
       b.addEventListener("click", () => setState(c.key, st.status === status ? { clear_status: true } : { status }));
       part.appendChild(b);
     }
-    const foot = document.createElement("div");
-    foot.className = "foot";
     const mine = st.assignee && st.assignee === myName();
-    foot.innerHTML = `<span>담당: <b>${esc(st.assignee || "없음")}</b>${st.updated_by ? ` · ${esc(st.updated_by)} ${esc(fmtDt(st.updated_at))}` : ""}</span>`;
+    const right = document.createElement("div");
+    right.className = "who";
+    right.innerHTML = `<span>담당 <b>${esc(st.assignee || "없음")}</b>${st.updated_by ? ` <span class="why">· ${esc(st.updated_by)} ${esc(fmtDt(st.updated_at))}</span>` : ""}</span>`;
     const take = document.createElement("button");
     take.textContent = mine ? "담당 해제" : "내가 맡기";
     take.addEventListener("click", () => setState(c.key, mine ? { release: true } : { take: true }));
     const talk = document.createElement("button");
     talk.textContent = `대화 ${COUNTS[c.key] || 0}건`;
     talk.addEventListener("click", () => openThread(c));
-    const right = document.createElement("span");
-    right.append(take, " ", talk);
-    foot.appendChild(right);
-    el.append(part, foot);
+    right.append(take, talk);
+    foot.append(part, right);
+    el.append(foot);
   }
   return el;
 }
