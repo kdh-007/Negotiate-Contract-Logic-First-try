@@ -129,7 +129,7 @@ const QUAL_EMPTY = {
 };
 const KIND_TAG = { industry: "업종", product: "품명" };
 function reqHtml(req, mixed) {
-  const item = (i) => `<div class="tip-sub ${i.held ? "held" : ""}">${i.held ? "✓" : "✗"} ${mixed ? `<span class="kind">${KIND_TAG[i.kind]}</span> ` : ""}${esc(i.label)}</div>`;
+  const item = (i) => `<div class="tip-sub ${i.held ? "held" : ""}">${i.held ? "✓" : "✗"} ${mixed ? `<span class="kind">${KIND_TAG[i.kind]}</span> ` : ""}${esc(i.label)}${i.via ? ` <small>← ${esc(i.via)}</small>` : ""}</div>`;
   if (req.combos) {
     // 나라장터 원문 "[A]과 [B] 업종 또는 [C]과 [D] 업종"처럼 조합(세트)으로 — 조합 하나를 다 갖추면 충족
     const row = (r, j) => `<div class="combo-row${r.held ? " held" : ""}">`
@@ -139,11 +139,11 @@ function reqHtml(req, mixed) {
       + req.combos.map((c, i) => `<div class="tip-sub combo"><span class="no">${circled[i] || `${i + 1}.`}</span><div>${c.rows.map(row).join("")}</div></div>`).join("") + `</div>`;
   }
   // 미보유는 전부 붉은 ✗로 — 흰 글씨면 보유한 자격으로 착각한다(2026-09-30 제보)
-  if (!req.any_of) return `<div class="tip-item"><span class="why">반드시 보유</span>${item(req.items[0])}</div>`;
+  if (!req.any_of) return `<div class="tip-item"><span class="why">${esc(req.why || "반드시 보유")}</span>${item(req.items[0])}</div>`;
   // "미달 1건"이 면허 1개가 없다는 뜻으로 읽히지 않게, 요건 1건 = 아래 N개 중 택1임을 풀어 쓴다
   const n = req.items.length;
   const none = req.items.every((i) => !i.held);
-  const why = `아래 ${n}개 중 1개 이상 보유하면 충족${none ? ` — ${n === 2 ? "둘 다" : "모두"} 미보유` : ""}`;
+  const why = `아래 ${n}개 중 1개 이상 보유하면 충족${none ? ` — ${n === 2 ? "둘 다" : "모두"} 미보유` : " — 보유로 충족"}`;
   return `<div class="tip-item"><span class="why">${why}</span>${req.items.map(item).join("")}</div>`;
 }
 function qualButton(label, cls, aria, body) {
@@ -158,10 +158,16 @@ function qualBadge(q) {
       const unit = p.key === "product" ? "품목" : "면허";
       const need = p.need ?? p.missing.length;
       cls = "bad"; label += ` · ${unit} 최소 ${need}개 부족`;
-      const mixed = p.missing.some((r) => new Set(r.items.map((i) => i.kind)).size > 1);
-      body += `<div class="tip-title bad">부족한 ${unit} 최소 ${need}개</div>` + p.missing.map((r) => reqHtml(r, mixed)).join("");
+      body += `<div class="tip-title bad">부족한 ${unit} 최소 ${need}개</div>`;
     } else if (p.status === "충족") cls = "good";
-    if (p.held.length)
+    // 요건 전체를 한 목록으로 — 미달 요건 먼저, 충족 요건 뒤. 보유 ✓ 초록, 미보유 ✗ 붉은색
+    const ok = p.satisfied || [];
+    const all = [...p.missing, ...ok];
+    if (all.length) {
+      const mixed = all.some((r) => new Set((r.items || []).map((i) => i.kind)).size > 1);
+      body += `<div class="tip-title">${esc(p.name)} ${all.length}건 — <span class="good">충족 ${ok.length}</span> · <span class="bad">미달 ${p.missing.length}</span></div>`
+        + all.map((r) => reqHtml(r, mixed)).join("");
+    } else if (p.held.length)
       body += `<div class="tip-title good">보유로 충족한 자격 ${p.held.length}건</div>` + p.held.map((n) => `<div class="tip-item">✓ ${esc(n)}</div>`).join("");
     if (!body) body = `<div class="tip-title">${esc(p.name)} ${esc(p.status)}</div><div class="tip-note">${esc(QUAL_EMPTY[p.key][p.status] || "")}</div>`;
     else body += `<div class="tip-note">${esc(QUAL_NOTES[p.key])}</div>`;

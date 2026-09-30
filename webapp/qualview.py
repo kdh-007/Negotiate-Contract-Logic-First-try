@@ -112,6 +112,8 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
     미보유 쪽은 요건 단위라 나눌 수 없어, 전부 10자리일 때만 세부품명번호 부문에 둔다.
     """
     missing: dict[str, list] = {k: [] for k, _ in SECTIONS}
+    # 충족한 요건도 미보유와 같은 모양으로 — 팝업에서 요건 전체를 초록 ✓ / 붉은 ✗로 한 번에 보여준다(2026-09-30 요청)
+    satisfied: dict[str, list] = {k: [] for k, _ in SECTIONS}
     held_by: dict[str, list[str]] = {k: [] for k, _ in SECTIONS}
     satisfied_any: dict[str, bool] = {k: False for k, _ in SECTIONS}
     # 같은 요건이 여러 번 잡히면 한 번만 — **코드로** 비교한다. 이름으로 비교하면 "G2B분류번호 교육훈련장비
@@ -125,6 +127,7 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
                 if state == "missing":
                     missing["industry"].append(combo)
                 else:  # 채운 조합의 면허들을 보유 자격으로 적는다
+                    satisfied["industry"].append(combo)
                     done = next(c for c in combo["combos"] if c["held"])
                     held_by["industry"].extend(r["label"] for r in done["rows"])
                     satisfied_any["industry"] = True
@@ -142,6 +145,9 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
                 else:
                     mine = [i for i in items if i["held"]] or [first]
                     label = mine[0]["label"] if mine[0] is first else f"{mine[0]['label']} (대체 인정)"
+                    if mine[0] is not first:
+                        req["items"][0]["via"] = label
+                    satisfied[_section_of(items)].append(req)
                     held_by[mine[0]["kind"]].append(label)
                     satisfied_any[mine[0]["kind"]] = True
                 continue
@@ -157,12 +163,18 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
                             kept["label"] = _best_label([kept["label"], other["label"]])
                 continue
             by_sig[sig] = items
-            order.append((state, sig))
-    for state, sig in order:
+            # 첨부 판정의 "held" 그룹은 요건이 아니라 참가자격 절에서 찾은 보유 코드 목록이다
+            order.append((state, sig, g.group_no == "held"))
+    for state, sig, held_list in order:
         items = by_sig[sig]
         if state == "missing":
             missing[_section_of(items)].append(items)
             continue
+        if held_list:
+            for i in items:
+                satisfied[i["kind"]].append({"any_of": False, "items": [i], "why": "보유 확인"})
+        else:
+            satisfied[_section_of(items)].append({"any_of": len(items) > 1, "items": items})
         mine = [i for i in items if i["held"]]
         if mine:
             for i in mine:
@@ -189,12 +201,26 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
         else:
             status = "제한 없음" if had_source.get(key) else "미확인"
         reqs = [items if isinstance(items, dict) else {"any_of": len(items) > 1, "items": items} for items in miss]
+        # 충족 요건 중복 제거 — 같은 코드가 API 요건과 첨부 "보유 확인"에 두 번 잡히면 요건 쪽만 남긴다
+        ok_reqs, seen = [], set()
+        for r in sorted(satisfied[key], key=lambda r: r.get("why") == "보유 확인"):
+            labels = ([row["label"] for c in r["combos"] for row in c["rows"]] if r.get("combos")
+                      else [i["label"] for i in r["items"]])
+            sig = tuple(sorted(_code(l) or l for l in labels))
+            if r.get("why") == "보유 확인" and (sig[0] in seen):
+                continue
+            if sig in seen:
+                continue
+            seen.add(sig)
+            seen.update(sig)
+            ok_reqs.append(r)
         parts.append({
             "key": key, "name": name, "status": status,
             # "N건"이 무엇을 세는지 안 보여서(2026-09-30 제보) — 자격을 갖추려면 최소 몇 개를 더 갖춰야 하나로 센다.
             # "반드시"·"N개 중 1개 이상" 요건은 1개, "조합 중 하나"는 가장 덜 모자란 조합의 미보유 수.
             "need": sum(r.get("need", 1) for r in reqs),
             "missing": reqs,
+            "satisfied": ok_reqs,
             "held": held_by[key],
         })
     return parts

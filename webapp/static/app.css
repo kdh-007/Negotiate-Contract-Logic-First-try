@@ -175,3 +175,4 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 .combo-row.held { color: var(--good); }
 .combo-row small { color: var(--muted); font-size: 10.5px; }
 .qual .tip { max-height: 70vh; overflow-y: auto; }
+.tip-title .good { color: var(--good); } .tip-title .bad { color: var(--bad); }
