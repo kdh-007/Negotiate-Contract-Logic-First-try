@@ -125,6 +125,21 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
                     held_by["industry"].extend(r["label"] for r in done["rows"])
                     satisfied_any["industry"] = True
                 continue
+            if len(g.rows or []) == 1 and len(g.rows[0]) > 1:
+                # "반드시" 요건인데 나라장터가 대신 인정하는 업종을 같이 준 경우 — 대표 면허만 크게, 나머지는 "대체 인정"
+                items = _items(SimpleNamespace(allowed_names=g.rows[0]), held)
+                if not items:
+                    continue
+                first, alts = items[0], items[1:]
+                req = {"any_of": False, "items": [dict(first, held=any(i["held"] for i in items))],
+                       "alts": [i["label"] for i in alts]}
+                if state == "missing":
+                    missing[_section_of(items)].append(req)
+                else:
+                    mine = [i for i in items if i["held"]] or [first]
+                    held_by[mine[0]["kind"]].append(mine[0]["label"])
+                    satisfied_any[mine[0]["kind"]] = True
+                continue
             items = _items(g, held)
             if not items:
                 continue
@@ -180,5 +195,6 @@ def flat_missing(parts: Iterable[dict[str, Any]]) -> list[str]:
     def line(req: dict[str, Any]) -> str:
         if req.get("combos"):
             return " 또는 ".join("(" + " + ".join(r["label"] for r in c["rows"]) + ")" for c in req["combos"])
-        return " 또는 ".join(i["label"] for i in req["items"])
+        line = " 또는 ".join(i["label"] for i in req["items"])
+        return line + (f" (대체 인정: {', '.join(req['alts'])})" if req.get("alts") else "")
     return [line(req) for p in parts for req in p["missing"]]

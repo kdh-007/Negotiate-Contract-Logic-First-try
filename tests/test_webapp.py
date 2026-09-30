@@ -96,7 +96,8 @@ class TestSerialize(unittest.TestCase):
         self.assertEqual([p["key"] for p in q["parts"]], ["industry", "product"])
         self.assertEqual(q["parts"][0]["status"], "미달")
         self.assertEqual(len(q["parts"][0]["missing"]), 2)
-        self.assertTrue(any(" 또는 " in line for line in q["missing"]), q["missing"])
+        # 기계설비공사업 행은 전기공사업을 대신 인정한다 — "반드시 보유" 요건에 대체 인정으로 붙는다
+        self.assertTrue(any("대체 인정: 전기공사업" in line for line in q["missing"]), q["missing"])
         self.assertIn("g2b.go.kr", flagged["detail_url"])
         self.assertEqual(flagged["category"], "협상")
         self.assertEqual(flagged["key"], "R26TEST00009-000")

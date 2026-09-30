@@ -550,9 +550,10 @@ class TestQualification(unittest.TestCase):
         self.assertEqual(result.summary, "자격 충족")
 
     def test_summary_lists_missing_license_names(self):
+        # 행의 맨 앞이 대표 면허, 뒤는 대신 인정 업종 — 요약엔 대표 면허만 (대체 인정은 팝업에서)
         groups = [qualify.LicenseGroup("1", rows=[["실내건축공사업"], ["전기공사업", "정보통신공사업"]])]
         result = qualify.evaluate(groups, self.held)
-        self.assertEqual(result.summary, "자격 미달(전기공사업/정보통신공사업)")
+        self.assertEqual(result.summary, "자격 미달(전기공사업)")
 
     def test_summary_dedupes_name_repeated_within_one_group_before_matching_other_groups(self):
         """실측 재현(Run #45, R26BK01731335): 첨부문서 한 항목 안에서 같은 코드가
@@ -953,8 +954,8 @@ class TestOverlappingLicenseGroups(unittest.TestCase):
         none = qualify.evaluate(groups, [], set())
         self.assertEqual(none.missing_count, 1, "택1 요건 1건")
 
-    def test_multi_row_groups_become_one_combo_requirement(self):
-        """그룹1 [4442, 1469] 또는 그룹2 [4444, 1469] → "아래 조합 중 하나" 요건 1건 (나라장터 원문처럼 세트로)."""
+    def test_common_row_is_required_and_rest_is_choice(self):
+        """그룹1 [4442, 1469] 또는 그룹2 [4444, 1469] → 공고문처럼 "1469 반드시" + "4442·4444 중 1개 이상"."""
         rows = [
             {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "산업디자인전문회사(환경디자인분야)/4442"},
             {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "2", "lcnsLmtNm": "소프트웨어사업자(디지털콘텐츠개발서비스사업)/1469"},
@@ -963,13 +964,29 @@ class TestOverlappingLicenseGroups(unittest.TestCase):
         ]
         groups = qualify.group_license_rows(rows)["N"]
         reqs = qualify.license_requirements(groups)
-        self.assertEqual(len(reqs), 1)
-        self.assertEqual(reqs[0].allowed_names, [
-            "산업디자인전문회사(환경디자인분야)(4442) + 소프트웨어사업자(디지털콘텐츠개발서비스사업)(1469)",
-            "산업디자인전문회사(종합디자인분야)(4444) + 소프트웨어사업자(디지털콘텐츠개발서비스사업)(1469)",
+        self.assertEqual([r.allowed_names for r in reqs], [
+            ["소프트웨어사업자(디지털콘텐츠개발서비스사업)/1469"],
+            ["산업디자인전문회사(환경디자인분야)/4442", "산업디자인전문회사(종합디자인분야)/4444"],
         ])
-        self.assertEqual(qualify.evaluate(groups, [], {"4442", "1469"}).missing_count, 0)
-        self.assertEqual(qualify.evaluate(groups, [], {"4442"}).missing_count, 1, "1469 없으면 어느 조합도 못 채움")
+        self.assertEqual(qualify.evaluate(groups, [], {"4444", "1469"}).missing_count, 0)
+        missing = qualify.evaluate(groups, [], {"4442"}).missing_groups
+        self.assertEqual([g.allowed_names for g in missing], [["소프트웨어사업자(디지털콘텐츠개발서비스사업)/1469"]])
+
+    def test_waste_notice_required_plus_one_of_six(self):
+        """폐기물 공고 공고문: "① 수집·운반업(1227) 반드시 + ②~⑦ 중 1개 이상". 나라장터는 6조합으로 준다."""
+        pairs = ["6786", "1143", "6770", "1257", "6778", "1388"]
+        rows = []
+        for g, code in enumerate(pairs, 1):
+            rows.append({"bidNtceNo": "W", "lmtGrpNo": str(g), "lmtSno": "1", "lcnsLmtNm": "폐기물수집·운반업/1227",
+                         "permsnIndstrytyList": "[폐기물수집·운반업/1227][폐기물종합처분업]"})
+            rows.append({"bidNtceNo": "W", "lmtGrpNo": str(g), "lmtSno": "2", "lcnsLmtNm": f"처분재활용{code}/{code}"})
+        groups = qualify.group_license_rows(rows)["W"]
+        reqs = qualify.license_requirements(groups)
+        self.assertEqual(len(reqs), 2)
+        self.assertEqual(reqs[0].rows, [["폐기물수집·운반업/1227", "폐기물종합처분업"]], "필수 + 대체 인정")
+        self.assertEqual(len(reqs[1].allowed_names), 6)
+        self.assertEqual(qualify.evaluate(groups, [], {"1227", "6770"}).missing_count, 0)
+        self.assertEqual(qualify.evaluate(groups, [], {"6770"}).missing_count, 1)
 
     def test_combo_needs_every_license_of_one_set(self):
         """"A와 B" 또는 "C와 D" — 한 조합을 다 갖춰야 충족. A·C처럼 조합을 섞으면 미달."""

@@ -82,7 +82,11 @@ class QualificationResult:
         # 제거한 뒤 이어야, 같은 요건이면 다른 그룹이라도 "A"로 합쳐진다.
         # 같은 자격이 여러 그룹에서 각각 미충족으로 걸리는 경우(예: 첨부문서
         # 항목 여러 개가 같은 코드를 요구)도 이 순서로 함께 걸러진다.
-        names = ("/".join(dict.fromkeys(g.allowed_names)) for g in self.missing_groups)
+        # "반드시" 요건(rows 한 줄)은 대표 면허만 — 나라장터가 대신 인정하는 업종까지 늘어놓으면 요약이 읽히지 않는다
+        names = (
+            g.rows[0][0] if len(g.rows) == 1 and g.rows[0] else "/".join(dict.fromkeys(g.allowed_names))
+            for g in self.missing_groups
+        )
         # 같은 코드인데 표기만 다른 요건("G2B분류번호 교육훈련장비(6010999901)"·"육훈련장비(6010999901)")은 한 번만
         by_code: dict[str, str] = {}
         for name in names:
@@ -221,28 +225,39 @@ def license_requirements(
     groups: list[LicenseGroup], held_names: list[str] = (), held_codes: set[str] | frozenset[str] = frozenset()
 ) -> list[LicenseGroup]:
     """면허제한 그룹들("그룹 A 또는 그룹 B", 그룹 안 행은 모두 필요)을 화면·판정용 요건 목록으로 바꾼다.
-    요건끼리는 모두 필요하다.
+    요건끼리는 모두 필요하다. 공고문이 쓰는 모양("① 반드시 + ②~⑦ 중 1개 이상")에 맞춘다.
 
-    - 그룹이 하나 → 그 그룹의 행이 각각 요건 (행 안은 "이 중 하나")
-    - 그룹이 여럿이고 모두 한 행짜리 → 행들을 합친 "이 중 하나" 요건 1건 (출판사 또는 인쇄사)
-    - 그룹이 여럿이고 두 행 이상인 그룹이 있으면 → **"아래 조합 중 하나"** 요건 1건 (`combos`).
-      2026-09-30 사용자 요청: "[1227]과 [6786] 또는 [1143]과 [1227] …"을 공통 면허 + 택1로 풀어 보이면
-      나라장터 원문과 대조가 안 돼서 원문처럼 세트로 보여준다.
+    - 그룹이 하나 → 그 그룹의 행이 각각 "반드시" 요건
+    - 모든 그룹에 똑같이 든 행(대표 면허 기준) → "반드시" 요건 (폐기물 공고의 수집·운반업 1227)
+    - 나머지가 그룹마다 한 행씩 → 그 행들을 합친 "이 중 하나" 요건 1건 (출판사 또는 인쇄사 / ②~⑦ 중 1개)
+    - 나머지가 그보다 복잡하면 → "아래 조합 중 하나" 요건 1건 (`combos`, "A와 B" 또는 "C와 D")
+    "반드시" 요건은 `rows=[행]`을 달아 둔다 — 행의 맨 앞이 대표 면허, 나머지는 나라장터가 대신 인정하는 업종.
     """
     grouped = [[_dedupe_names(r) for r in (g.rows or [g.allowed_names]) if _dedupe_names(r)] for g in groups]
     grouped = [rows for rows in grouped if rows]
     if not grouped:
         return []
 
-    def req(no: str, names: list[str]) -> LicenseGroup:
-        return LicenseGroup(group_no=no, allowed_names=_dedupe_names(names))
+    def key(row: list[str]) -> str:
+        return _license_base(row[0])
+
+    def must(no: str, row: list[str]) -> LicenseGroup:
+        return LicenseGroup(group_no=no, allowed_names=list(row), rows=[list(row)])
 
     if len(grouped) == 1:
-        return [req(f"요건{i + 1}", r) for i, r in enumerate(grouped[0])]
-    if all(len(rows) == 1 for rows in grouped):
-        return [req("택1", [n for rows in grouped for n in rows[0]])]
-    labels = [" + ".join(_row_label(r) for r in rows) for rows in grouped]
-    return [LicenseGroup(group_no="조합", allowed_names=list(dict.fromkeys(labels)), combos=grouped)]
+        return [must(f"필수{i + 1}", r) for i, r in enumerate(grouped[0])]
+
+    common_keys = set.intersection(*({key(r) for r in rows} for rows in grouped))
+    out = [must(f"필수{i + 1}", r) for i, r in enumerate(r for r in grouped[0] if key(r) in common_keys)]
+    residuals = [[r for r in rows if key(r) not in common_keys] for rows in grouped]
+    if any(not res for res in residuals):  # 공통 면허만으로 채워지는 그룹이 있으면 나머지는 선택 사항
+        return out
+    if all(len(res) == 1 for res in residuals):
+        out.append(LicenseGroup(group_no="택1", allowed_names=_dedupe_names([n for res in residuals for n in res[0]])))
+        return out
+    labels = [" + ".join(_row_label(r) for r in res) for res in residuals]
+    out.append(LicenseGroup(group_no="조합", allowed_names=list(dict.fromkeys(labels)), combos=residuals))
+    return out
 
 
 def evaluate(
