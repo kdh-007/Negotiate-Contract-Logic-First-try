@@ -116,8 +116,9 @@ const fmtDt = (s) => s ? s.replace("T", " ").slice(0, 16) : "일정 미상";
 const pct = (s) => s == null ? "–" : `${Math.round(s * 100)}%`;
 function dday(c) {
   if (c.days_left == null) return `<span class="b" title="마감 정보 없음">일정 미상</span>`;
-  const t = c.days_left < 0 ? "마감" : c.days_left === 0 ? "D-day" : `D-${c.days_left}`;
-  return `<span class="b dday${c.days_left > 7 ? " far" : ""}" title="${esc(c.deadline_label)} ${esc(fmtDt(c.deadline))}">마감 ${t}</span>`;
+  // 지난 공고는 "마감 마감"이 되지 않게 "마감됨" 한 번만
+  const text = c.days_left < 0 ? "마감됨" : c.days_left === 0 ? "마감 D-day" : `마감 D-${c.days_left}`;
+  return `<span class="b dday${c.days_left > 7 ? " far" : ""}" title="${esc(c.deadline_label)} ${esc(fmtDt(c.deadline))}">${text}</span>`;
 }
 const QUAL_NOTES = {
   industry: "자격요건 = 업종·면허(업종코드 4자리). ✓ 보유 · ✗ 미보유 · – 이미 충족해서 없어도 됨.",
@@ -200,25 +201,46 @@ const SIDO_FULL = { 서울: "서울특별시", 부산: "부산광역시", 대구
   충남: "충청남도", 전북: "전북특별자치도", 전남: "전라남도", 경북: "경상북도", 경남: "경상남도", 제주: "제주특별자치도" };
 function regionBadge(c) {
   // 지역 제한 판정(업체 소재지 vs 지일 소재지). 후보에서 빼지는 않고 표시만 한다.
+  // 자격 배지처럼 커서를 대면 팝업(2026-09-30 요청) — 판정 근거 문장과 지일 소재지를 보여준다
   const r = c.region_check || { status: "미확인", required: [] };
   const req = (r.required || []).map((s) => SIDO_FULL[s] || s);
-  const tip = [r.source ? `근거: ${r.source}` : "", r.evidence || "", r.company ? `지일 소재지: ${SIDO_FULL[r.company] || r.company}` : ""]
-    .filter(Boolean).join("\n");
+  const company = r.company ? SIDO_FULL[r.company] || r.company : "";
+  const pop = (label, cls, title, lines, note) => qualButton(label, cls, label,
+    `<div class="tip-title ${cls}">${esc(title)}</div>` + lines.filter(Boolean).map((l) => `<div class="tip-item">${l}</div>`).join("")
+    + (note ? `<div class="tip-note">${esc(note)}</div>` : ""));
+  const basis = [r.source ? `<span class="why">근거: ${esc(r.source)}</span>${esc(r.evidence || "")}` : "",
+    company ? `<span class="why">지일 소재지</span>${esc(company)}` : ""];
   if (r.status === "미달")
-    return `<span class="b bad" title="${esc(tip)}">지역 미달 (${esc(req.join("·"))}만)</span>`;
+    return pop(`지역 미달 (${req.join("·")}만)`, "bad", `참가 가능 지역: ${req.join("·")}`, basis,
+      "지역 제한은 후보에서 빼지 않고 표시만 합니다. 공동수급으로 보완할 수 있는지 공고문을 확인하세요.");
   if (r.status === "충족")
-    return `<span class="b good" title="${esc(tip)}">지역 충족 (${esc(req.slice(0, 2).join("·"))}${req.length > 2 ? " 외" : ""})</span>`;
+    return pop(`지역 충족 (${req.slice(0, 2).join("·")}${req.length > 2 ? " 외" : ""})`, "good", `참가 가능 지역: ${req.join("·")}`, basis);
   if (c.regions && c.regions.length)
-    return `<span class="b warn" title="${esc(c.regions.join(", "))}">지역제한 ${esc(c.regions.slice(0, 2).join("·"))}${c.regions.length > 2 ? " 외" : ""}</span>`;
-  return `<span class="b" title="나라장터 참가가능지역·첨부 공고문 모두 지역 요건을 찾지 못함 (제한이 없거나 등록되지 않은 것)">지역제한 정보 없음</span>`;
+    return pop(`지역제한 ${c.regions.slice(0, 2).join("·")}${c.regions.length > 2 ? " 외" : ""}`, "warn", "나라장터 참가가능지역",
+      [esc(c.regions.join(", ")), company ? `<span class="why">지일 소재지</span>${esc(company)}` : ""],
+      "시·도 이름을 알아볼 수 없어 충족 여부를 판정하지 못했습니다.");
+  return pop("지역제한 정보 없음", "", "지역제한 정보 없음", [],
+    "나라장터 참가가능지역·첨부 공고문 모두 지역 요건을 찾지 못했습니다 (제한이 없거나 등록되지 않은 것).");
 }
-// 판정하지 않는 글로 된 요건 — 실적·현장설명회·기술인력. 칩에 커서를 대면 원문 문장(현장설명회는 날짜도)
+// 판정하지 않는 글로 된 요건 — 실적·현장설명회·기술인력. 커서를 대면 팝업으로 원문 문장(현장설명회는 일시도)
 const FLAG_LABEL = { "실적": "실적 요건", "현장설명회": "현장설명회 참가 필수", "인력": "기술인력 요건", "건축사사무소": "건축사사무소 요건" };
 function flagBadges(c) {
   return (c.text_flags || []).map((f) => {
-    const tip = [f.date ? `일시: ${f.date}` : "", f.text, "자동 판정하지 않습니다 — 공고문에서 확인하세요."].filter(Boolean).join("\n");
-    return `<span class="b warn" title="${esc(tip)}">${esc(FLAG_LABEL[f.kind] || f.kind)}${f.date ? ` ${esc(f.date.slice(5, 10))}` : ""}</span>`;
+    const label = `${FLAG_LABEL[f.kind] || f.kind}${f.date ? ` ${f.date.slice(5, 10)}` : ""}`;
+    const body = `<div class="tip-title warn">${esc(FLAG_LABEL[f.kind] || f.kind)} — 확인 필요</div>`
+      + (f.date ? `<div class="tip-item"><span class="why">일시</span>${esc(f.date)}</div>` : "")
+      + `<div class="tip-item"><span class="why">공고문 원문</span>${esc(f.text)}</div>`
+      + `<div class="tip-note">자동 판정하지 않습니다 — 공고문에서 직접 확인하세요.</div>`;
+    return qualButton(label, "warn", label, body);
   });
+}
+function jointBadge(c) {
+  const allowed = c.joint.allowed;
+  const body = `<div class="tip-title ${allowed ? "good" : ""}">공동수급 ${esc(c.joint.label)}</div>`
+    + `<div class="tip-note">${allowed
+      ? "자격·실적이 모자라면 공동수급(공동이행·분담이행)으로 보완할 수 있습니다. 구성원 수·지역 조건은 공고문을 확인하세요."
+      : "나라장터 공동수급 정보 기준입니다. 공고문에 따로 적힌 조건이 있는지 확인하세요."}</div>`;
+  return qualButton(`공동수급 ${c.joint.label}`, allowed ? "info" : "", `공동수급 ${c.joint.label}`, body);
 }
 function badges2(c) {
   const out = [qualBadge(c.qualification), ...flagBadges(c)];
@@ -228,7 +250,7 @@ function badges2(c) {
     return out.join("");
   }
   out.push(regionBadge(c));
-  out.push(`<span class="b ${c.joint.allowed ? "info" : ""}">공동수급 ${esc(c.joint.label)}</span>`);
+  out.push(jointBadge(c));
   return out.join("");
 }
 
