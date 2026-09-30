@@ -104,11 +104,14 @@ def _dedupe_names_preferring_code(names: list[str]) -> list[str]:
     by_base: dict[str, str] = {}
     order: list[str] = []
     for n in names:
-        base = n.split("(", 1)[0]
+        # 맨 뒤 "(코드)"만 떼고 비교한다. 예전엔 첫 "(" 앞까지를 이름으로 봐서 "산업디자인전문회사(시각디자인분야)"·
+        # "(환경디자인분야)"·"(종합디자인분야)"가 전부 같은 이름으로 합쳐져 "또는" 요건이 하나만 보였다(2026-09-30 제보).
+        base = re.sub(r"\s*\(\d{4,10}\)\s*$", "", n)
+        has_code = base != n
         if base not in by_base:
             order.append(base)
             by_base[base] = n
-        elif "(" in n and "(" not in by_base[base]:
+        elif has_code and re.sub(r"\s*\(\d{4,10}\)\s*$", "", by_base[base]) == by_base[base]:
             by_base[base] = n
     return [by_base[b] for b in order]
 

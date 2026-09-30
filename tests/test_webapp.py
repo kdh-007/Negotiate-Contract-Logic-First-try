@@ -149,6 +149,42 @@ class TestQualificationView(unittest.TestCase):
         self.assertFalse(req["any_of"])
         self.assertEqual([i["label"] for i in req["items"]], ["폐기물수집·운반업(1227)"])
 
+    def test_substitute_chain_of_or_all_shown(self):
+        """"A[4440] 또는 B[4442] 또는 C[4443] 또는 D[4444]" — 사슬로 이어진 대체 업종 모두 표시 (국립울진해양과학관)."""
+        from nego import qualify
+        from webapp import qualview
+        rows = [{"bidNtceNo": "U", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "산업디자인전문회사(시각디자인분야)/4440",
+                 "permsnIndstrytyList": "[산업디자인전문회사(시각디자인분야)/4440][산업디자인전문회사(환경디자인분야)/4442]"
+                                        "[산업디자인전문회사(멀티미디어디자인분야)/4443][산업디자인전문회사(종합디자인분야)/4444]"}]
+        held_raw = {"heldIndustries": [
+            {"code": "4440", "name": "산업디자인전문회사(시각디자인분야)"},
+            {"code": "4442", "name": "산업디자인전문회사(환경디자인분야)"},
+            {"code": "4444", "name": "산업디자인전문회사(종합디자인분야)"},
+        ]}
+        q = qualify.evaluate(qualify.group_license_rows(rows)["U"], qualify.load_held_names(held_raw),
+                             qualify.load_held_codes(held_raw))
+        doc =("⑥ 「산업디자인진흥법」 제9조에 의한 산업디자인전문회사(시각디자인분야)[업종코드 4440] 또는 산업\n"
+               "디자인전문회사(환경디자인분야)[업종코드 4442] 또는 산업디자인전문회사(멀티미디어디자인분야)\n"
+               "[업종코드 4443] 또는 산업디자인전문회사(종합디자인분야)[업종코드 4444]로 입찰참가 등록 한 자")
+        part = qualview.build(q, qualview.held_lookup(held_raw), {"industry": True}, doc_text=doc)[0]
+        req = part["satisfied"][0]
+        self.assertTrue(req["any_of"])
+        self.assertEqual(len(req["items"]), 4, [i["label"] for i in req["items"]])
+        self.assertEqual([i["held"] for i in req["items"]], [True, True, False, True])
+
+    def test_different_fields_of_same_license_are_not_merged(self):
+        """"산업디자인전문회사(시각디자인분야)"와 "(환경디자인분야)"는 다른 업종 — 괄호 앞 이름이 같다고 합치면 안 된다."""
+        from nego import qualify
+        from webapp import qualview
+        rows = [
+            {"bidNtceNo": "D", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "산업디자인전문회사(환경디자인분야)/4442"},
+            {"bidNtceNo": "D", "lmtGrpNo": "2", "lmtSno": "1", "lcnsLmtNm": "산업디자인전문회사(종합디자인분야)/4444"},
+        ]
+        q = qualify.evaluate(qualify.group_license_rows(rows)["D"], [])
+        req = qualview.build(q, (set(), set()), {"industry": True})[0]["missing"][0]
+        self.assertEqual([i["label"] for i in req["items"]],
+                         ["산업디자인전문회사(환경디자인분야)(4442)", "산업디자인전문회사(종합디자인분야)(4444)"])
+
     def test_substitute_license_used_for_judgment_but_not_shown(self):
         """허용업종(대신 인정)은 판정에만 쓰고, 그걸로 채웠을 때만 '(대체 인정)'으로 적는다."""
         from nego import qualify

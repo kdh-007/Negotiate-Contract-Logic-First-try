@@ -90,7 +90,10 @@ def _named_alternatives(items: list[dict[str, Any]], doc_text: str) -> list[dict
 
     나라장터 허용업종은 공고문과 어긋날 때가 있어 기본으로는 숨기지만(폐기물 공고: 공고문은 "1227 반드시"),
     공고문이 "토목공사업 또는 토목건축공사업을 등록한 자"처럼 적었으면 보여줘야 한다(2026-09-30 제보).
-    공백을 지운 원문에서 대표 이름과 대체 이름이 한 문장 안에서 "또는"으로 이어져 있는지 본다(순서 무관).
+    공백을 지운 원문에서 대표 이름과 대체 이름이 한 항목 안에서 "또는"으로 이어져 있는지 본다(순서 무관).
+    "A[4440] 또는 B[4442] 또는 C[4443] 또는 D[4444]로 등록한 자"처럼 "또는"이 사슬로 이어져도 된다
+    (2026-09-30 제보: 국립울진해양과학관 — 4440만 보이고 4442·4443·4444가 빠졌음). 사이에 항목 번호
+    (①, 2), 가.)나 마침표가 끼면 다른 항목이라 잇지 않는다 — 폐기물 공고 "① 1227 ② 종합처분업"은 계속 숨김.
     """
     if not doc_text or len(items) < 2:
         return []
@@ -99,9 +102,13 @@ def _named_alternatives(items: list[dict[str, Any]], doc_text: str) -> list[dict
     out = []
     for alt in items[1:]:
         a = re.escape(_plain(alt["label"]))
-        gap = r"[^.。]{0,20}?또는[^.。]{0,20}?"
-        if re.search(first + gap + a, text) or re.search(a + gap + first, text):
-            out.append(alt)
+        between = r"(?:(?![.。①-⑳]|\d\)|[가-하]\.)[^\n]){0,160}?"
+        pattern = f"(?:{first}(?P<g1>{between}){a}|{a}(?P<g2>{between}){first})"
+        for m in re.finditer(pattern, text):
+            gap = m.group("g1") if m.group("g1") is not None else m.group("g2")
+            if "또는" in gap and not re.search(r"과|와|및|모두", re.sub(r"\([^)]*\)|\[[^\]]*\]", "", gap).replace("또는", "")):
+                out.append(alt)
+                break
     return out
 
 
