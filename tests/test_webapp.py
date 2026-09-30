@@ -96,8 +96,9 @@ class TestSerialize(unittest.TestCase):
         self.assertEqual([p["key"] for p in q["parts"]], ["industry", "product"])
         self.assertEqual(q["parts"][0]["status"], "미달")
         self.assertEqual(len(q["parts"][0]["missing"]), 2)
-        # 기계설비공사업 행은 전기공사업을 대신 인정한다 — "반드시 보유" 요건에 대체 인정으로 붙는다
-        self.assertTrue(any("대체 인정: 전기공사업" in line for line in q["missing"]), q["missing"])
+        # 기계설비공사업 행은 전기공사업을 대신 인정하지만(판정에만 씀) 화면엔 대표 면허만 나온다
+        self.assertIn("기계설비공사업(0009)", q["missing"])
+        self.assertFalse(any("전기공사업" in line for line in q["missing"]), q["missing"])
         self.assertIn("g2b.go.kr", flagged["detail_url"])
         self.assertEqual(flagged["category"], "협상")
         self.assertEqual(flagged["key"], "R26TEST00009-000")
@@ -109,6 +110,25 @@ class TestSerialize(unittest.TestCase):
 
 class TestQualificationView(unittest.TestCase):
     """2026-09-29 사용자 지적 3건을 그대로 재현한다."""
+
+    def test_substitute_license_used_for_judgment_but_not_shown(self):
+        """허용업종(대신 인정)은 판정에만 쓰고, 그걸로 채웠을 때만 '(대체 인정)'으로 적는다."""
+        from nego import qualify
+        from webapp import qualview
+        rows = [
+            {"bidNtceNo": "B", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "건축공사업/0002",
+             "permsnIndstrytyList": "[건축공사업/0002][토목건축공사업]"},
+        ]
+        groups = qualify.group_license_rows(rows)["B"]
+        held = (set(), {"토목건축공사업"})
+        ok = qualify.evaluate(groups, ["토목건축공사업"])
+        self.assertEqual(ok.missing_count, 0)
+        part = qualview.build(ok, held, {"industry": True, "product": False})[0]
+        self.assertEqual(part["held"], ["토목건축공사업 (대체 인정)"])
+        miss = qualify.evaluate(groups, [])
+        part = qualview.build(miss, (set(), set()), {"industry": True, "product": False})[0]
+        self.assertEqual([r["items"][0]["label"] for r in part["missing"]], ["건축공사업(0002)"])
+        self.assertNotIn("alts", part["missing"][0])
 
     HELD = ({"1469", "4440", "4442", "4444", "4990", "6010989901"}, set())
 

@@ -87,9 +87,11 @@ def _combo_req(group, held: tuple[set[str], set[str]]) -> dict[str, Any]:
     for rows in group.combos:
         out = []
         for row in rows:
-            labels = [_clean_label(_display_name(n)) for n in row]
             row_items = _items(SimpleNamespace(allowed_names=row), held)
-            out.append({"label": labels[0], "alts": labels[1:], "held": any(i["held"] for i in row_items)})
+            via = next((i["label"] for i in row_items[1:] if i["held"]), None) if not row_items[0]["held"] else None
+            # 대신 인정 업종은 보여주지 않는다(공고문 모양 유지) — 그걸로 채웠을 때만 무엇으로 채웠는지 적는다
+            out.append({"label": row_items[0]["label"], "held": any(i["held"] for i in row_items),
+                        "via": f"{via} (대체 인정)" if via else None})
         combos.append({"rows": out, "held": all(r["held"] for r in out)})
     return {"any_of": True, "combos": combos, "items": []}
 
@@ -126,18 +128,19 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
                     satisfied_any["industry"] = True
                 continue
             if len(g.rows or []) == 1 and len(g.rows[0]) > 1:
-                # "반드시" 요건인데 나라장터가 대신 인정하는 업종을 같이 준 경우 — 대표 면허만 크게, 나머지는 "대체 인정"
+                # "반드시" 요건인데 나라장터가 대신 인정하는 업종(허용업종)을 같이 준 경우 — 대표 면허만 보여준다
                 items = _items(SimpleNamespace(allowed_names=g.rows[0]), held)
                 if not items:
                     continue
-                first, alts = items[0], items[1:]
-                req = {"any_of": False, "items": [dict(first, held=any(i["held"] for i in items))],
-                       "alts": [i["label"] for i in alts]}
+                first = items[0]
+                # 대신 인정 업종은 판정에만 쓰고 보여주지 않는다(2026-09-30 사용자 결정 — 공고문 모양 유지)
+                req = {"any_of": False, "items": [dict(first, held=any(i["held"] for i in items))]}
                 if state == "missing":
                     missing[_section_of(items)].append(req)
                 else:
                     mine = [i for i in items if i["held"]] or [first]
-                    held_by[mine[0]["kind"]].append(mine[0]["label"])
+                    label = mine[0]["label"] if mine[0] is first else f"{mine[0]['label']} (대체 인정)"
+                    held_by[mine[0]["kind"]].append(label)
                     satisfied_any[mine[0]["kind"]] = True
                 continue
             items = _items(g, held)
@@ -195,6 +198,5 @@ def flat_missing(parts: Iterable[dict[str, Any]]) -> list[str]:
     def line(req: dict[str, Any]) -> str:
         if req.get("combos"):
             return " 또는 ".join("(" + " + ".join(r["label"] for r in c["rows"]) + ")" for c in req["combos"])
-        line = " 또는 ".join(i["label"] for i in req["items"])
-        return line + (f" (대체 인정: {', '.join(req['alts'])})" if req.get("alts") else "")
+        return " 또는 ".join(i["label"] for i in req["items"])
     return [line(req) for p in parts for req in p["missing"]]
