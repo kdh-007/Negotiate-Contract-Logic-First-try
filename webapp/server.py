@@ -188,13 +188,44 @@ def build_app(db_path: Path, token: str | None, past: PastIndex | None = None, c
     return App(store, past, collector or Collector(store, past), token)
 
 
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def load_env_file(path: Path) -> list[str]:
+    """레포 루트의 `.env`(KEY=값 한 줄씩)를 환경변수로 읽는다. 이미 설정된 값은 덮지 않는다.
+
+    서버를 켤 때마다 export를 다시 치지 않도록, 그리고 윈도우 로그온 자동 실행
+    (`webapp/start_webapp.bat`)에서도 서비스키를 쓰도록 한 곳에 적어 둔다.
+    `.env`는 .gitignore에 있어 깃에 올라가지 않는다. 읽은 키 이름만 돌려준다(값은 로그에 안 남김).
+    """
+    if not path.is_file():
+        return []
+    loaded = []
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().removeprefix("export ").strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
+            loaded.append(key)
+    return loaded
+
+
 def main(argv: list[str] | None = None) -> int:
+    loaded = load_env_file(ROOT / ".env")
     parser = argparse.ArgumentParser(prog="webapp", description="입찰 공고 싱크로율 탐색기 (사내 웹앱)")
     parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8765")))
     parser.add_argument("--db", default=os.environ.get("WEBAPP_DB", "data/webapp.sqlite3"))
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S")
+    if loaded:
+        logging.info(".env에서 읽은 설정: %s", ", ".join(loaded))
 
     token = os.environ.get("APP_TOKEN", "").strip() or None
     local_only = args.host in ("127.0.0.1", "localhost", "::1")

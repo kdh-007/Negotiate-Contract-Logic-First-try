@@ -46,6 +46,25 @@ py -m webapp
 - jiil 레포가 다른 곳에 있으면 `$env:JIIL_REPO = "D:\...\jiil-past-contracts"`.
 - 서비스키는 서버 프로세스에만 있고 브라우저로는 내려가지 않는다.
 
+## 상시 접속 (PC를 켜면 서버가 자동으로 뜨게)
+
+1. 레포 루트의 `.env.example`을 `.env`로 복사하고 `NARA_SERVICE_KEY`를 채운다
+   (`HOST=0.0.0.0`, `APP_TOKEN=jiil2026` 기본값 그대로 두면 주소가 고정된다). `.env`는 깃에 안 올라간다.
+2. PowerShell에서 한 번만:
+   ```powershell
+   cd C:\Users\HJE\Negotiate-Contract-Logic-First-try
+   powershell -ExecutionPolicy Bypass -File webapp\install_autostart.ps1
+   ```
+   작업 스케줄러에 `SyncRateExplorer`가 등록되어 **윈도우 로그온 때마다** 서버가 최소화 창으로 뜬다.
+   서버가 죽으면 10초 뒤 자동으로 다시 켜진다(`webapp/start_webapp.bat`). 로그는 `data/webapp.log`.
+   해제: `powershell -ExecutionPolicy Bypass -File webapp\install_autostart.ps1 -Remove`
+3. PC가 **절전·최대 절전으로 들어가지 않게**(관리자 PowerShell): `powercfg /change standby-timeout-ac 0`,
+   `powercfg /change hibernate-timeout-ac 0`. 꺼져 있거나 잠들면 아무도 접속할 수 없다.
+4. 주소가 바뀌지 않게: IP 대신 **PC 이름**으로 접속하면 IP가 바뀌어도 된다 — `http://PC이름:8765/?t=jiil2026`
+   (PC 이름은 `hostname`). 안 되면 공유기(또는 IT 담당)에서 이 PC에 IP를 고정(DHCP 예약)한다.
+
+코드를 업데이트(`git pull`)한 뒤에는 최소화된 서버 창을 닫으면 된다 — 10초 뒤 새 코드로 다시 켜진다.
+
 ## 참고
 
 - 수집은 한 번에 하나만 돈다(누가 돌리는 중이면 버튼이 잠김). 진행 로그가 버튼 아래에 뜬다.

@@ -170,6 +170,26 @@ class _Url(unittest.TestCase):
         self.assertIsNone(_g2b_url(prespec_from_raw({"bfSpecRgstNo": "R26BD1"}, "물품")))
 
 
+class TestEnvFile(unittest.TestCase):
+    def test_reads_values_without_overriding(self):
+        import os
+        from webapp.server import load_env_file
+
+        path = Path(tempfile.mkdtemp()) / ".env"
+        path.write_text("﻿# 주석\nWEBAPP_T1=\"a+b/c==\"\nexport WEBAPP_T2 = x\nWEBAPP_T3=keep\n빈줄없음\n", encoding="utf-8")
+        os.environ["WEBAPP_T3"] = "already"
+        try:
+            loaded = load_env_file(path)
+            self.assertEqual(os.environ["WEBAPP_T1"], "a+b/c==")
+            self.assertEqual(os.environ["WEBAPP_T2"], "x")
+            self.assertEqual(os.environ["WEBAPP_T3"], "already", "이미 설정된 값은 덮지 않는다")
+            self.assertEqual(sorted(loaded), ["WEBAPP_T1", "WEBAPP_T2"])
+            self.assertEqual(load_env_file(path.parent / "없음"), [])
+        finally:
+            for k in ("WEBAPP_T1", "WEBAPP_T2", "WEBAPP_T3"):
+                os.environ.pop(k, None)
+
+
 class TestStore(unittest.TestCase):
     def setUp(self):
         self.store = Store(Path(tempfile.mkdtemp()) / "t.sqlite3")
