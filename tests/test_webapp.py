@@ -160,6 +160,16 @@ class TestQualificationView(unittest.TestCase):
         self.assertTrue(all(r["any_of"] for r in ind["missing"]))
         self.assertFalse(any(i["held"] for r in ind["missing"] for i in r["items"]))
 
+    def test_same_code_with_different_labels_counted_once(self):
+        # 2026-09-30 제보: "G2B분류번호 교육훈련장비(6010999901)"와 "육훈련장비(6010999901)"가 미보유 2건으로
+        from webapp import qualview
+
+        q = self._q(missing=[["G2B분류번호 교육훈련장비(6010999901)"], ["육훈련장비(6010999901)"]])
+        prod = qualview.build(q, self.HELD, {"industry": True, "product": True})[1]
+        self.assertEqual(len(prod["missing"]), 1)
+        self.assertEqual(prod["missing"][0]["items"][0]["label"], "교육훈련장비(6010999901)")
+
+
 class _Url(unittest.TestCase):
     def test_detail_url_fallback(self):
         from nego.models import prespec_from_raw

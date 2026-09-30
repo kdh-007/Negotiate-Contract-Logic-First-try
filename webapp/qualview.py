@@ -45,8 +45,31 @@ def held_lookup(held_raw: dict) -> tuple[set[str], set[str]]:
     return codes, names
 
 
+# 이름 앞에 붙어 나오는 분류 머리말 — "G2B분류번호 교육훈련장비(6010999901)"
+_NAME_PREFIX = re.compile(r"^(?:G2B\s*)?(?:물품\s*)?(?:세부\s*)?(?:분류\s*번호|품명\s*번호|품명)\s*[:：]?\s*")
+
+
+def _clean_label(label: str) -> str:
+    code = _code(label)
+    if not code:
+        return label
+    name = _TRAILING_CODE.sub("", label).strip()
+    name = _NAME_PREFIX.sub("", name).strip()
+    return f"{name}({code})" if name else code
+
+
+def _best_label(labels: list[str]) -> str:
+    """같은 코드의 여러 표기 중 이름이 가장 온전한 것 — "육훈련장비"(잘린 것)보다 "교육훈련장비"."""
+    return max(labels, key=lambda l: len(_TRAILING_CODE.sub("", l)))
+
+
 def _items(group, held: tuple[set[str], set[str]]) -> list[dict[str, Any]]:
-    labels = _dedupe_names_preferring_code(list(dict.fromkeys(_display_name(n) for n in group.allowed_names)))
+    labels = _dedupe_names_preferring_code(list(dict.fromkeys(_clean_label(_display_name(n)) for n in group.allowed_names)))
+    # 같은 코드가 한 요건 안에 두 번 나오면(표기만 다름) 하나로
+    by_code: dict[str, list[str]] = {}
+    for label in labels:
+        by_code.setdefault(_code(label) or label, []).append(label)
+    labels = [_best_label(v) for v in by_code.values()]
     codes, names = held
     out = []
     for label in labels:
@@ -73,26 +96,45 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
     missing: dict[str, list] = {k: [] for k, _ in SECTIONS}
     held_by: dict[str, list[str]] = {k: [] for k, _ in SECTIONS}
     satisfied_any: dict[str, bool] = {k: False for k, _ in SECTIONS}
-    seen: set[tuple] = set()
+    # 같은 요건이 여러 번 잡히면 한 번만 — **코드로** 비교한다. 이름으로 비교하면 "G2B분류번호 교육훈련장비
+    # (6010999901)"와 "육훈련장비(6010999901)"처럼 표기만 다른 같은 요건이 두 번 나온다(2026-09-30 제보).
+    by_sig: dict[tuple, list] = {}
+    order: list[tuple[str, tuple]] = []
     for state, source in (("missing", qualification.missing_groups), ("satisfied", qualification.satisfied_groups)):
         for g in source:
             items = _items(g, held)
-            sig = tuple(sorted(i["label"] for i in items))
-            if not items or sig in seen:
+            if not items:
                 continue
-            seen.add(sig)
-            if state == "missing":
-                missing[_section_of(items)].append(items)
+            sig = tuple(sorted(i["code"] or i["label"] for i in items))
+            if sig in by_sig:
+                # 이미 본 요건 — 더 온전한 이름이 있으면 그걸로 바꿔 둔다
+                for kept in by_sig[sig]:
+                    for other in items:
+                        if (other["code"] or other["label"]) == (kept["code"] or kept["label"]):
+                            kept["label"] = _best_label([kept["label"], other["label"]])
                 continue
-            mine = [i for i in items if i["held"]]
-            if mine:
-                for i in mine:
-                    held_by[i["kind"]].append(i["label"])
-                    satisfied_any[i["kind"]] = True
-            else:  # 보유 표시를 못 붙인 요건(이름 표기 차이)은 요건 자체를 적는다
-                key = _section_of(items)
-                held_by[key].append(" 또는 ".join(i["label"] for i in items))
-                satisfied_any[key] = True
+            by_sig[sig] = items
+            order.append((state, sig))
+    for state, sig in order:
+        items = by_sig[sig]
+        if state == "missing":
+            missing[_section_of(items)].append(items)
+            continue
+        mine = [i for i in items if i["held"]]
+        if mine:
+            for i in mine:
+                held_by[i["kind"]].append(i["label"])
+                satisfied_any[i["kind"]] = True
+        else:  # 보유 표시를 못 붙인 요건(이름 표기 차이)은 요건 자체를 적는다
+            key = _section_of(items)
+            held_by[key].append(" 또는 ".join(i["label"] for i in items))
+            satisfied_any[key] = True
+    # 보유 목록도 같은 코드는 한 번만 (가장 온전한 이름으로)
+    for key in held_by:
+        grouped: dict[str, list[str]] = {}
+        for label in held_by[key]:
+            grouped.setdefault(_code(label) or label, []).append(label)
+        held_by[key] = [_best_label(v) for v in grouped.values()]
 
     parts = []
     for key, name in SECTIONS:
@@ -106,7 +148,7 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
         parts.append({
             "key": key, "name": name, "status": status,
             "missing": [{"any_of": len(items) > 1, "items": items} for items in miss],
-            "held": list(dict.fromkeys(held_by[key])),
+            "held": held_by[key],
         })
     return parts
 

@@ -72,7 +72,12 @@ class QualificationResult:
         # 같은 자격이 여러 그룹에서 각각 미충족으로 걸리는 경우(예: 첨부문서
         # 항목 여러 개가 같은 코드를 요구)도 이 순서로 함께 걸러진다.
         names = ("/".join(dict.fromkeys(g.allowed_names)) for g in self.missing_groups)
-        missing_names = ", ".join(dict.fromkeys(names))
+        # 같은 코드인데 표기만 다른 요건("G2B분류번호 교육훈련장비(6010999901)"·"육훈련장비(6010999901)")은 한 번만
+        by_code: dict[str, str] = {}
+        for name in names:
+            code = re.search(r"\((\d{4,10})\)$", name)
+            by_code.setdefault(code.group(1) if code else name, name)
+        missing_names = ", ".join(by_code.values())
         return f"자격 미달({missing_names})"
 
 
