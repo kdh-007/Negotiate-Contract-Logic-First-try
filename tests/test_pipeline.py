@@ -175,10 +175,8 @@ class TestQualification(unittest.TestCase):
         self.assertTrue(result.passes)
 
     def test_one_missing_group_passes(self):
-        groups = [
-            qualify.LicenseGroup("1", ["실내건축공사업"]),
-            qualify.LicenseGroup("2", ["전기공사업"]),
-        ]
+        # 한 그룹 안 두 행 = 둘 다 필요 (그룹끼리는 "또는"이라 요건을 AND로 걸려면 행으로 둔다)
+        groups = [qualify.LicenseGroup("1", rows=[["실내건축공사업"], ["전기공사업"]])]
         result = qualify.evaluate(groups, self.held)
         self.assertEqual(result.missing_count, 1)
         self.assertTrue(result.passes, "1개까지는 통과 — 기존 규칙")
@@ -186,13 +184,10 @@ class TestQualification(unittest.TestCase):
     def test_satisfied_groups_tracked_separately_from_missing(self):
         """자격판정 팝업에서 파란 원(충족)도 빨간 원(미달)과 같은 형식으로
         보여주려면 어떤 그룹이 충족됐는지 알아야 한다."""
-        groups = [
-            qualify.LicenseGroup("1", ["실내건축공사업"]),  # 보유 — 충족
-            qualify.LicenseGroup("2", ["전기공사업"]),  # 미보유 — 미달
-        ]
+        groups = [qualify.LicenseGroup("1", rows=[["실내건축공사업"], ["전기공사업"]])]  # 보유 행 + 미보유 행
         result = qualify.evaluate(groups, self.held)
-        self.assertEqual([g.group_no for g in result.satisfied_groups], ["1"])
-        self.assertEqual([g.group_no for g in result.missing_groups], ["2"])
+        self.assertEqual([g.allowed_names for g in result.satisfied_groups], [["실내건축공사업"]])
+        self.assertEqual([g.allowed_names for g in result.missing_groups], [["전기공사업"]])
 
     def test_substring_name_does_not_satisfy(self):
         """'실내건축공사업' 보유가 '건축공사업(0002)' 요건을 채우지 않는다.
@@ -555,10 +550,7 @@ class TestQualification(unittest.TestCase):
         self.assertEqual(result.summary, "자격 충족")
 
     def test_summary_lists_missing_license_names(self):
-        groups = [
-            qualify.LicenseGroup("1", ["실내건축공사업"]),
-            qualify.LicenseGroup("2", ["전기공사업", "정보통신공사업"]),
-        ]
+        groups = [qualify.LicenseGroup("1", rows=[["실내건축공사업"], ["전기공사업", "정보통신공사업"]])]
         result = qualify.evaluate(groups, self.held)
         self.assertEqual(result.summary, "자격 미달(전기공사업/정보통신공사업)")
 
@@ -943,6 +935,48 @@ class TestOverlappingLicenseGroups(unittest.TestCase):
         self.assertEqual(qualify.evaluate(groups, ["건축공사업"]).missing_count, 0, "건축공사업만 있어도 충족")
         self.assertEqual(qualify.evaluate(groups, ["토목건축공사업"]).missing_count, 0)
 
-    def test_unrelated_groups_stay_separate(self):
+    def test_rows_in_one_group_are_all_required(self):
         groups = qualify.group_license_rows(fixtures.license_rows())["R26TEST00009"]
         self.assertEqual(qualify.evaluate(groups, []).missing_count, 2)
+
+    def test_separate_groups_are_alternatives(self):
+        """나라장터 "[출판사(1517)] 업종 또는 [인쇄사(1518)] 업종" — API는 그룹 두 개로 준다
+        (2026-09-30 국립세종도서관 정책도서 발행 공고). 출판사만 있어도 충족이어야 한다."""
+        rows = [
+            {"bidNtceNo": "R26BK10", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "출판사/1517", "permsnIndstrytyList": "[출판사/1517]"},
+            {"bidNtceNo": "R26BK10", "lmtGrpNo": "2", "lmtSno": "1", "lcnsLmtNm": "인쇄사/1518", "permsnIndstrytyList": "[인쇄사/1518]"},
+        ]
+        groups = qualify.group_license_rows(rows)["R26BK10"]
+        held = qualify.evaluate(groups, ["출판사"], {"1517"})
+        self.assertEqual(held.missing_count, 0)
+        self.assertEqual(held.satisfied_groups[0].allowed_names, ["출판사/1517", "인쇄사/1518"])
+        none = qualify.evaluate(groups, [], set())
+        self.assertEqual(none.missing_count, 1, "택1 요건 1건")
+
+    def test_common_row_in_every_group_is_its_own_requirement(self):
+        """그룹1 [4442, 1469] 또는 그룹2 [4444, 1469] → "4442·4444 중 하나" + "1469" 두 요건."""
+        rows = [
+            {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "산업디자인전문회사(환경디자인분야)/4442"},
+            {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "2", "lcnsLmtNm": "소프트웨어사업자(디지털콘텐츠개발서비스사업)/1469"},
+            {"bidNtceNo": "N", "lmtGrpNo": "2", "lmtSno": "1", "lcnsLmtNm": "산업디자인전문회사(종합디자인분야)/4444"},
+            {"bidNtceNo": "N", "lmtGrpNo": "2", "lmtSno": "2", "lcnsLmtNm": "소프트웨어사업자(디지털콘텐츠개발서비스사업)/1469"},
+        ]
+        groups = qualify.group_license_rows(rows)["N"]
+        reqs = qualify.license_requirements(groups, [], set())
+        self.assertEqual([len(r.allowed_names) for r in reqs], [1, 2])
+        self.assertEqual(qualify.evaluate(groups, [], {"4442", "1469"}).missing_count, 0)
+        missing = qualify.evaluate(groups, [], {"4442"}).missing_groups
+        self.assertEqual([g.allowed_names for g in missing], [["소프트웨어사업자(디지털콘텐츠개발서비스사업)/1469"]])
+
+    def test_complex_groups_judged_exactly(self):
+        """그룹마다 남는 행이 여럿이면 가장 가까운 그룹을 보여주되 판정은 정확해야 한다."""
+        rows = [
+            {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "A/0001"},
+            {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "2", "lcnsLmtNm": "B/0002"},
+            {"bidNtceNo": "N", "lmtGrpNo": "2", "lmtSno": "1", "lcnsLmtNm": "C/0003"},
+            {"bidNtceNo": "N", "lmtGrpNo": "2", "lmtSno": "2", "lcnsLmtNm": "D/0004"},
+        ]
+        groups = qualify.group_license_rows(rows)["N"]
+        self.assertEqual(qualify.evaluate(groups, [], {"0003", "0004"}).missing_count, 0)
+        self.assertEqual(qualify.evaluate(groups, [], {"0001", "0003"}).missing_count, 1)
+        self.assertEqual(qualify.evaluate(groups, [], {"0003"}).missing_groups[0].allowed_names, ["D/0004"])

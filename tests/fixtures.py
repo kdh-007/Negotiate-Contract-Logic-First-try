@@ -115,7 +115,7 @@ def license_rows() -> list[dict[str, Any]]:
             "lcnsLmtNm": "실내건축공사업/4990",
             "permsnIndstrytyList": "[실내건축공사업/4990]",
         },
-        # 공고2: 두 그룹 모두 지일 보유 업종 → 충족
+        # 공고2: 한 그룹 안 두 행(모두 필요) — 둘 다 지일 보유 업종 → 충족
         {
             "bidNtceNo": "R26TEST00002",
             "lmtGrpNo": "1",
@@ -125,12 +125,13 @@ def license_rows() -> list[dict[str, Any]]:
         },
         {
             "bidNtceNo": "R26TEST00002",
-            "lmtGrpNo": "2",
-            "lmtSno": "1",
+            "lmtGrpNo": "1",
+            "lmtSno": "2",
             "lcnsLmtNm": "산업디자인전문회사(환경디자인분야)/4442",
             "permsnIndstrytyList": "[산업디자인전문회사(환경디자인분야)/4442]",
         },
-        # 공고9: 미보유 업종 2개 그룹 → 기존 규칙상 제외 대상
+        # 공고9: 한 그룹 안 두 행(모두 필요) — 둘 다 미보유 → 미달 요건 2건.
+        # 두 번째 행은 허용업종이 있어 "기계설비공사업 또는 전기공사업"이다.
         {
             "bidNtceNo": "R26TEST00009",
             "lmtGrpNo": "1",
@@ -140,8 +141,8 @@ def license_rows() -> list[dict[str, Any]]:
         },
         {
             "bidNtceNo": "R26TEST00009",
-            "lmtGrpNo": "2",
-            "lmtSno": "1",
+            "lmtGrpNo": "1",
+            "lmtSno": "2",
             "lcnsLmtNm": "기계설비공사업/0009",
             "permsnIndstrytyList": "[기계설비공사업/0009][전기공사업/0007]",
         },

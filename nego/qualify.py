@@ -4,10 +4,14 @@
 기존 코드의 양방향 부분일치 대신 **코드 비교 + 이름 완전일치**로 바꿨다(2026-09-30 사용자 결정 —
 기존 코드에 부분일치를 쓰라는 규칙 설명이 없었고, "실내건축공사업"이 "건축공사업"을 충족하는 오판을 냈다).
 
-  - 제한그룹(`lmtGrpNo`) 하나가 자격조건 하나의 단위
-  - 그룹 안에 여러 업종이 나열되면 그중 하나만 보유해도 그 그룹은 충족(OR)
-  - 충족하지 못한 그룹이 2개 이상이면 제외 (1개까지는 통과)
-  - 조회 실패 / 정보 없음이면 걸러내지 않고 통과 (fail-open)
+  면허제한정보 API의 구조 (2026-09-30 실측 두 건으로 바로잡음 — 예전엔 그룹끼리 "모두 필요"로 봤다):
+  - 제한그룹(`lmtGrpNo`)끼리는 **"또는"** — 그룹 하나만 다 채우면 참가 가능.
+    나라장터 화면 "[출판사(1517)] 업종 또는 [인쇄사(1518)] 업종을 등록한 업체"가 API에선 그룹1 출판사,
+    그룹2 인쇄사로 온다(국립세종도서관 정책도서 발행). 백령 체험관 "건축(또는 토목건축)공사업"도 같은 모양.
+  - 한 그룹 안의 행(`lmtSno`)끼리는 **"모두 필요"**, 행 하나의 허용업종목록(`permsnIndstrytyList`)은
+    그 행을 대신할 수 있는 업종("또는")이다.
+  - 화면·리포트는 "요건마다 이 중 하나"(AND of OR) 모양으로 보여주므로 `license_requirements`가
+    그룹들을 그 모양으로 펼친다. 조회 실패 / 정보 없음이면 걸러내지 않고 통과 (fail-open).
 
 공동수급·지역은 **판정에 개입하지 않고 정보로만** 수집한다.
 
@@ -34,6 +38,9 @@ MAX_ALLOWED_MISSING_QUALIFICATIONS = 1
 class LicenseGroup:
     group_no: str
     allowed_names: list[str] = field(default_factory=list)
+    # 면허제한 API 그룹일 때만: 행(lmtSno)별 허용 이름 목록. 행끼리는 모두 필요, 행 안은 "또는".
+    # 비어 있으면 allowed_names 전체가 한 행("이 중 하나")이다.
+    rows: list[list[str]] = field(default_factory=list)
 
 
 @dataclass
@@ -113,7 +120,7 @@ def group_license_rows(raw_items: list[RawItem]) -> dict[str, list[LicenseGroup]
     페이지 단위로 내려준다. 그래서 공고별로 호출하지 않고 **기간 전체를 1회 받아
     여기서 공고번호별로 묶는다.** 공고 수가 늘어도 API 호출 횟수가 늘지 않는다.
     """
-    by_notice: dict[str, dict[str, list[str]]] = {}
+    by_notice: dict[str, dict[str, list[list[str]]]] = {}
 
     for item in raw_items:
         notice_no = F.pick_by(item, F.LICENSE_LIMIT_FIELDS, "notice_no")
@@ -137,10 +144,13 @@ def group_license_rows(raw_items: list[RawItem]) -> dict[str, list[LicenseGroup]
             continue
 
         groups = by_notice.setdefault(notice_no, {})
-        groups.setdefault(group_no, []).extend(names)
+        groups.setdefault(group_no, []).append(_dedupe_names(names))
 
     return {
-        notice_no: [LicenseGroup(group_no=g, allowed_names=names) for g, names in groups.items()]
+        notice_no: [
+            LicenseGroup(group_no=g, allowed_names=_dedupe_names([n for row in rows for n in row]), rows=rows)
+            for g, rows in groups.items()
+        ]
         for notice_no, groups in by_notice.items()
     }
 
@@ -180,42 +190,56 @@ def _license_base(name: str) -> str:
     return re.sub(r"\s+", "", name)
 
 
-def merge_overlapping_groups(groups: list[LicenseGroup]) -> list[LicenseGroup]:
-    """같은 면허가 여러 제한그룹에 나오면 한 요건("또는")으로 합친다.
-
-    실측(2026-09-30, 옹진군 "백령 점박이물범 생태관광체험센터 체험관 증축공사"): 공고문은
-    "건축(또는 토목건축)공사업"인데 면허제한 API는 그룹1 [건축공사업/0002, 허용업종 토목건축공사업],
-    그룹2 [토목건축공사업/0003]으로 나눠 줬다. 그룹끼리 "모두 필요"로 보면 요건 2건이 되고,
-    토목건축 없이 건축공사업만 가진 업체를 미달로 잘못 본다. 면허가 겹치지 않는 그룹은 그대로 둔다.
-    """
-    def add_names(target: LicenseGroup, names: list[str]) -> None:
-        # 같은 면허가 "토목건축공사업"·"토목건축공사업/0003"처럼 두 번 들어오면 하나만 남긴다
-        seen = {_license_base(n) for n in target.allowed_names}
-        for n in names:
-            if _license_base(n) not in seen:
-                seen.add(_license_base(n))
-                target.allowed_names.append(n)
-
-    merged: list[tuple[set[str], LicenseGroup]] = []
-    for g in groups:
-        bases = {_license_base(n) for n in g.allowed_names if _license_base(n)}
-        hits = [i for i, (b, _) in enumerate(merged) if b & bases]
-        if not hits:
-            fresh = LicenseGroup(group_no=g.group_no, allowed_names=[])
-            add_names(fresh, g.allowed_names)
-            merged.append((bases, fresh))
+def _dedupe_names(names: list[str]) -> list[str]:
+    """같은 면허가 "토목건축공사업"·"토목건축공사업/0003"처럼 두 번 들어오면 코드 있는 쪽 하나만 남긴다."""
+    out: dict[str, str] = {}
+    for n in names:
+        base = _license_base(n)
+        if not base:
             continue
-        first = hits[0]
-        fb, fg = merged[first]
-        fb |= bases
-        add_names(fg, g.allowed_names)
-        fg.group_no = f"{fg.group_no}+{g.group_no}"
-        for i in reversed(hits[1:]):  # 새 그룹이 앞의 두 묶음을 이어 주면 그것들도 합친다
-            ob, og = merged.pop(i)
-            fb |= ob
-            add_names(fg, og.allowed_names)
-            fg.group_no = f"{fg.group_no}+{og.group_no}"
-    return [g for _, g in merged]
+        if base not in out or (_license_code(n) and not _license_code(out[base])):
+            out[base] = n
+    return list(out.values())
+
+
+def license_requirements(
+    groups: list[LicenseGroup], held_names: list[str], held_codes: set[str] | frozenset[str] = frozenset()
+) -> list[LicenseGroup]:
+    """면허제한 그룹들("그룹 A 또는 그룹 B", 그룹 안은 모두 필요)을 요건 목록(요건끼리 모두 필요,
+    요건 안은 "이 중 하나")으로 펼친다.
+
+    - 모든 그룹에 똑같이 들어 있는 행 → 각각 독립 요건 (예: 4개 그룹 모두에 든 1469)
+    - 나머지가 그룹마다 한 행씩이면 → 그 행들을 합친 "이 중 하나" 요건 1건
+      (출판사 또는 인쇄사 / 건축 또는 토목건축 / 4442·4444 중 하나 + 1469)
+    - 그보다 복잡하면(그룹마다 남는 행이 여럿) 정확히 펼칠 수 없다 — 다 채운 그룹이 있으면 그 그룹의 행을,
+      없으면 못 채운 행이 가장 적은 그룹의 행을 요건으로 보여준다(판정은 그대로 정확하다).
+    """
+    grouped = [[_dedupe_names(r) for r in (g.rows or [g.allowed_names]) if _dedupe_names(r)] for g in groups]
+    grouped = [rows for rows in grouped if rows]
+    if not grouped:
+        return []
+
+    def key(row: list[str]) -> frozenset[str]:
+        return frozenset(_license_base(n) for n in row)
+
+    def req(no: str, names: list[str]) -> LicenseGroup:
+        return LicenseGroup(group_no=no, allowed_names=_dedupe_names(names))
+
+    common_keys = set.intersection(*({key(r) for r in rows} for rows in grouped))
+    common = [r for r in grouped[0] if key(r) in common_keys]
+    residuals = [[r for r in rows if key(r) not in common_keys] for rows in grouped]
+    out = [req(f"공통{i + 1}", r) for i, r in enumerate(common)]
+
+    if all(len(res) <= 1 for res in residuals):
+        if residuals and all(res for res in residuals):  # 그룹이 공통 행만 가진 경우가 있으면 나머지는 선택 사항
+            out.append(req("택1", [n for res in residuals for n in res[0]]))
+        return out
+
+    def unmet(rows: list[list[str]]) -> int:
+        return sum(not _is_group_satisfied(LicenseGroup("", r), held_names, held_codes) for r in rows)
+
+    best = min(grouped, key=unmet)
+    return [req(f"그룹{i + 1}", r) for i, r in enumerate(best)]
 
 
 def evaluate(
@@ -223,7 +247,7 @@ def evaluate(
 ) -> QualificationResult:
     if not groups:
         return QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False)
-    groups = merge_overlapping_groups(groups)
+    groups = license_requirements(groups, held_names, held_codes)
 
     missing = [g for g in groups if not _is_group_satisfied(g, held_names, held_codes)]
     satisfied = [g for g in groups if g not in missing]
