@@ -221,6 +221,7 @@ _COMMA_LINK_RE = re.compile(r"[ \t\u3000]*[)\]]?[ \t\u3000]*,")
 # 같은 줄에 요건이 둘 이상 나열되면(PDF 등) 뒷 요건의 이름표 앞에 앞 요건의
 # 괄호와 접속어가 딸려온다 — 닫는 괄호 이후만 남기고 앞머리 접속어를 뗀다.
 _LEADING_CONJUNCTION_RE = re.compile(r"^(?:또는|혹은|및|그리고)\s+")
+_CONJUNCTION_ONLY_RE = re.compile(r"\s*(?:또는|혹은|및|그리고|등|/)?\s*")
 # 이름표에서 떼어낼 절차성 어구. 법령 인용("~에 따른/따라/의하여")과, 실측으로
 # 확인된 마감 안내 어구("~까지")를 둘 다 다룬다 — 실측(사용자 제보,
 # 2026-09-17): "...규정」에 의하여 국가종합전자조달시스템G2B(나라장터)에
@@ -267,6 +268,10 @@ def _split_group_entries(content: str, code_re: re.Pattern) -> list[tuple[int, s
     for i, match in enumerate(matches):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
         name = content[match.end() : end].strip(_GROUP_ENTRY_STRIP_CHARS)
+        # "(업종코드 4442 또는 4444)"처럼 코드 사이에 접속사만 있으면 그건 이름이 아니다 —
+        # 예전엔 "또는(4442)"로 표시됐다. 비워 두면 이름 사전·등록증에서 찾아 채운다.
+        if _CONJUNCTION_ONLY_RE.fullmatch(name):
+            name = ""
         pairs.append((match.start(), match.group(0), name))
     return pairs
 

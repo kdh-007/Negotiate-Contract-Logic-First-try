@@ -220,3 +220,34 @@ class TestSkipsTableOfContents(unittest.TestCase):
     def test_toc_only_document_still_returns_something(self):
         sec = find_qualification_section("2. 입찰참가자격   2\n3. 기타   3")
         self.assertIsNotNone(sec)
+
+
+class TestHeadingVariants(unittest.TestCase):
+    """실측(과거 제안요청서 206건): "2. 입찰참가자격" 말고도 여러 제목 형태가 있다."""
+
+    BODY = "\n가. 「지방자치단체를 당사자로 하는 계약에 관한 법률 시행령」 제13조에 의한 자격을 갖춘 자\n나. 실내건축공사업(4990) 등록업체\n"
+
+    def _heading(self, heading, after="3. 제안서 작성 요령"):
+        sec = find_qualification_section(heading + self.BODY + after)
+        return sec.heading if sec else None
+
+    def test_accepted_forms(self):
+        for h in ["3. 참가자격", "나. 입찰참가자격", "3) 입찰참가자격", "Ⅰ. 입찰 참가자격", "□ 입찰 참가 자격",
+                  "1.3 입찰참가자격", "1. 입찰 참가 자격 및 제한", "2. 입찰참가자격 및 관련사항",
+                  "다. 입찰참가자격 : 다음 조건을 모두 충족한 자", "2. 입찰참가자격[입찰공고문 참조]", "입찰참가자격"]:
+            with self.subTest(h=h):
+                self.assertIsNotNone(self._heading(h), h)
+
+    def test_rejects_document_list_sentence(self):
+        # 제출서류 목록의 한 줄 — 제목이 아니다
+        self.assertIsNone(find_qualification_section("붙임서류\n1. 입찰 참가자격을 증명하는 서류 사본 1통\n2. 사업자등록증"))
+
+    def test_korean_letter_section_ends_at_next_letter(self):
+        text = "나. 입찰참가자격" + self.BODY.replace("가.", "1)").replace("나.", "2)") + "다. 입찰방법\n총액입찰"
+        sec = find_qualification_section(text)
+        self.assertNotIn("총액입찰", sec.body)
+
+    def test_prefers_bid_qualification_heading(self):
+        text = ("5. 참가자격\n요약: 관련 법령에 따른 자격을 갖춘 업체로서 공고문을 참조하시기 바랍니다\n6. 일정\n"
+                "2. 입찰참가자격" + self.BODY + "3. 끝")
+        self.assertEqual(find_qualification_section(text).heading, "2. 입찰참가자격")

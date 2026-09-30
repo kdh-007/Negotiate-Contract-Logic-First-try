@@ -863,3 +863,18 @@ class TestEndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestConjunctionIsNotAName(unittest.TestCase):
+    """'(업종코드 4442 또는 4444)'에서 '또는'이 4442의 이름으로 붙던 문제 (2026-09-30)."""
+
+    def test_or_codes_in_parens(self):
+        items = ["① 소프트웨어사업자(디지털콘텐츠개발서비스사업, 업종코드 1469)로 등록한 자",
+                 "② 산업디자인전문회사(업종코드 4442 또는 4444)로 등록한 자",
+                 "③ 직접생산확인증명서[세부품명 : 실물모형및전시물, 세부품명번호 10자리 : 6010989901]를 소지한 자"]
+        ok = qualify.evaluate_attachment_text(items, {"1469", "4444", "6010989901"}, {})
+        self.assertEqual(ok.summary, "자격 충족", "②는 4442·4444 중 하나면 된다")
+        miss = qualify.evaluate_attachment_text(items, {"1469", "4442"}, {})
+        self.assertIn("6010989901", miss.summary, "①②③은 모두 갖춰야 한다")
+        names = [n for g in ok.satisfied_groups + miss.satisfied_groups for n in g.allowed_names]
+        self.assertFalse(any(n.startswith("또는") for n in names), names)

@@ -44,8 +44,23 @@ def _spaced(word: str) -> str:
     return r"[ \t\u3000]*".join(re.escape(ch) for ch in word)
 
 
+_WS = r"[ \t\u3000]*"
+
+# 절 제목 앞 번호·기호. 실측(과거 제안요청서 206건): "2." / "나." / "3)" / "Ⅱ." / "□" / 번호 없음.
+_MARKER = (
+    r"(?P<marker>\d{1,2}\.\d{1,2}\.?|\d{1,2}\.(?!\d)|\d{1,2}\)|[가나다라마바사아자차카타파하]\.|[가나다라마바사아자차카타파하]\)"
+    r"|[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]\.?|[□■◎◇◆▶●○]|제" + _WS + r"\d{1,2}" + _WS + r"[장절조])?"
+)
+
+# "입찰참가자격" / "입찰 참가 자격" / "참가자격"(입찰 없이, 실측 27건) — 제목 **줄 전체**여야 한다.
+# 뒤에는 요건·조건·사항, 쪽 번호(목차), 콜론·괄호로 시작하는 안내문만 올 수 있다 — 그래야
+# "1. 입찰 참가자격을 증명하는 서류 사본 1통"(제출서류 목록) 같은 문장을 제목으로 잡지 않는다.
+# 제목 뒤 꼬리말: "요건·조건·사항", "및 제한"·"및 관련사항"(실측 정선 남면, 양양군 청사)
+_TAIL = _WS + r"(?:요건|조건|사항)?" + _WS + r"(?:및" + _WS + r"[가-힣]{1,6})?"
 _HEADING_RE = re.compile(
-    r"^[ \t\u3000]*\d{1,2}\.[ \t\u3000]*" + _spaced("입찰참가자격") + r"[ \t\u3000]*[:：]?",
+    r"^" + _WS + _MARKER + _WS + r"(?P<bid>" + _spaced("입찰") + _WS + r")?" + _spaced("참가자격")
+    + r"(?=" + _TAIL + _WS + r"(?:[:：(（\[][^\n]*|\d{1,3})?" + _WS + r"$)"
+    + _TAIL + _WS + r"[:：]?",
     re.MULTILINE,
 )
 
@@ -53,6 +68,37 @@ _HEADING_RE = re.compile(
 # 위해, 번호 뒤에 공백이 최소 1개 있고 그다음이 숫자가 아니어야 한다
 # ("3.1."은 번호 다음이 공백 없이 바로 숫자라 여기 안 걸림).
 _NEXT_TOP_HEADING_RE = re.compile(r"^[ \t\u3000]*\d{1,2}\.[ \t\u3000]+[^\d\s]", re.MULTILINE)
+_ROMAN_HEADING_RE = re.compile(r"^[ \t\u3000]*[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]\.?[ \t\u3000]*[^\d\s]", re.MULTILINE)
+_KOREAN_DOT_HEADING_RE = re.compile(r"^[ \t\u3000]*[가나다라마바사아자차카타파하]\.[ \t\u3000]+", re.MULTILINE)
+_DECIMAL_HEADING_RE = re.compile(r"^[ \t\u3000]*\d{1,2}\.\d{1,2}\.?[ \t\u3000]+[^\d\s]", re.MULTILINE)
+_PAREN_HEADING_RE = re.compile(r"^[ \t\u3000]*\d{1,2}\)[ \t\u3000]+", re.MULTILINE)
+
+# 제목 번호 종류별로 절이 끝나는 곳 — 같은 급(또는 더 윗급) 제목이 다시 나오는 줄.
+# "나. 입찰참가자격" 절은 "다."에서, "3) 입찰참가자격" 절은 "4)"·"다."·"4."에서 끝난다.
+_SECTION_END = {
+    "digit": (_NEXT_TOP_HEADING_RE, _ROMAN_HEADING_RE),
+    "decimal": (_DECIMAL_HEADING_RE, _NEXT_TOP_HEADING_RE, _ROMAN_HEADING_RE),
+    "korean": (_KOREAN_DOT_HEADING_RE, _NEXT_TOP_HEADING_RE, _ROMAN_HEADING_RE),
+    "paren": (_PAREN_HEADING_RE, _KOREAN_DOT_HEADING_RE, _NEXT_TOP_HEADING_RE, _ROMAN_HEADING_RE),
+    "roman": (_ROMAN_HEADING_RE,),
+    "none": (_NEXT_TOP_HEADING_RE, _ROMAN_HEADING_RE),
+}
+# 번호 없는 제목·기호 제목은 끝이 불분명해 문서 끝까지 삼킬 수 있다 — 길이 상한을 둔다.
+_MAX_SECTION_CHARS = 4000
+
+
+def _marker_kind(marker: str | None) -> str:
+    if not marker:
+        return "none"
+    if marker[0].isdigit():
+        if marker.endswith(")"):
+            return "paren"
+        return "decimal" if re.match(r"\d{1,2}\.\d", marker) else "digit"
+    if marker[0] in "가나다라마바사아자차카타파하":
+        return "paren" if marker.endswith(")") else "korean"
+    if marker[0] in "ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ":
+        return "roman"
+    return "none"
 
 _KOREAN_LETTER_ITEM_RE = re.compile(r"^[ \t\u3000]*([가나다라마바사아자차카타파하])\.[ \t\u3000]*", re.MULTILINE)
 _DECIMAL_ITEM_RE = re.compile(r"^[ \t\u3000]*(\d{1,2}\.\d{1,2}\.)[ \t\u3000]*", re.MULTILINE)
@@ -87,24 +133,37 @@ def _hangul_count(text: str) -> int:
 
 
 def find_qualification_section(text: str) -> QualificationSection | None:
-    """원문에서 "N. 입찰(참가)자격" 절을 찾아 다음 최상위 절 직전까지 잘라낸다.
+    """원문에서 입찰참가자격 절을 찾아 같은 급의 다음 제목 직전까지 잘라낸다.
 
     제안요청서·공고문은 앞에 **목차**가 있어 같은 제목이 두 번 나온다. 처음 나온 제목만
     보면 목차 줄을 절로 착각해 본문(쪽 번호) 한 줄만 잡힌다 — 그래서 제목이 나올 때마다
-    본문에 한글이 충분히 있는지 보고, 처음으로 내용이 있는 절을 고른다.
+    본문에 한글이 충분히 있는지 보고, 처음으로 내용이 있는 절을 고른다. 번호가 붙은 제목을
+    먼저 보고, 없을 때만 번호 없는 제목("입찰참가자격" 한 줄)을 쓴다(표 칸 제목과 헷갈리지 않게).
     전부 짧으면(목차만 있는 문서) 그중 가장 긴 것을 돌려준다.
     """
+    # 우선순위: ① 번호 붙은 "입찰참가자격" ② 번호 붙은 "참가자격" ③ 번호 없는 제목.
+    # 한 문서에 둘 다 있으면(실측: 노원수학문화관 — 앞쪽 요약의 "5. 참가자격"과 본문의
+    # "2. 입찰참가자격") 입찰참가자격 절이 더 온전하다.
+    tiers: list[list[tuple[re.Match, str]]] = [[], [], []]
     best: tuple[int, re.Match, str] | None = None
     for match in _HEADING_RE.finditer(text):
+        kind = _marker_kind(match.group("marker"))
         start = match.end()
-        next_heading = _NEXT_TOP_HEADING_RE.search(text, pos=start)
-        end = next_heading.start() if next_heading else len(text)
-        body = text[start:end].strip("\n")
+        end = len(text)
+        for rx in _SECTION_END[kind]:
+            nxt = rx.search(text, pos=start)
+            if nxt and nxt.start() < end:
+                end = nxt.start()
+        body = text[start:min(end, start + _MAX_SECTION_CHARS)].strip("\n")
+        tier = 2 if kind == "none" else (0 if match.group("bid") else 1)
+        tiers[tier].append((match, body))
         size = _hangul_count(body)
-        if size >= _MIN_SECTION_HANGUL:
-            return QualificationSection(heading=match.group(0).strip(), body=body, items=split_items(body))
         if best is None or size > best[0]:
             best = (size, match, body)
+    for candidates in tiers:
+        for match, body in candidates:
+            if _hangul_count(body) >= _MIN_SECTION_HANGUL:
+                return QualificationSection(heading=match.group(0).strip(), body=body, items=split_items(body))
     if best is None:
         return None
     _, match, body = best
