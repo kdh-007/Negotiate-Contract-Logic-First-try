@@ -138,7 +138,8 @@ function reqHtml(req, mixed) {
     return `<div class="tip-item"><span class="why">아래 ${req.combos.length}개 조합 중 하나를 모두 갖추면 충족</span>`
       + req.combos.map((c, i) => `<div class="tip-sub combo"><span class="no">${circled[i] || `${i + 1}.`}</span><div>${c.rows.map(row).join("")}</div></div>`).join("") + `</div>`;
   }
-  if (!req.any_of) return `<div class="tip-item"><span class="why">반드시 보유</span>${esc(req.items[0].label)}</div>`;
+  // 미보유는 전부 붉은 ✗로 — 흰 글씨면 보유한 자격으로 착각한다(2026-09-30 제보)
+  if (!req.any_of) return `<div class="tip-item"><span class="why">반드시 보유</span>${item(req.items[0])}</div>`;
   // "미달 1건"이 면허 1개가 없다는 뜻으로 읽히지 않게, 요건 1건 = 아래 N개 중 택1임을 풀어 쓴다
   const n = req.items.length;
   const none = req.items.every((i) => !i.held);
