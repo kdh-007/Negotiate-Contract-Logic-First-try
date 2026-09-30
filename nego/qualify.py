@@ -41,6 +41,9 @@ class LicenseGroup:
     # 면허제한 API 그룹일 때만: 행(lmtSno)별 허용 이름 목록. 행끼리는 모두 필요, 행 안은 "또는".
     # 비어 있으면 allowed_names 전체가 한 행("이 중 하나")이다.
     rows: list[list[str]] = field(default_factory=list)
+    # "조합 중 하나" 요건일 때만: 조합(=API 제한그룹) 목록. 조합 하나 = 행 목록(모두 필요), 행 = 대신 인정되는
+    # 이름 목록("또는"). 나라장터 "[A]과 [B] 업종 또는 [C]과 [D] 업종"을 원문처럼 조합으로 보여주려고 둔다.
+    combos: list[list[list[str]]] = field(default_factory=list)
 
 
 @dataclass
@@ -166,6 +169,11 @@ def _is_group_satisfied(group: LicenseGroup, held_names: list[str], held_codes: 
     규칙으로 정해진 근거는 없었다. 그 탓에 보유 "실내건축공사업(0006)"이 "건축공사업(0002)"을 충족한
     것으로 나왔다(2026-09-30, 옹진군 백령 체험관 증축공사). 사용자 결정으로 코드 비교로 바꿈.
     """
+    if group.combos:
+        return any(
+            all(_is_group_satisfied(LicenseGroup("", row), held_names, held_codes) for row in combo)
+            for combo in group.combos
+        )
     held_bases = {_license_base(h) for h in held_names}
     for allowed in group.allowed_names:
         code = _license_code(allowed)
@@ -202,44 +210,39 @@ def _dedupe_names(names: list[str]) -> list[str]:
     return list(out.values())
 
 
-def license_requirements(
-    groups: list[LicenseGroup], held_names: list[str], held_codes: set[str] | frozenset[str] = frozenset()
-) -> list[LicenseGroup]:
-    """면허제한 그룹들("그룹 A 또는 그룹 B", 그룹 안은 모두 필요)을 요건 목록(요건끼리 모두 필요,
-    요건 안은 "이 중 하나")으로 펼친다.
+def _row_label(row: list[str]) -> str:
+    """행의 대표 이름(lcnsLmtNm, 맨 앞)을 "이름(코드)"로."""
+    name = row[0]
+    code = _license_code(name)
+    return f"{_license_base(name)}({code})" if code else _license_base(name)
 
-    - 모든 그룹에 똑같이 들어 있는 행 → 각각 독립 요건 (예: 4개 그룹 모두에 든 1469)
-    - 나머지가 그룹마다 한 행씩이면 → 그 행들을 합친 "이 중 하나" 요건 1건
-      (출판사 또는 인쇄사 / 건축 또는 토목건축 / 4442·4444 중 하나 + 1469)
-    - 그보다 복잡하면(그룹마다 남는 행이 여럿) 정확히 펼칠 수 없다 — 다 채운 그룹이 있으면 그 그룹의 행을,
-      없으면 못 채운 행이 가장 적은 그룹의 행을 요건으로 보여준다(판정은 그대로 정확하다).
+
+def license_requirements(
+    groups: list[LicenseGroup], held_names: list[str] = (), held_codes: set[str] | frozenset[str] = frozenset()
+) -> list[LicenseGroup]:
+    """면허제한 그룹들("그룹 A 또는 그룹 B", 그룹 안 행은 모두 필요)을 화면·판정용 요건 목록으로 바꾼다.
+    요건끼리는 모두 필요하다.
+
+    - 그룹이 하나 → 그 그룹의 행이 각각 요건 (행 안은 "이 중 하나")
+    - 그룹이 여럿이고 모두 한 행짜리 → 행들을 합친 "이 중 하나" 요건 1건 (출판사 또는 인쇄사)
+    - 그룹이 여럿이고 두 행 이상인 그룹이 있으면 → **"아래 조합 중 하나"** 요건 1건 (`combos`).
+      2026-09-30 사용자 요청: "[1227]과 [6786] 또는 [1143]과 [1227] …"을 공통 면허 + 택1로 풀어 보이면
+      나라장터 원문과 대조가 안 돼서 원문처럼 세트로 보여준다.
     """
     grouped = [[_dedupe_names(r) for r in (g.rows or [g.allowed_names]) if _dedupe_names(r)] for g in groups]
     grouped = [rows for rows in grouped if rows]
     if not grouped:
         return []
 
-    def key(row: list[str]) -> frozenset[str]:
-        return frozenset(_license_base(n) for n in row)
-
     def req(no: str, names: list[str]) -> LicenseGroup:
         return LicenseGroup(group_no=no, allowed_names=_dedupe_names(names))
 
-    common_keys = set.intersection(*({key(r) for r in rows} for rows in grouped))
-    common = [r for r in grouped[0] if key(r) in common_keys]
-    residuals = [[r for r in rows if key(r) not in common_keys] for rows in grouped]
-    out = [req(f"공통{i + 1}", r) for i, r in enumerate(common)]
-
-    if all(len(res) <= 1 for res in residuals):
-        if residuals and all(res for res in residuals):  # 그룹이 공통 행만 가진 경우가 있으면 나머지는 선택 사항
-            out.append(req("택1", [n for res in residuals for n in res[0]]))
-        return out
-
-    def unmet(rows: list[list[str]]) -> int:
-        return sum(not _is_group_satisfied(LicenseGroup("", r), held_names, held_codes) for r in rows)
-
-    best = min(grouped, key=unmet)
-    return [req(f"그룹{i + 1}", r) for i, r in enumerate(best)]
+    if len(grouped) == 1:
+        return [req(f"요건{i + 1}", r) for i, r in enumerate(grouped[0])]
+    if all(len(rows) == 1 for rows in grouped):
+        return [req("택1", [n for rows in grouped for n in rows[0]])]
+    labels = [" + ".join(_row_label(r) for r in rows) for rows in grouped]
+    return [LicenseGroup(group_no="조합", allowed_names=list(dict.fromkeys(labels)), combos=grouped)]
 
 
 def evaluate(

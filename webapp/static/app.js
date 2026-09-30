@@ -130,6 +130,14 @@ const QUAL_EMPTY = {
 const KIND_TAG = { industry: "업종", product: "품명" };
 function reqHtml(req, mixed) {
   const item = (i) => `<div class="tip-sub ${i.held ? "held" : ""}">${i.held ? "✓" : "✗"} ${mixed ? `<span class="kind">${KIND_TAG[i.kind]}</span> ` : ""}${esc(i.label)}</div>`;
+  if (req.combos) {
+    // 나라장터 원문 "[A]과 [B] 업종 또는 [C]과 [D] 업종"처럼 조합(세트)으로 — 조합 하나를 다 갖추면 충족
+    const row = (r, j) => `<div class="combo-row${r.held ? " held" : ""}"${r.alts.length ? ` title="대신 인정: ${esc(r.alts.join(", "))}"` : ""}>`
+      + `<span class="plus">${j ? "+" : ""}</span>${r.held ? "✓" : "✗"} ${esc(r.label)}${r.alts.length ? ` <small>(대체 인정 ${r.alts.length}개)</small>` : ""}</div>`;
+    const circled = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮";
+    return `<div class="tip-item"><span class="why">아래 ${req.combos.length}개 조합 중 하나를 모두 갖추면 충족</span>`
+      + req.combos.map((c, i) => `<div class="tip-sub combo"><span class="no">${circled[i] || `${i + 1}.`}</span><div>${c.rows.map(row).join("")}</div></div>`).join("") + `</div>`;
+  }
   if (!req.any_of) return `<div class="tip-item">${esc(req.items[0].label)}</div>`;
   // "미달 1건"이 면허 1개가 없다는 뜻으로 읽히지 않게, 요건 1건 = 아래 N개 중 택1임을 풀어 쓴다
   const n = req.items.length;

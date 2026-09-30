@@ -953,8 +953,8 @@ class TestOverlappingLicenseGroups(unittest.TestCase):
         none = qualify.evaluate(groups, [], set())
         self.assertEqual(none.missing_count, 1, "택1 요건 1건")
 
-    def test_common_row_in_every_group_is_its_own_requirement(self):
-        """그룹1 [4442, 1469] 또는 그룹2 [4444, 1469] → "4442·4444 중 하나" + "1469" 두 요건."""
+    def test_multi_row_groups_become_one_combo_requirement(self):
+        """그룹1 [4442, 1469] 또는 그룹2 [4444, 1469] → "아래 조합 중 하나" 요건 1건 (나라장터 원문처럼 세트로)."""
         rows = [
             {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "산업디자인전문회사(환경디자인분야)/4442"},
             {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "2", "lcnsLmtNm": "소프트웨어사업자(디지털콘텐츠개발서비스사업)/1469"},
@@ -962,14 +962,17 @@ class TestOverlappingLicenseGroups(unittest.TestCase):
             {"bidNtceNo": "N", "lmtGrpNo": "2", "lmtSno": "2", "lcnsLmtNm": "소프트웨어사업자(디지털콘텐츠개발서비스사업)/1469"},
         ]
         groups = qualify.group_license_rows(rows)["N"]
-        reqs = qualify.license_requirements(groups, [], set())
-        self.assertEqual([len(r.allowed_names) for r in reqs], [1, 2])
+        reqs = qualify.license_requirements(groups)
+        self.assertEqual(len(reqs), 1)
+        self.assertEqual(reqs[0].allowed_names, [
+            "산업디자인전문회사(환경디자인분야)(4442) + 소프트웨어사업자(디지털콘텐츠개발서비스사업)(1469)",
+            "산업디자인전문회사(종합디자인분야)(4444) + 소프트웨어사업자(디지털콘텐츠개발서비스사업)(1469)",
+        ])
         self.assertEqual(qualify.evaluate(groups, [], {"4442", "1469"}).missing_count, 0)
-        missing = qualify.evaluate(groups, [], {"4442"}).missing_groups
-        self.assertEqual([g.allowed_names for g in missing], [["소프트웨어사업자(디지털콘텐츠개발서비스사업)/1469"]])
+        self.assertEqual(qualify.evaluate(groups, [], {"4442"}).missing_count, 1, "1469 없으면 어느 조합도 못 채움")
 
-    def test_complex_groups_judged_exactly(self):
-        """그룹마다 남는 행이 여럿이면 가장 가까운 그룹을 보여주되 판정은 정확해야 한다."""
+    def test_combo_needs_every_license_of_one_set(self):
+        """"A와 B" 또는 "C와 D" — 한 조합을 다 갖춰야 충족. A·C처럼 조합을 섞으면 미달."""
         rows = [
             {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "A/0001"},
             {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "2", "lcnsLmtNm": "B/0002"},
@@ -979,4 +982,4 @@ class TestOverlappingLicenseGroups(unittest.TestCase):
         groups = qualify.group_license_rows(rows)["N"]
         self.assertEqual(qualify.evaluate(groups, [], {"0003", "0004"}).missing_count, 0)
         self.assertEqual(qualify.evaluate(groups, [], {"0001", "0003"}).missing_count, 1)
-        self.assertEqual(qualify.evaluate(groups, [], {"0003"}).missing_groups[0].allowed_names, ["D/0004"])
+        self.assertEqual(qualify.evaluate(groups, [], set()).summary, "자격 미달(A(0001) + B(0002)/C(0003) + D(0004))")

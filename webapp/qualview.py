@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 from typing import Any, Iterable
 
 from nego.report import _dedupe_names_preferring_code, _display_name
@@ -80,6 +81,19 @@ def _items(group, held: tuple[set[str], set[str]]) -> list[dict[str, Any]]:
     return out
 
 
+def _combo_req(group, held: tuple[set[str], set[str]]) -> dict[str, Any]:
+    """"아래 조합 중 하나" 요건 — 조합마다 행(대표 이름 + 대신 인정 이름들)과 보유 여부."""
+    combos = []
+    for rows in group.combos:
+        out = []
+        for row in rows:
+            labels = [_clean_label(_display_name(n)) for n in row]
+            row_items = _items(SimpleNamespace(allowed_names=row), held)
+            out.append({"label": labels[0], "alts": labels[1:], "held": any(i["held"] for i in row_items)})
+        combos.append({"rows": out, "held": all(r["held"] for r in out)})
+    return {"any_of": True, "combos": combos, "items": []}
+
+
 def _section_of(items: list[dict[str, Any]]) -> str:
     coded = [i for i in items if i["code"]]
     return "product" if coded and len(coded) == len(items) and all(i["kind"] == "product" for i in items) else "industry"
@@ -102,6 +116,15 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
     order: list[tuple[str, tuple]] = []
     for state, source in (("missing", qualification.missing_groups), ("satisfied", qualification.satisfied_groups)):
         for g in source:
+            if getattr(g, "combos", None):
+                combo = _combo_req(g, held)
+                if state == "missing":
+                    missing["industry"].append(combo)
+                else:  # 채운 조합의 면허들을 보유 자격으로 적는다
+                    done = next(c for c in combo["combos"] if c["held"])
+                    held_by["industry"].extend(r["label"] for r in done["rows"])
+                    satisfied_any["industry"] = True
+                continue
             items = _items(g, held)
             if not items:
                 continue
@@ -147,11 +170,15 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
             status = "제한 없음" if had_source.get(key) else "미확인"
         parts.append({
             "key": key, "name": name, "status": status,
-            "missing": [{"any_of": len(items) > 1, "items": items} for items in miss],
+            "missing": [items if isinstance(items, dict) else {"any_of": len(items) > 1, "items": items} for items in miss],
             "held": held_by[key],
         })
     return parts
 
 
 def flat_missing(parts: Iterable[dict[str, Any]]) -> list[str]:
-    return [" 또는 ".join(i["label"] for i in req["items"]) for p in parts for req in p["missing"]]
+    def line(req: dict[str, Any]) -> str:
+        if req.get("combos"):
+            return " 또는 ".join("(" + " + ".join(r["label"] for r in c["rows"]) + ")" for c in req["combos"])
+        return " 또는 ".join(i["label"] for i in req["items"])
+    return [line(req) for p in parts for req in p["missing"]]
