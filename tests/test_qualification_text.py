@@ -192,3 +192,31 @@ class TestRealFixtures(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSkipsTableOfContents(unittest.TestCase):
+    """실측(2026-09-29, 울산박물관 R26BK01748232): 목차의 "2. 입찰참가자격  2"를 절로 착각해
+    참가자격이 쪽 번호 한 줄만 잡혔다."""
+
+    def test_body_section_after_toc(self):
+        text = "\n".join([
+            "목차",
+            "  1. 사업 개요   1",
+            "  2. 입찰참가자격   2",
+            "  3. 제안서 작성 요령   5",
+            "1. 사업 개요",
+            "사업명: 울산박물관 상설전시실 무장애 관광 콘텐츠 개발",
+            "2. 입찰참가자격",
+            "① 소프트웨어사업자(디지털콘텐츠개발서비스사업, 업종코드 1469)로 등록한 자",
+            "② 산업디자인전문회사(업종코드 4442 또는 4444)로 등록한 자",
+            "③ 직접생산확인증명서[세부품명번호 10자리 : 6010989901]를 소지한 자",
+            "3. 제안서 작성 요령",
+        ])
+        sec = find_qualification_section(text)
+        self.assertIsNotNone(sec)
+        self.assertEqual(len(sec.items), 3)
+        self.assertIn("6010989901", sec.items[2])
+
+    def test_toc_only_document_still_returns_something(self):
+        sec = find_qualification_section("2. 입찰참가자격   2\n3. 기타   3")
+        self.assertIsNotNone(sec)

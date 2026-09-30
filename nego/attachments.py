@@ -16,6 +16,7 @@ import logging
 import re
 import zipfile
 import zlib
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -564,8 +565,25 @@ def _render_cell(tc: ET.Element) -> str:
 # 참고: 표/그림 같은 인라인 컨트롤 문자 뒤에 예약된 텍스트 슬롯을 정교하게
 # 건너뛰지는 않는다 — 문단 본문은 정상 추출되지만 표/이미지가 많은 문서는
 # 경계 부분에 약간의 잡음이 섞일 수 있다. 실제 공고 첨부파일로 검증 필요.
+#
+# 2026-09-29 수정: 위 "잡음"이 실측으로 확인됨 — 목차 줄마다 "사업 개요葘ȃ 1",
+# "2. 입찰참가자격 礮ȃ 2"처럼 원문에 없는 한자가 섞였다(울산박물관 R26BK01748232).
+# HWP 5.0 규격상 컨트롤 문자 중 인라인(4~9, 19, 20)·확장(1~3, 11, 12, 14~18, 21~23)
+# 형은 [코드 1워드][부가 데이터 6워드][같은 코드 1워드] 총 8워드를 차지하는데, 예전엔
+# 코드 1워드만 지워서 부가 데이터 6워드가 UTF-16으로 읽혀 한자처럼 보였다. 이제 8워드
+# 블록을 통째로 건너뛴다(닫는 코드가 같을 때만 — 아니면 1워드만 지워 본문을 삼키지 않게).
+# 탭(9)은 목차의 점선 채움 자리라 공백 하나로 남긴다.
+# 글자겹치기(0x17, "spct")는 "①" 같은 원문자를 그리는 기능이라 버리지 않고, 별도
+# CTRL_HEADER 레코드(tag 0x47)에 든 실제 글자로 채운다 (jiil-past-contracts 과거 실적
+# 추출에서 먼저 검증한 방식, 브랜치 claude/modest-faraday-gw058m).
 
 _HWPTAG_PARA_TEXT = 0x43
+_HWPTAG_CTRL_HEADER = 0x47
+_HWP_BLOCK_CONTROL_CODES = {1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23}
+_HWP_BLOCK_LEN = 8  # 여는 코드 + 부가 데이터 6워드 + 닫는 코드
+_HWP_TAB = 0x09
+_CHAR_OVERLAP_ANCHOR_CODE = 0x17
+_CHAR_OVERLAP_CTRL_ID = b"spct"
 
 
 def _extract_hwp_text(data: bytes) -> str:
@@ -629,8 +647,8 @@ def _inflate_raw(data: bytes) -> bytes:
         raise AttachmentError(f"HWP 섹션 압축 해제 실패: {err}") from err
 
 
-def _hwp_section_paragraphs(payload: bytes) -> list[str]:
-    paragraphs = []
+def _iter_hwp_records(payload: bytes):
+    """섹션 페이로드를 (tag_id, record_bytes) 레코드 스트림으로 순회한다."""
     offset = 0
     length = len(payload)
     while offset + 4 <= length:
@@ -645,14 +663,63 @@ def _hwp_section_paragraphs(payload: bytes) -> list[str]:
             offset += 4
         record = payload[offset : offset + size]
         offset += size
+        yield tag_id, record
+
+
+def _extract_char_overlap_text(record: bytes) -> str:
+    """"spct"(글자겹치기) 컨트롤 레코드에서 겹쳐진 문자를 꺼낸다.
+    구조: b"spct" + 문자 길이(uint16) + 그 길이만큼의 UTF-16LE 문자 + 서식 파라미터."""
+    if len(record) < 6 or record[:4] != _CHAR_OVERLAP_CTRL_ID:
+        return ""
+    char_len = int.from_bytes(record[4:6], "little")
+    end = 6 + char_len * 2
+    if char_len <= 0 or end > len(record):
+        return ""
+    return record[6:end].decode("utf-16le", errors="ignore")
+
+
+def _hwp_section_paragraphs(payload: bytes) -> list[str]:
+    records = list(_iter_hwp_records(payload))
+    # 글자겹치기 컨트롤을 문서 순서대로 먼저 모아, 문단 디코딩 중 0x17 블록을 만날 때마다 하나씩 쓴다
+    overlap_queue = deque(
+        _extract_char_overlap_text(record)
+        for tag_id, record in records
+        if tag_id == _HWPTAG_CTRL_HEADER and record[:4] == _CHAR_OVERLAP_CTRL_ID
+    )
+    paragraphs = []
+    for tag_id, record in records:
         if tag_id == _HWPTAG_PARA_TEXT and record:
-            text = _decode_para_text(record)
+            text = _decode_para_text(record, overlap_queue)
             if text:
                 paragraphs.append(text)
     return paragraphs
 
 
-def _decode_para_text(record: bytes) -> str:
-    raw = record.decode("utf-16le", errors="ignore")
-    # 표/그림 등 인라인 컨트롤 문자(0x00~0x1F, 개행 제외)는 걷어낸다.
-    return "".join(ch for ch in raw if ch == "\n" or ord(ch) >= 0x20)
+def _decode_para_text(record: bytes, overlap_queue: "deque[str] | None" = None) -> str:
+    """문단 레코드를 텍스트로. 개행(0x0A)은 살리고, 8워드 컨트롤 블록은 부가 데이터까지
+    통째로 건너뛰며(탭은 공백 하나), 그 밖 컨트롤 문자(<0x20)는 1워드만 지운다."""
+    chars = record.decode("utf-16le", errors="ignore")
+    n = len(chars)
+    out: list[str] = []
+    i = 0
+    while i < n:
+        ch = chars[i]
+        code = ord(ch)
+        if code == 0x0A:
+            out.append("\n")
+            i += 1
+            continue
+        if code < 0x20:
+            block_end = i + _HWP_BLOCK_LEN - 1
+            if code in _HWP_BLOCK_CONTROL_CODES and block_end < n and chars[block_end] == ch:
+                if code == _HWP_TAB:
+                    out.append(" ")
+                elif code == _CHAR_OVERLAP_ANCHOR_CODE and overlap_queue:
+                    out.append(overlap_queue.popleft())
+                i = block_end + 1
+            else:
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)

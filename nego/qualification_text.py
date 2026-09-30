@@ -77,17 +77,37 @@ class QualificationSection:
     items: list[str]
 
 
+# 목차 줄과 진짜 절을 가르는 기준 — 목차 항목은 제목 뒤에 쪽 번호만 있고 곧바로 다음 항목이
+# 이어진다(실측: 울산박물관 R26BK01748232 "2. 입찰참가자격   2" → 본문이 "2" 한 글자).
+_MIN_SECTION_HANGUL = 10
+
+
+def _hangul_count(text: str) -> int:
+    return sum(1 for ch in text if "가" <= ch <= "힣")
+
+
 def find_qualification_section(text: str) -> QualificationSection | None:
-    """원문에서 "N. 입찰(참가)자격" 절을 찾아 다음 최상위 절 직전까지 잘라낸다."""
-    match = _HEADING_RE.search(text)
-    if not match:
+    """원문에서 "N. 입찰(참가)자격" 절을 찾아 다음 최상위 절 직전까지 잘라낸다.
+
+    제안요청서·공고문은 앞에 **목차**가 있어 같은 제목이 두 번 나온다. 처음 나온 제목만
+    보면 목차 줄을 절로 착각해 본문(쪽 번호) 한 줄만 잡힌다 — 그래서 제목이 나올 때마다
+    본문에 한글이 충분히 있는지 보고, 처음으로 내용이 있는 절을 고른다.
+    전부 짧으면(목차만 있는 문서) 그중 가장 긴 것을 돌려준다.
+    """
+    best: tuple[int, re.Match, str] | None = None
+    for match in _HEADING_RE.finditer(text):
+        start = match.end()
+        next_heading = _NEXT_TOP_HEADING_RE.search(text, pos=start)
+        end = next_heading.start() if next_heading else len(text)
+        body = text[start:end].strip("\n")
+        size = _hangul_count(body)
+        if size >= _MIN_SECTION_HANGUL:
+            return QualificationSection(heading=match.group(0).strip(), body=body, items=split_items(body))
+        if best is None or size > best[0]:
+            best = (size, match, body)
+    if best is None:
         return None
-
-    start = match.end()
-    next_heading = _NEXT_TOP_HEADING_RE.search(text, pos=start)
-    end = next_heading.start() if next_heading else len(text)
-    body = text[start:end].strip("\n")
-
+    _, match, body = best
     return QualificationSection(heading=match.group(0).strip(), body=body, items=split_items(body))
 
 
