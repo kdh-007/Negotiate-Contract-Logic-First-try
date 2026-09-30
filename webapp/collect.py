@@ -27,7 +27,7 @@ PERIODS = [1, 3, 7, 14, 30]
 # 저장되는 수집 결과의 판정·표시 형식 버전. 자격 판정·팝업 자료가 바뀔 때 올린다 — 화면이 예전 버전으로
 # 수집된 결과를 보여주고 있으면 "다시 불러오기" 안내를 띄운다(2026-09-30: 코드를 받고도 옛 결과를 보고
 # 중복·개수 오류가 그대로라고 여긴 일이 두 번 있었음).
-RESULT_FORMAT = 8
+RESULT_FORMAT = 9
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -74,6 +74,7 @@ def serialize(candidate, past: PastIndex, held: tuple[set[str], set[str]] = (set
         "award_method": n.award_method,
         "confidence": candidate.screen_result.confidence,
         "matched_keywords": candidate.screen_result.matched_keywords,
+        "review_exclude": candidate.screen_result.review_exclude,
         "is_candidate": candidate.is_candidate,
         "excluded_reason": candidate.excluded_reason,
         "match_explain": candidate.screen_result.match_explain if not candidate.is_candidate else [],
@@ -193,6 +194,8 @@ class Collector:
         from nego.pipeline import run
 
         config.lookback_days = days
+        # 관심·제외 키워드가 함께 있는 공고는 빼지 않고 "검토 필요"로 — 웹앱에서만 (CLI·자동 발송은 예전처럼 제외)
+        config.screen.review_conflicts = True
         now = datetime.now()
         candidates, stats, _ = run(config, now, cats, include_prespec=prespec)
         if attachments:

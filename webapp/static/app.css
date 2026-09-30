@@ -58,6 +58,7 @@ main { padding: 16px 24px 48px; max-width: 1400px; }
 .section-divider { border: 0; border-top: 2px solid var(--line); margin: 28px 0 8px; }
 h2.section { font-size: 16px; margin: 16px 0 8px; }
 h2.section small { color: var(--star); font-weight: 600; margin-left: 6px; }
+h2.section.review small { color: var(--muted); font-weight: 400; }
 .grid { display: flex; flex-direction: column; gap: 12px; }
 .card { background: var(--panel); border: 1px solid var(--card-line); border-left: 4px solid var(--card-line); box-shadow: var(--card-shadow); border-radius: 12px; padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }
 .card.urgent { border-left-color: var(--bad); }

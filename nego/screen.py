@@ -26,7 +26,7 @@ R26BK01717819 UAE 두바이 의료기기전시회, R26BK01714892 두바이 — �
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from .models import Notice
@@ -43,6 +43,9 @@ class ScreenConfig:
     min_budget_amount: float | None = None
     product_codes: list[dict[str, str]] = field(default_factory=list)
     industry_codes: list[dict[str, str]] = field(default_factory=list)
+    # 제외 키워드와 관심 키워드가 공고명에 함께 있으면 빼지 않고 "검토 필요"로 남긴다(2026-09-30 사용자 결정 —
+    # 담당자 판단을 쌓아 제외 키워드를 고치려고). 웹앱만 켠다 — CLI·자동 발송은 예전처럼 제외.
+    review_conflicts: bool = False
 
 
 @dataclass
@@ -61,6 +64,8 @@ class ScreenResult:
     # "미매칭"으로 빠졌을 때 무엇을 무엇과 비교해서 안 맞았는지 (사람이 읽는 줄 목록).
     # 판정에는 쓰지 않는다 — 제외된 공고 화면에서 "왜 빠졌지?"를 바로 보려고 남긴다.
     match_explain: list[str] = field(default_factory=list)
+    # "검토 필요" — 관심 키워드가 있는데 제외 키워드(이 값)도 있어서 사람이 판단할 공고
+    review_exclude: str | None = None
 
 
 def _match_exclude(notice: Notice, exclude_keywords: list[str]) -> str | None:
@@ -149,6 +154,13 @@ def _explain_no_match(notice: Notice, config: ScreenConfig, industry_hits: list[
 
 def screen(notice: Notice, config: ScreenConfig) -> ScreenResult:
     excluded_word = _match_exclude(notice, config.exclude_keywords)
+    if excluded_word and config.review_conflicts and _match_keywords(notice, config.keywords):
+        # 관심 키워드도 있다 — 제외하지 않고 아래 예산·해외 조건만 거친 뒤 "검토 필요"로 둔다
+        result = screen(notice, replace(config, exclude_keywords=[], review_conflicts=False))
+        if result.matched:
+            result.confidence = "검토필요"
+            result.review_exclude = excluded_word
+        return result
     if excluded_word:
         return ScreenResult(
             matched=False,

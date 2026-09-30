@@ -90,7 +90,7 @@ function chipRow(label, key, options, multi, disabled = {}) {
 function renderFilters() {
   const box = $("#filters");
   box.replaceChildren(
-    chipRow("추천", "conf", ["전체", "강력추천", "참고용"], false),
+    chipRow("추천", "conf", ["전체", "강력추천", "참고용", "검토필요"], false),
     chipRow("공고", "kind", ["본공고+사전규격", "본공고", "사전규격"], false),
     chipRow("낙찰방법", "cat", META ? META.categories : ["협상", "규격가격동시입찰", "입찰"], true),
     chipRow("참가여부", "part", ["미지정", ...(META ? META.statuses : [])], true),
@@ -181,7 +181,9 @@ function qualBadge(q) {
 }
 function badges(c) {
   const out = [dday(c)];
-  if (c.confidence === "강력추천") out.push(`<span class="b star">강력추천</span>`);
+  if (c.review_exclude)
+    out.push(`<span class="b warn" title="관심 키워드가 있어 빼지 않고 검토 필요로 남겼습니다">제외 키워드 "${esc(c.review_exclude)}" · 관심 "${esc((c.matched_keywords || []).join(", "))}"</span>`);
+  else if (c.confidence === "강력추천") out.push(`<span class="b star">강력추천</span>`);
   else if (c.confidence) out.push(`<span class="b">${esc(c.confidence)}</span>`);
   out.push(`<span class="b">${esc(c.work_type)}</span>`);
   if (c.kind === "사전규격") {
@@ -327,8 +329,14 @@ function render() {
   else if (!shown.length) live.replaceChildren(emptyBox("조건에 맞는 공고가 없습니다."));
   else {
     const parts = [];
-    for (const kind of ["본공고", "사전규격"]) {
-      const list = shown.filter((c) => c.kind === kind);
+    // "검토 필요"(관심·제외 키워드 공존)는 본공고·사전규격과 섞지 않고 맨 아래 따로 모은다
+    const sections = [
+      ["본공고", shown.filter((c) => c.kind === "본공고" && !c.review_exclude), ""],
+      ["사전규격", shown.filter((c) => c.kind === "사전규격" && !c.review_exclude), ""],
+      ["검토 필요", shown.filter((c) => c.review_exclude),
+       "관심 키워드와 제외 키워드가 공고명에 함께 있는 공고 — 참가여부를 남겨 주시면 제외 키워드를 고치는 데 씁니다"],
+    ];
+    for (const [kind, list, note] of sections) {
       if (!list.length) continue;
       if (parts.length) {
         const hr = document.createElement("hr");
@@ -336,8 +344,10 @@ function render() {
         parts.push(hr);
       }
       const h = document.createElement("h2");
-      h.className = "section";
-      h.innerHTML = `${kind} ${list.length}건<small>강력추천 ${list.filter((c) => c.confidence === "강력추천").length}건</small>`;
+      h.className = "section" + (note ? " review" : "");
+      h.innerHTML = note
+        ? `${kind} ${list.length}건<small>${esc(note)}</small>`
+        : `${kind} ${list.length}건<small>강력추천 ${list.filter((c) => c.confidence === "강력추천").length}건</small>`;
       parts.push(h, grid(list, true));
     }
     live.replaceChildren(...parts);

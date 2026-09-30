@@ -586,6 +586,22 @@ class TestScreen(unittest.TestCase):
         self.assertFalse(result.matched)
         self.assertEqual(result.excluded_by, "제외키워드")
 
+    def test_conflict_goes_to_review_when_enabled(self):
+        """관심·제외 키워드 공존 → 웹앱(review_conflicts)에선 "검토필요"로 남긴다. 기본(CLI)은 예전처럼 제외."""
+        from dataclasses import replace
+
+        raw = fixtures.notice("X", title="체험관 전시연출 설계 및 제작설치 정비 용역")
+        on = screen.screen(notice_from_raw(raw, "용역"), replace(self.config, review_conflicts=True))
+        self.assertTrue(on.matched)
+        self.assertEqual((on.confidence, on.review_exclude, on.matched_keywords), ("검토필요", "정비", ["체험관"]))
+        self.assertEqual(self._screen(raw).excluded_by, "제외키워드")
+        only_exclude = fixtures.notice("Y", title="청사 정비 용역")
+        self.assertEqual(screen.screen(notice_from_raw(only_exclude, "용역"),
+                                       replace(self.config, review_conflicts=True)).excluded_by, "제외키워드")
+        cheap = fixtures.notice("Z", title="체험관 정비", presmptPrce="50000000")
+        self.assertEqual(screen.screen(notice_from_raw(cheap, "용역"),
+                                       replace(self.config, review_conflicts=True)).excluded_by, "최소예산", "예산 조건은 그대로")
+
     def test_budget_below_minimum_blocks(self):
         result = self._screen(fixtures.notice("X", title="○○과학관 전시", presmptPrce="50000000"))
         self.assertFalse(result.matched)
