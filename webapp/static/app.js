@@ -120,8 +120,8 @@ function dday(c) {
   return `<span class="b dday${c.days_left > 7 ? " far" : ""}" title="${esc(c.deadline_label)} ${esc(fmtDt(c.deadline))}">마감 ${t}</span>`;
 }
 const QUAL_NOTES = {
-  industry: "자격요건 = 업종·면허(업종코드 4자리). '최소 N개 부족' = 참가하려면 더 갖춰야 하는 면허 수 — 'N개 중 1개 이상'은 그중 1개만 갖추면 되므로 1개로 셉니다.",
-  product: "세부품명번호 = 직접생산확인 등 품목 요건(10자리). 첨부 공고문을 읽었을 때만 판정됩니다. '최소 N개 부족' = 더 갖춰야 하는 품목 수.",
+  industry: "자격요건 = 업종·면허(업종코드 4자리). 'N개 더 필요' = 지금 보유 자격에 면허 N개를 더하면 참가 가능 — 여러 방법이 있으면 가장 적게 드는 쪽으로 셉니다('N개 중 1개 이상'은 1개).",
+  product: "세부품명번호 = 직접생산확인 등 품목 요건(10자리). 첨부 공고문을 읽었을 때만 판정됩니다. 'N개 더 필요' = 품목 N개를 더 갖추면 충족.",
 };
 const QUAL_EMPTY = {
   industry: { "제한 없음": "면허제한정보·첨부 참가자격에 업종 요건이 없습니다.", "미확인": "업종 요건을 확인할 정보가 없습니다 (사전규격 등)." },
@@ -161,8 +161,9 @@ function qualBadge(q) {
     if (p.status === "미달") {
       const unit = p.key === "product" ? "품목" : "면허";
       const need = p.need ?? p.missing.length;
-      cls = "bad"; label += ` · ${unit} 최소 ${need}개 부족`;
-      body += `<div class="tip-title bad">부족한 ${unit} 최소 ${need}개</div>`;
+      // "최소 N개"는 여러 뜻으로 읽혀서(2026-09-30) — "N개만 더 갖추면 참가 가능"으로 풀어 쓴다
+      cls = "bad"; label += ` · ${unit} ${need}개 더 필요`;
+      body += `<div class="tip-title bad">${unit} ${need}개만 더 갖추면 참가 가능</div>`;
     } else if (p.status === "충족") cls = "good";
     // 요건 전체를 한 목록으로 — 미달 요건 먼저, 충족 요건 뒤. 보유 ✓ 초록, 미보유 ✗ 붉은색
     const ok = p.satisfied || [];
