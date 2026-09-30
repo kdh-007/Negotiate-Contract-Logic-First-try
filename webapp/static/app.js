@@ -120,8 +120,8 @@ function dday(c) {
   return `<span class="b dday${c.days_left > 7 ? " far" : ""}" title="${esc(c.deadline_label)} ${esc(fmtDt(c.deadline))}">마감 ${t}</span>`;
 }
 const QUAL_NOTES = {
-  industry: "자격요건 = 업종·면허(업종코드 4자리). 미보유는 요건 단위로 셉니다 — 'N개 중 1개 이상' 요건은 면허가 여러 개 없어도 1건, '조합 중 하나' 요건도 1건입니다.",
-  product: "세부품명번호 = 직접생산확인 등 품목 요건(10자리). 첨부 공고문을 읽었을 때만 판정됩니다.",
+  industry: "자격요건 = 업종·면허(업종코드 4자리). '최소 N개 부족' = 참가하려면 더 갖춰야 하는 면허 수 — 'N개 중 1개 이상'은 그중 1개만 갖추면 되므로 1개로 셉니다.",
+  product: "세부품명번호 = 직접생산확인 등 품목 요건(10자리). 첨부 공고문을 읽었을 때만 판정됩니다. '최소 N개 부족' = 더 갖춰야 하는 품목 수.",
 };
 const QUAL_EMPTY = {
   industry: { "제한 없음": "면허제한정보·첨부 참가자격에 업종 요건이 없습니다.", "미확인": "업종 요건을 확인할 정보가 없습니다 (사전규격 등)." },
@@ -155,9 +155,11 @@ function qualBadge(q) {
   return parts.map((p) => {
     let label = `${p.name} ${p.status}`, cls = "", body = "";
     if (p.status === "미달") {
-      cls = "bad"; label += ` ${p.missing.length}건`;
+      const unit = p.key === "product" ? "품목" : "면허";
+      const need = p.need ?? p.missing.length;
+      cls = "bad"; label += ` · ${unit} 최소 ${need}개 부족`;
       const mixed = p.missing.some((r) => new Set(r.items.map((i) => i.kind)).size > 1);
-      body += `<div class="tip-title bad">미보유 ${esc(p.name)} ${p.missing.length}건</div>` + p.missing.map((r) => reqHtml(r, mixed)).join("");
+      body += `<div class="tip-title bad">부족한 ${unit} 최소 ${need}개</div>` + p.missing.map((r) => reqHtml(r, mixed)).join("");
     } else if (p.status === "충족") cls = "good";
     if (p.held.length)
       body += `<div class="tip-title good">보유로 충족한 자격 ${p.held.length}건</div>` + p.held.map((n) => `<div class="tip-item">✓ ${esc(n)}</div>`).join("");

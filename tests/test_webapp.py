@@ -111,6 +111,19 @@ class TestSerialize(unittest.TestCase):
 class TestQualificationView(unittest.TestCase):
     """2026-09-29 사용자 지적 3건을 그대로 재현한다."""
 
+    def test_need_counts_minimum_licenses_to_acquire(self):
+        """'최소 N개 부족' — 반드시 1 + 택1 1 = 2, 조합 요건은 가장 덜 모자란 조합의 미보유 수."""
+        from nego import qualify
+        from webapp import qualview
+        waste = [{"bidNtceNo": "W", "lmtGrpNo": str(g), "lmtSno": str(n), "lcnsLmtNm": name}
+                 for g, pair in enumerate([("A/1227", "B/6786"), ("A/1227", "C/1143")], 1) for n, name in enumerate(pair, 1)]
+        q = qualify.evaluate(qualify.group_license_rows(waste)["W"], [])
+        self.assertEqual(qualview.build(q, (set(), set()), {"industry": True})[0]["need"], 2)
+        combo = [{"bidNtceNo": "C", "lmtGrpNo": str(g), "lmtSno": str(n), "lcnsLmtNm": name}
+                 for g, pair in enumerate([("A/0001", "B/0002"), ("C/0003", "D/0004")], 1) for n, name in enumerate(pair, 1)]
+        q = qualify.evaluate(qualify.group_license_rows(combo)["C"], [], {"0003"})
+        self.assertEqual(qualview.build(q, ({"0003"}, set()), {"industry": True})[0]["need"], 1, "C 보유 → D 하나만 더")
+
     def test_substitute_license_used_for_judgment_but_not_shown(self):
         """허용업종(대신 인정)은 판정에만 쓰고, 그걸로 채웠을 때만 '(대체 인정)'으로 적는다."""
         from nego import qualify

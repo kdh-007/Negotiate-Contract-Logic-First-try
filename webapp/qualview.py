@@ -93,7 +93,9 @@ def _combo_req(group, held: tuple[set[str], set[str]]) -> dict[str, Any]:
             out.append({"label": row_items[0]["label"], "held": any(i["held"] for i in row_items),
                         "via": f"{via} (대체 인정)" if via else None})
         combos.append({"rows": out, "held": all(r["held"] for r in out)})
-    return {"any_of": True, "combos": combos, "items": []}
+    # 더 따야 할 면허 수 = 가장 덜 모자란 조합의 미보유 면허 수
+    need = min((sum(not r["held"] for r in c["rows"]) for c in combos), default=1)
+    return {"any_of": True, "combos": combos, "items": [], "need": need}
 
 
 def _section_of(items: list[dict[str, Any]]) -> str:
@@ -186,9 +188,13 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
             status = "충족"
         else:
             status = "제한 없음" if had_source.get(key) else "미확인"
+        reqs = [items if isinstance(items, dict) else {"any_of": len(items) > 1, "items": items} for items in miss]
         parts.append({
             "key": key, "name": name, "status": status,
-            "missing": [items if isinstance(items, dict) else {"any_of": len(items) > 1, "items": items} for items in miss],
+            # "N건"이 무엇을 세는지 안 보여서(2026-09-30 제보) — 자격을 갖추려면 최소 몇 개를 더 갖춰야 하나로 센다.
+            # "반드시"·"N개 중 1개 이상" 요건은 1개, "조합 중 하나"는 가장 덜 모자란 조합의 미보유 수.
+            "need": sum(r.get("need", 1) for r in reqs),
+            "missing": reqs,
             "held": held_by[key],
         })
     return parts
