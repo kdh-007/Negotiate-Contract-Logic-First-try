@@ -1006,6 +1006,23 @@ class TestOverlappingLicenseGroups(unittest.TestCase):
         reqs = qualify.license_requirements(groups)
         self.assertEqual([len(c) for c in reqs[0].combos], [1, 2], "① 토목공사업 또는 ② 상·하수도 + 지반조성")
 
+    def test_rows_with_same_license_merge_into_one_requirement(self):
+        """같은 차수 안에서 대표 면허가 같은 행이 허용업종만 달리해 여러 번 와도 한 요건으로 합친다."""
+        rows = [
+            {"bidNtceNo": "R", "bidNtceOrd": "000", "lmtGrpNo": "1", "lmtSno": str(i), "lcnsLmtNm": "토목공사업/0001",
+             "permsnIndstrytyList": alt}
+            for i, alt in enumerate(["[토목공사업/0001]", "[토목건축공사업/0003]", "[토목공사업/0001]"], 1)
+        ]
+        for i in range(6):
+            name = "상·하수도설비공사업/4996" if i % 2 == 0 else "지반조성·포장공사업/4989"
+            rows.append({"bidNtceNo": "R", "bidNtceOrd": "000", "lmtGrpNo": "2", "lmtSno": str(i + 1), "lcnsLmtNm": name})
+        groups = qualify.group_license_rows(rows)["R"]
+        self.assertEqual(groups[0].rows, [["토목공사업/0001", "토목건축공사업"]])  # 허용업종 목록은 코드를 떼어 둔다
+        self.assertEqual(groups[1].rows, [["상·하수도설비공사업/4996"], ["지반조성·포장공사업/4989"]])
+        from webapp import qualview
+        q = qualify.evaluate(groups, [])
+        self.assertEqual(qualview.build(q, (set(), set()), {"industry": True})[0]["need"], 1, "토목공사업 하나면 됨")
+
     def test_latest_amendment_wins(self):
         rows = [
             {"bidNtceNo": "R", "bidNtceOrd": "000", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "조경공사업/0005"},

@@ -302,8 +302,11 @@ function render() {
   const shown = all.filter(passes);
   const lv = (l) => shown.filter((c) => c.sync.level === l).length;
   const strong = shown.filter((c) => c.confidence === "강력추천").length;
+  // 예전 버전 코드로 수집한 결과면 판정·팝업이 최신 규칙과 다를 수 있다 — 다시 불러오라고 알린다
+  const stale = RUN && META && META.result_format && (RUN.format || 0) < META.result_format;
   $("#summary").innerHTML = RUN
-    ? `후보 <b>${all.length}</b>건 중 <b>${shown.length}</b>건 표시 · 강력추천 ${strong} · 싱크로율 높음 <b>${lv("높음")}</b> / 경계선 ${lv("경계선")} / 낮음 ${lv("낮음")}`
+    ? (stale ? `<span class="job err">⚠ 이 결과는 이전 버전으로 수집됐습니다 — 자격 판정·표시가 최신 규칙과 다를 수 있으니 '나라장터에서 불러오기'를 다시 눌러 주세요.</span><br>` : "")
+      + `후보 <b>${all.length}</b>건 중 <b>${shown.length}</b>건 표시 · 강력추천 ${strong} · 싱크로율 높음 <b>${lv("높음")}</b> / 경계선 ${lv("경계선")} / 낮음 ${lv("낮음")}`
       + ` · 조회 ${esc(fmtDt(RUN.stats.period_begin))} ~ ${esc(fmtDt(RUN.stats.period_end))} · 수집 ${esc(fmtDt(RUN.finished_at))}`
       + (RUN.params.attachments ? "" : " · <span title='첨부 참가자격 미반영'>첨부 자격판정 안 함</span>")
       + (RUN.stats.license_error ? ` · <span class="job err">면허제한정보 조회 실패</span>` : "")

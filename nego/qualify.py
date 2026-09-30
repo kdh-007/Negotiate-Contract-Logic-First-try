@@ -156,9 +156,16 @@ def group_license_rows(raw_items: list[RawItem]) -> dict[str, list[LicenseGroup]
 
         rows = by_notice.setdefault(notice_no, {}).setdefault(notice_ord, {}).setdefault(group_no, [])
         row = _dedupe_names(names)
-        # 같은 차수 안에서도 똑같은 행이 두 번 오면 한 번만 (행끼리는 "모두 필요"라 중복은 뜻이 없다)
-        if row and not any(_row_key(r) == _row_key(row) for r in rows):
+        if not row:
+            continue
+        # 같은 그룹에서 대표 면허(lcnsLmtNm)가 같은 행은 **한 요건**이다 — 허용업종만 다른 행이 여러 개 오거나
+        # 똑같은 행이 되풀이돼도(2026-09-30 제보: 토목공사업 ×3, 상·하수도/지반조성 번갈아 ×3) 대표 면허 하나로
+        # 합치고 허용업종은 "또는"으로 모은다. 행끼리는 "모두 필요"라 같은 면허를 두 번 세면 안 된다.
+        same = next((r for r in rows if _license_base(r[0]) == _license_base(row[0])), None)
+        if same is None:
             rows.append(row)
+        else:
+            same[:] = _dedupe_names(same + row)
 
     out: dict[str, list[LicenseGroup]] = {}
     for notice_no, by_ord in by_notice.items():
@@ -168,10 +175,6 @@ def group_license_rows(raw_items: list[RawItem]) -> dict[str, list[LicenseGroup]
             for g, rows in groups.items()
         ]
     return out
-
-
-def _row_key(row: list[str]) -> frozenset[str]:
-    return frozenset(_license_base(n) for n in row)
 
 
 def _is_group_satisfied(group: LicenseGroup, held_names: list[str], held_codes: set[str] | frozenset[str] = frozenset()) -> bool:

@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 from nego import scope
 
-from .collect import PERIODS, Collector
+from .collect import PERIODS, RESULT_FORMAT, Collector
 from .store import STATUSES, Store
 from .sync import BORDER, HIGH, PastIndex
 
@@ -101,6 +101,7 @@ def make_handler(app: App):
                 return self._json({
                     "past_count": len(app.past.projects), "past_years": years,
                     "past_error": app.past.error, "periods": PERIODS, "statuses": STATUSES,
+                    "result_format": RESULT_FORMAT,
                     "categories": scope.CATEGORIES, "sync_thresholds": {"high": HIGH, "border": BORDER},
                     "has_service_key": bool(os.environ.get("NARA_SERVICE_KEY", "").strip()),
                     "has_ai_key": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
