@@ -50,6 +50,9 @@ class Candidate:
     llm_similarity: object | None = None
     # 지역 제한(업체 소재지) 판정 — 표시용, 후보 여부에는 쓰지 않는다 (`region.py`)
     region_check: region.RegionCheck = field(default_factory=region.RegionCheck)
+    # 첨부 공고문에서 찾은, 판정하지 않고 "확인 필요"로만 보여줄 요건 — 실적·현장설명회·기술인력
+    # (`text_requirements.flag_requirements`, [{kind, text, date?}])
+    text_flags: list = field(default_factory=list)
 
     @property
     def gate_passed(self) -> bool:

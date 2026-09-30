@@ -403,6 +403,12 @@ def save_attachment_texts(
                 candidate.region_check, _region.from_text(all_items, company)
             )
 
+        # 실적·현장설명회·기술인력 요건 — 판정 없이 "확인 필요" 칩으로 (2026-09-30 사용자 요청)
+        if hasattr(candidate, "text_flags"):
+            from .text_requirements import flag_requirements
+
+            candidate.text_flags = flag_requirements(all_items, getattr(candidate, "attachment_text", ""))
+
         if not needs_check or not all_items:
             continue
 

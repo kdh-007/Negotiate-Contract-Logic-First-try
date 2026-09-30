@@ -210,8 +210,16 @@ function regionBadge(c) {
     return `<span class="b warn" title="${esc(c.regions.join(", "))}">지역제한 ${esc(c.regions.slice(0, 2).join("·"))}${c.regions.length > 2 ? " 외" : ""}</span>`;
   return `<span class="b" title="나라장터 참가가능지역·첨부 공고문 모두 지역 요건을 찾지 못함 (제한이 없거나 등록되지 않은 것)">지역제한 정보 없음</span>`;
 }
+// 판정하지 않는 글로 된 요건 — 실적·현장설명회·기술인력. 칩에 커서를 대면 원문 문장(현장설명회는 날짜도)
+const FLAG_LABEL = { "실적": "실적 요건", "현장설명회": "현장설명회 참가 필수", "인력": "기술인력 요건", "건축사사무소": "건축사사무소 요건" };
+function flagBadges(c) {
+  return (c.text_flags || []).map((f) => {
+    const tip = [f.date ? `일시: ${f.date}` : "", f.text, "자동 판정하지 않습니다 — 공고문에서 확인하세요."].filter(Boolean).join("\n");
+    return `<span class="b warn" title="${esc(tip)}">${esc(FLAG_LABEL[f.kind] || f.kind)}${f.date ? ` ${esc(f.date.slice(5, 10))}` : ""}</span>`;
+  });
+}
 function badges2(c) {
-  const out = [qualBadge(c.qualification)];
+  const out = [qualBadge(c.qualification), ...flagBadges(c)];
   // 사전규격엔 참가가능지역·공동수급 API 정보가 없다 — 첨부에서 지역 요건을 찾았을 때만 표시
   if (c.kind === "사전규격") {
     if (c.region_check && c.region_check.status !== "미확인") out.push(regionBadge(c));

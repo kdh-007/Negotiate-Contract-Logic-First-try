@@ -27,7 +27,7 @@ PERIODS = [1, 3, 7, 14, 30]
 # 저장되는 수집 결과의 판정·표시 형식 버전. 자격 판정·팝업 자료가 바뀔 때 올린다 — 화면이 예전 버전으로
 # 수집된 결과를 보여주고 있으면 "다시 불러오기" 안내를 띄운다(2026-09-30: 코드를 받고도 옛 결과를 보고
 # 중복·개수 오류가 그대로라고 여긴 일이 두 번 있었음).
-RESULT_FORMAT = 7
+RESULT_FORMAT = 8
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -88,6 +88,7 @@ def serialize(candidate, past: PastIndex, held: tuple[set[str], set[str]] = (set
         "detail_url": n.detail_url or _g2b_url(n),
         "regions": candidate.regions,
         "region_check": candidate.region_check.to_dict(),
+        "text_flags": getattr(candidate, "text_flags", []),
         "joint": {"label": candidate.joint.label, "allowed": candidate.joint.allowed},
         "qualification": {
             "checked": q.checked,

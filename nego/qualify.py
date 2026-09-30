@@ -685,9 +685,22 @@ def evaluate_attachment_text(
     missing: list[LicenseGroup] = []
     parsed_labels: dict[str, str] = {}
 
+    name_held: list[str] = []  # 이름으로 대조해 보유 확인된 요건 (충족 표시용)
     for idx, item in enumerate(items):
         or_groups = [[(code, _label(code, label)) for code, label in bundle] for bundle in _or_groups(item)]
         if not or_groups:
+            # 코드 없이 이름만 적힌 업종·직접생산 품목 — 보유 목록·코드 사전에 있는 이름으로만 판정한다
+            from .text_requirements import name_bundles
+
+            bundles = name_bundles(item, held_code_names, lookup)
+            if not bundles:
+                continue
+            group_no = f"이름{idx}"
+            groups.append(LicenseGroup(group_no=group_no, allowed_names=[r.label for b in bundles for r in b]))
+            missing_labels = [r.label for b in bundles if not any(r.held for r in b) for r in b]
+            if missing_labels:
+                missing.append(LicenseGroup(group_no=group_no, allowed_names=missing_labels))
+            name_held.extend(r.label for b in bundles for r in b if r.held)
             continue
 
         group_no = str(idx)
@@ -721,6 +734,7 @@ def evaluate_attachment_text(
         for code in found_codes
         if code in held_codes
     ]
+    satisfied_names += [n for n in dict.fromkeys(name_held) if n not in satisfied_names]
     satisfied_groups = [LicenseGroup(group_no="held", allowed_names=satisfied_names)] if satisfied_names else []
 
     return QualificationResult(
