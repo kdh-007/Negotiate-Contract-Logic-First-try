@@ -88,11 +88,14 @@ def _combo_req(group, held: tuple[set[str], set[str]]) -> dict[str, Any]:
         out = []
         for row in rows:
             row_items = _items(SimpleNamespace(allowed_names=row), held)
+            if not row_items or any(r["label"] == row_items[0]["label"] for r in out):
+                continue  # 같은 면허가 한 조합에 두 번 — 한 번만
             via = next((i["label"] for i in row_items[1:] if i["held"]), None) if not row_items[0]["held"] else None
             # 대신 인정 업종은 보여주지 않는다(공고문 모양 유지) — 그걸로 채웠을 때만 무엇으로 채웠는지 적는다
             out.append({"label": row_items[0]["label"], "held": any(i["held"] for i in row_items),
                         "via": f"{via} (대체 인정)" if via else None})
-        combos.append({"rows": out, "held": all(r["held"] for r in out)})
+        if out and not any([r["label"] for r in c["rows"]] == [r["label"] for r in out] for c in combos):
+            combos.append({"rows": out, "held": all(r["held"] for r in out)})
     # 더 따야 할 면허 수 = 가장 덜 모자란 조합의 미보유 면허 수
     need = min((sum(not r["held"] for r in c["rows"]) for c in combos), default=1)
     return {"any_of": True, "combos": combos, "items": [], "need": need}

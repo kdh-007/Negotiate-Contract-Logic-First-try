@@ -128,7 +128,11 @@ const QUAL_EMPTY = {
   product: { "제한 없음": "첨부 공고문에 세부품명번호 요건이 없습니다.", "미확인": "첨부 공고문을 읽지 않아 확인하지 못했습니다 ('첨부 자격판정'을 켜고 불러오기)." },
 };
 const KIND_TAG = { industry: "업종", product: "품명" };
+// 같은 이름이 한 요건 안에 두 번 나오면 한 번만 — 수집 쪽에서 막았어도, 예전에 저장된 결과까지 깨끗하게 보이도록 화면에서도 거른다
+const uniqBy = (list, key) => list.filter((x, i) => list.findIndex((y) => key(y) === key(x)) === i);
 function reqHtml(req, mixed) {
+  if (req.combos) req = { ...req, combos: req.combos.map((c) => ({ ...c, rows: uniqBy(c.rows, (r) => r.label) })) };
+  else if (req.items) req = { ...req, items: uniqBy(req.items, (i) => i.label) };
   // 이미 충족한 "또는" 요건에서 필요 없게 된 항목은 회색 "–" — 붉은색은 실제로 채워야 할 것에만(2026-09-30 요청)
   const done = req.combos ? req.combos.some((c) => c.held) : req.any_of && req.items.some((i) => i.held);
   const mark = (held) => held ? "✓" : done ? "–" : "✗";
