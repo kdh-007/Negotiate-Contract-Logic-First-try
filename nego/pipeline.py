@@ -196,13 +196,14 @@ def build_candidates(
 
     candidates: list[Candidate] = []
     company_sido = region.company_sido(config.held_raw)
+    held_codes = qualify.load_held_codes(config.held_raw)
 
     for notice in scope_result.kept:
         # 파생값은 후보/제외 가릴 것 없이 **모든 협상 공고에 대해** 먼저 계산한다.
         # 전부 로컬 계산이라 비용이 없고, 나중에 "왜 걸러졌지?"를 볼 때 이 값들이 필요하다.
         schedule = screen.build_schedule(notice)
         screen_result = screen.screen(notice, config.screen)
-        qualification = qualify.evaluate(license_groups.get(notice.notice_no, []), config.held_names)
+        qualification = qualify.evaluate(license_groups.get(notice.notice_no, []), config.held_names, held_codes)
 
         record = Candidate(
             notice=notice,

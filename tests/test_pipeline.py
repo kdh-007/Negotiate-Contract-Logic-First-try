@@ -155,7 +155,7 @@ class TestJointSupply(unittest.TestCase):
 
 
 class TestQualification(unittest.TestCase):
-    """판정 규칙은 기존 시스템과 동일해야 한다 (변경 금지)."""
+    """자격 판정 규칙. 이름 비교는 부분일치가 아니라 코드 비교 + 이름 완전일치(2026-09-30 변경)."""
 
     held = ["실내건축공사업", "산업디자인전문회사(환경디자인분야)", "전시사업자(전시장치사업자)"]
 
@@ -194,15 +194,20 @@ class TestQualification(unittest.TestCase):
         self.assertEqual([g.group_no for g in result.satisfied_groups], ["1"])
         self.assertEqual([g.group_no for g in result.missing_groups], ["2"])
 
-    def test_substring_matching_is_permissive(self):
-        """현행 동작 기록: '건축공사업'이 보유 업종 '실내건축공사업'에 부분일치로 걸린다.
+    def test_substring_name_does_not_satisfy(self):
+        """'실내건축공사업' 보유가 '건축공사업(0002)' 요건을 채우지 않는다.
 
-        기존 시스템과 같은 양방향 부분일치를 쓰기 때문이다. 변경 대상이 아니며,
-        이런 성질이 있다는 것만 테스트로 남겨 둔다.
+        예전엔 이름 양방향 부분일치라 충족으로 나왔다(2026-09-30 백령 체험관 증축공사에서 드러남).
+        코드 비교 + 이름 완전일치로 바꿈.
         """
         groups = qualify.group_license_rows(fixtures.substring_overmatch_rows())["R26SUBSTR"]
-        result = qualify.evaluate(groups, self.held)
-        self.assertEqual(result.missing_count, 0)
+        result = qualify.evaluate(groups, self.held, {"0006", "4990"})
+        self.assertEqual(result.missing_count, 1)
+
+    def test_code_match_satisfies_even_if_name_differs(self):
+        groups = [qualify.LicenseGroup("1", ["실내건축공사업(표기다름)/4990"])]
+        self.assertEqual(qualify.evaluate(groups, [], {"4990"}).missing_count, 0)
+        self.assertEqual(qualify.evaluate(groups, [], {"0006"}).missing_count, 1)
 
     def test_two_missing_groups_excluded(self):
         groups = qualify.group_license_rows(fixtures.license_rows())["R26TEST00009"]
@@ -932,9 +937,7 @@ class TestOverlappingLicenseGroups(unittest.TestCase):
 
     def test_merged_into_one_or_requirement(self):
         groups = qualify.group_license_rows(self.ROWS)["R26BK09"]
-        # 보유 업종 이름에 "건축공사업"이 들어가면 부분일치로 충족돼 버리므로(기존 시스템 규칙,
-        # test_substring_matching_is_permissive) 겹치지 않는 업종으로 미달을 본다.
-        none = qualify.evaluate(groups, ["산업디자인전문회사"])
+        none = qualify.evaluate(groups, ["실내건축공사업"], {"0006"})
         self.assertEqual(none.missing_count, 1, "요건 1건")
         self.assertEqual(len(none.missing_groups[0].allowed_names), 2, "건축 또는 토목건축")
         self.assertEqual(qualify.evaluate(groups, ["건축공사업"]).missing_count, 0, "건축공사업만 있어도 충족")

@@ -84,8 +84,7 @@ _CHECK_SVG = (
 # 면허제한정보 API 필드가 실측상 "이름/코드"를 그대로 붙여 내려주는 경우가
 # 있다(예: lcnsLmtNm="실내건축공사업/4990") — 첨부파일에서 뽑은 항목은 이미
 # "이름(코드)" 형식이라 팝업 안에서 표기가 안 맞아 보인다. qualify.py의
-# allowed_names 자체는 매칭(_is_group_satisfied의 양방향 부분일치)에 쓰여서
-# 거기서 코드를 붙이면 매칭이 깨진다(실측으로 확인됨) — 그래서 이 변환은
+# allowed_names 자체는 매칭(_is_group_satisfied)에 쓰이므로 이 변환은
 # 표시 직전, 여기서만 한다.
 _RAW_CODE_SUFFIX_RE = re.compile(r"^(.+)/([0-9]{4,10})$")
 

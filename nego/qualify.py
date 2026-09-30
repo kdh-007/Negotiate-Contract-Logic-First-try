@@ -1,7 +1,8 @@
 """자격조건(면허·업종 제한) 판정.
 
-**판정 규칙은 기존 시스템(`matching/qualificationFilter.ts`)과 동일하게 유지한다.**
-회사가 정한 사업 판단이므로 임의로 바꾸지 않는다.
+판정 틀은 기존 시스템(`matching/qualificationFilter.ts`)을 따른다. 단, 업종 이름 비교는
+기존 코드의 양방향 부분일치 대신 **코드 비교 + 이름 완전일치**로 바꿨다(2026-09-30 사용자 결정 —
+기존 코드에 부분일치를 쓰라는 규칙 설명이 없었고, "실내건축공사업"이 "건축공사업"을 충족하는 오판을 냈다).
 
   - 제한그룹(`lmtGrpNo`) 하나가 자격조건 하나의 단위
   - 그룹 안에 여러 업종이 나열되면 그중 하나만 보유해도 그 그룹은 충족(OR)
@@ -88,14 +89,9 @@ def split_industry_list(text: str) -> list[str]:
     대괄호 단위로 나눈 뒤 마지막 '/' 뒤의 코드를 떼어 업종명만 남긴다.
     대괄호가 없으면 콤마·슬래시로 나눈다.
 
-    **코드를 여기서 버리는 건 의도한 것이다 — 건드리지 말 것.** 리포트에
-    "이름(코드)"로 통일해서 보여주고 싶다는 요청이 있었지만, 그 코드를
-    이름에 그대로 붙이면 `_is_group_satisfied`의 양방향 부분일치가 깨진다
-    (실측: held="실내건축공사업" 은 allowed="건축공사업"의 상위 문자열이라
-    지금은 매칭되는데, allowed가 "건축공사업(0002)"가 되는 순간 어느
-    방향으로도 부분일치가 안 돼 매칭이 깨짐 — `test_substring_matching_is_permissive`
-    로 이미 한 번 이 버그를 실측으로 잡았다). 표시용 "이름(코드)" 변환은
-    `report.py`에서 이 리스트를 다치지 않고 별도로 한다.
+    허용업종 목록의 코드는 여기서 버린다(이름 완전일치용). 코드 비교는 같은 그룹의
+    lcnsLmtNm("건축공사업/0002")에 남은 코드로 한다. 표시용 "이름(코드)" 변환은
+    `report.py`에서 별도로 한다.
     """
     bracketed = re.findall(r"\[([^\]]+)\]", text)
     if bracketed:
@@ -149,15 +145,32 @@ def group_license_rows(raw_items: list[RawItem]) -> dict[str, list[LicenseGroup]
     }
 
 
-def _is_group_satisfied(group: LicenseGroup, held_names: list[str]) -> bool:
-    """기존 시스템과 동일한 양방향 부분일치. "건축공사업/0002"의 코드 꼬리는 떼고 비교한다."""
+def _is_group_satisfied(group: LicenseGroup, held_names: list[str], held_codes: set[str] | frozenset[str] = frozenset()) -> bool:
+    """그룹 안 허용업종 중 하나라도 보유하면 충족(OR).
+
+    - 허용업종에 코드가 붙어 있으면("건축공사업/0002", "건축공사업(0002)") 보유 코드와 비교한다.
+    - 그리고 코드를 뗀 이름이 보유 업종 이름과 **완전히 같으면**(공백 무시) 충족이다.
+      부분일치는 쓰지 않는다 — "실내건축공사업"은 "건축공사업"이 아니다.
+
+    예전엔 이름 양방향 부분일치였다 — 옮겨 온 기존 코드(`qualificationFilter.ts`)가 그렇게 짜여 있었을 뿐
+    규칙으로 정해진 근거는 없었다. 그 탓에 보유 "실내건축공사업(0006)"이 "건축공사업(0002)"을 충족한
+    것으로 나왔다(2026-09-30, 옹진군 백령 체험관 증축공사). 사용자 결정으로 코드 비교로 바꿈.
+    """
+    held_bases = {_license_base(h) for h in held_names}
     for allowed in group.allowed_names:
-        allowed = _license_base(allowed) or allowed
-        for held in held_names:
-            held = _license_base(held) or held
-            if allowed in held or held in allowed:
-                return True
+        code = _license_code(allowed)
+        if (code and code in held_codes) or _license_base(allowed) in held_bases:
+            return True
     return False
+
+
+_LICENSE_CODE_RE = re.compile(r"(?:/\s*|\()(\d{4,10})\)?\s*$")
+
+
+def _license_code(name: str) -> str | None:
+    """'토목건축공사업/0003', '토목건축공사업(0003)' → '0003'. 코드가 없으면 None."""
+    m = _LICENSE_CODE_RE.search(name)
+    return m.group(1) if m else None
 
 
 def _license_base(name: str) -> str:
@@ -205,12 +218,14 @@ def merge_overlapping_groups(groups: list[LicenseGroup]) -> list[LicenseGroup]:
     return [g for _, g in merged]
 
 
-def evaluate(groups: list[LicenseGroup], held_names: list[str]) -> QualificationResult:
+def evaluate(
+    groups: list[LicenseGroup], held_names: list[str], held_codes: set[str] | frozenset[str] = frozenset()
+) -> QualificationResult:
     if not groups:
         return QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False)
     groups = merge_overlapping_groups(groups)
 
-    missing = [g for g in groups if not _is_group_satisfied(g, held_names)]
+    missing = [g for g in groups if not _is_group_satisfied(g, held_names, held_codes)]
     satisfied = [g for g in groups if g not in missing]
     return QualificationResult(
         total_groups=len(groups),
