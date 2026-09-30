@@ -164,10 +164,59 @@ def find_qualification_section(text: str) -> QualificationSection | None:
         for match, body in candidates:
             if _hangul_count(body) >= _MIN_SECTION_HANGUL:
                 return QualificationSection(heading=match.group(0).strip(), body=body, items=split_items(body))
+    block = _find_item_block(text)
+    if block is not None:
+        return block
     if best is None:
         return None
     _, match, body = best
     return QualificationSection(heading=match.group(0).strip(), body=body, items=split_items(body))
+
+
+_LETTERS = "가나다라마바사아자차카타파하"
+_LETTER_LINE_RE = re.compile(r"^[ \t\u3000]*([가나다라마바사아자차카타파하])[.)][ \t\u3000]*(.*)$")
+# 첫 항목이 참가자격 목록의 첫 줄임을 알려주는 말 — 계약법 시행령 제12조(국가)·제13조(지자체) 인용.
+# "참가자격"이란 말만으로는 안 된다: "가. 제안서 평가는 참가자격 요건을 갖춘 업체를 대상으로…"
+# (평가 방법 절, 실측: 어린이해양환경 제안요청서)까지 잡힌다.
+_FIRST_ITEM_HINT_RE = re.compile(r"시행령[」』｣]?[ \t]*(?:[」』｣][ \t]*)?제[ \t]*1[23][ \t]*조")
+# 제목이 앞 항목 끝에 붙어 나온 경우 떼어낸다: "...있어야 함2. 입찰참가자격"
+_GLUED_HEADING_RE = re.compile(r"[ \t\u3000]*\d{1,2}\.[ \t\u3000]*" + _spaced("입찰참가자격") + r"[ \t\u3000]*$")
+
+
+def _find_item_block(text: str) -> QualificationSection | None:
+    """제목으로 절을 못 찾았을 때의 마지막 수단 — "가. …시행령 제13조…참가자격을 갖춘 자"로
+    시작하는 가나다 항목 묶음을 참가자격 절로 본다.
+
+    실측(2026-09-30, 울산박물관 R26BK01748232): 한글 파일에서 절 제목("2. 입찰참가자격")이
+    글상자 등에 들어 있어 본문 **뒤에** 붙어 나왔다("…있어야 함2. 입찰참가자격"). 제목으로는
+    목차 줄밖에 못 찾아서, 첨부 자격판정이 계속 비어 있었다.
+    """
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = _LETTER_LINE_RE.match(line)
+        if not m or m.group(1) != "가" or not _FIRST_ITEM_HINT_RE.search(m.group(2)):
+            continue
+        body_lines = [line]
+        last = 0
+        items = 1
+        for nxt in lines[i + 1 :]:
+            if _NEXT_TOP_HEADING_RE.match(nxt) or _ROMAN_HEADING_RE.match(nxt) or _DECIMAL_HEADING_RE.match(nxt):
+                break
+            lm = _LETTER_LINE_RE.match(nxt)
+            if lm:
+                idx = _LETTERS.index(lm.group(1))
+                if idx <= last:  # "가."로 다시 시작 = 다른 목록
+                    break
+                last = idx
+                items += 1
+            body_lines.append(nxt)
+            if sum(len(x) for x in body_lines) > _MAX_SECTION_CHARS:
+                break
+        if items < 2:
+            continue
+        body = _GLUED_HEADING_RE.sub("", "\n".join(body_lines)).strip("\n")
+        return QualificationSection(heading="(제목 없이 찾은 참가자격 항목)", body=body, items=split_items(body))
+    return None
 
 
 def split_items(body: str) -> list[str]:
