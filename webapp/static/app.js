@@ -311,14 +311,46 @@ function render() {
   }
 
   const rej = RUN ? RUN.rejected : [];
-  const reasons = {};
-  rej.forEach((c) => { const r = (c.excluded_reason || "").split(" (")[0]; reasons[r] = (reasons[r] || 0) + 1; });
+  const reasons = countBy(rej, rejReason);
   $("#rejSummary").textContent = RUN
     ? `수집 범위(수의계약 제외) ${RUN.stats.in_scope}건 중 필터에서 빠진 ${rej.length}건 — ` + Object.entries(reasons).map(([k, v]) => `${k} ${v}`).join(" · ")
     : "수집 결과가 없습니다.";
-  $("#rejList").replaceChildren(rej.length ? grid(rej, false) : emptyBox("제외된 공고가 없습니다."));
+  renderRejected();
   renderSearch();
 }
+
+// ── 제외 공고 분류 (제외 사유 · 업무구분 · 유형) ──
+const REJ_KEYS = [
+  { key: "reason", label: "제외 사유", get: (c) => rejReason(c) },
+  { key: "work", label: "업무", get: (c) => c.work_type || "미상" },
+  { key: "category", label: "유형", get: (c) => c.category || "미상" },
+];
+const REJ_FILTER = { reason: "", work: "", category: "" };
+function rejReason(c) { return (c.excluded_reason || "기타").split(" (")[0]; }
+function countBy(list, fn) {
+  const out = {};
+  list.forEach((c) => { const k = fn(c); out[k] = (out[k] || 0) + 1; });
+  return Object.fromEntries(Object.entries(out).sort((a, b) => b[1] - a[1]));
+}
+function renderRejected() {
+  const rej = RUN ? RUN.rejected : [];
+  const matches = (c, skip) => REJ_KEYS.every((k) => k.key === skip || !REJ_FILTER[k.key] || k.get(c) === REJ_FILTER[k.key]);
+  // 각 줄의 건수는 "다른 줄에서 고른 조건" 안에서 센다 — 고르면 몇 건이 남는지 바로 보이게
+  $("#rejFilters").innerHTML = rej.length ? REJ_KEYS.map((k) => {
+    const counts = countBy(rej.filter((c) => matches(c, k.key)), k.get);
+    const chip = (val, text, n) => `<button type="button" class="rej-chip${REJ_FILTER[k.key] === val ? " on" : ""}" data-k="${k.key}" data-v="${esc(val)}">${esc(text)} <b>${n}</b></button>`;
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    return `<div class="rej-row"><span class="rej-key">${k.label}</span>${chip("", "전체", total)}${Object.entries(counts).map(([v, n]) => chip(v, v, n)).join("")}</div>`;
+  }).join("") : "";
+  const shown = rej.filter((c) => matches(c));
+  $("#rejList").replaceChildren(shown.length ? grid(shown, false) : emptyBox(rej.length ? "고른 분류에 해당하는 공고가 없습니다." : "제외된 공고가 없습니다."));
+}
+$("#rejFilters").addEventListener("click", (e) => {
+  const b = e.target.closest(".rej-chip");
+  if (!b) return;
+  REJ_FILTER[b.dataset.k] = REJ_FILTER[b.dataset.k] === b.dataset.v ? "" : b.dataset.v;
+  renderRejected();
+});
 
 function renderSearch() {
   const q = $("#qText").value.trim().toLowerCase();
