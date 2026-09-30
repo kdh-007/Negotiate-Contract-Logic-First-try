@@ -918,3 +918,28 @@ class TestCodeLabelsNotBleeding(unittest.TestCase):
     def test_item_name_written_before_code(self):
         self.assertEqual(self.labels("직접생산확인증명서 [세부품명: 실물모형및전시물, 세부품명번호 10자리(6010989901)"),
                          ["실물모형및전시물(6010989901)"])
+
+
+class TestOverlappingLicenseGroups(unittest.TestCase):
+    """2026-09-30 실측: 공고문 '건축(또는 토목건축)공사업'인데 면허제한 API는 두 그룹으로 나눠 줌."""
+
+    ROWS = [
+        {"bidNtceNo": "R26BK09", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "건축공사업/0002",
+         "permsnIndstrytyList": "[건축공사업/0002][토목건축공사업]"},
+        {"bidNtceNo": "R26BK09", "lmtGrpNo": "2", "lmtSno": "1", "lcnsLmtNm": "토목건축공사업/0003",
+         "permsnIndstrytyList": "[토목건축공사업/0003]"},
+    ]
+
+    def test_merged_into_one_or_requirement(self):
+        groups = qualify.group_license_rows(self.ROWS)["R26BK09"]
+        # 보유 업종 이름에 "건축공사업"이 들어가면 부분일치로 충족돼 버리므로(기존 시스템 규칙,
+        # test_substring_matching_is_permissive) 겹치지 않는 업종으로 미달을 본다.
+        none = qualify.evaluate(groups, ["산업디자인전문회사"])
+        self.assertEqual(none.missing_count, 1, "요건 1건")
+        self.assertEqual(len(none.missing_groups[0].allowed_names), 2, "건축 또는 토목건축")
+        self.assertEqual(qualify.evaluate(groups, ["건축공사업"]).missing_count, 0, "건축공사업만 있어도 충족")
+        self.assertEqual(qualify.evaluate(groups, ["토목건축공사업"]).missing_count, 0)
+
+    def test_unrelated_groups_stay_separate(self):
+        groups = qualify.group_license_rows(fixtures.license_rows())["R26TEST00009"]
+        self.assertEqual(qualify.evaluate(groups, []).missing_count, 2)

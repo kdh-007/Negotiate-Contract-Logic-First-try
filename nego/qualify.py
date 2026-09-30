@@ -150,17 +150,65 @@ def group_license_rows(raw_items: list[RawItem]) -> dict[str, list[LicenseGroup]
 
 
 def _is_group_satisfied(group: LicenseGroup, held_names: list[str]) -> bool:
-    """기존 시스템과 동일한 양방향 부분일치."""
+    """기존 시스템과 동일한 양방향 부분일치. "건축공사업/0002"의 코드 꼬리는 떼고 비교한다."""
     for allowed in group.allowed_names:
+        allowed = _license_base(allowed) or allowed
         for held in held_names:
+            held = _license_base(held) or held
             if allowed in held or held in allowed:
                 return True
     return False
 
 
+def _license_base(name: str) -> str:
+    """'토목건축공사업/0003', '토목건축공사업(0003)', '토목건축공사업' → '토목건축공사업' (비교용)."""
+    name = re.sub(r"\s*/\s*\d{4,10}\s*$", "", name)
+    name = re.sub(r"\(\d{4,10}\)\s*$", "", name)
+    return re.sub(r"\s+", "", name)
+
+
+def merge_overlapping_groups(groups: list[LicenseGroup]) -> list[LicenseGroup]:
+    """같은 면허가 여러 제한그룹에 나오면 한 요건("또는")으로 합친다.
+
+    실측(2026-09-30, 옹진군 "백령 점박이물범 생태관광체험센터 체험관 증축공사"): 공고문은
+    "건축(또는 토목건축)공사업"인데 면허제한 API는 그룹1 [건축공사업/0002, 허용업종 토목건축공사업],
+    그룹2 [토목건축공사업/0003]으로 나눠 줬다. 그룹끼리 "모두 필요"로 보면 요건 2건이 되고,
+    토목건축 없이 건축공사업만 가진 업체를 미달로 잘못 본다. 면허가 겹치지 않는 그룹은 그대로 둔다.
+    """
+    def add_names(target: LicenseGroup, names: list[str]) -> None:
+        # 같은 면허가 "토목건축공사업"·"토목건축공사업/0003"처럼 두 번 들어오면 하나만 남긴다
+        seen = {_license_base(n) for n in target.allowed_names}
+        for n in names:
+            if _license_base(n) not in seen:
+                seen.add(_license_base(n))
+                target.allowed_names.append(n)
+
+    merged: list[tuple[set[str], LicenseGroup]] = []
+    for g in groups:
+        bases = {_license_base(n) for n in g.allowed_names if _license_base(n)}
+        hits = [i for i, (b, _) in enumerate(merged) if b & bases]
+        if not hits:
+            fresh = LicenseGroup(group_no=g.group_no, allowed_names=[])
+            add_names(fresh, g.allowed_names)
+            merged.append((bases, fresh))
+            continue
+        first = hits[0]
+        fb, fg = merged[first]
+        fb |= bases
+        add_names(fg, g.allowed_names)
+        fg.group_no = f"{fg.group_no}+{g.group_no}"
+        for i in reversed(hits[1:]):  # 새 그룹이 앞의 두 묶음을 이어 주면 그것들도 합친다
+            ob, og = merged.pop(i)
+            fb |= ob
+            add_names(fg, og.allowed_names)
+            fg.group_no = f"{fg.group_no}+{og.group_no}"
+    return [g for _, g in merged]
+
+
 def evaluate(groups: list[LicenseGroup], held_names: list[str]) -> QualificationResult:
     if not groups:
         return QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False)
+    groups = merge_overlapping_groups(groups)
 
     missing = [g for g in groups if not _is_group_satisfied(g, held_names)]
     satisfied = [g for g in groups if g not in missing]
