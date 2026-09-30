@@ -204,6 +204,7 @@ _INNER_PREFIXED_GROUP_RE = re.compile(
     r"[(\[]\s*(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?([^()\[\]]*)[)\]]"
 )
 _GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{4,10}")
+_INNER_ITEM_NAME_RE = re.compile(r"(?:세부)?품명\s*[:：]\s*([^,，;()\[\]]+?)\s*(?:[,，;]|$)")
 _BARE_GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{10}")
 _GROUP_ENTRY_STRIP_CHARS = " ,·/;、"
 # "다음 중 어느 하나"는 항목 전체를 OR로 만든다.
@@ -228,7 +229,9 @@ _CONJUNCTION_ONLY_RE = re.compile(r"\s*(?:또는|혹은|및|그리고|등|/)?\s*
 # 입찰참가자격등록 마감일시까지 조합놀이대(세부품명번호...)"에서 "마감일시까지"
 # 뒤가 실제 품목명이었다. "에 따라"는 "규정에 따라"로 좁혀 놓으면 다른 인용구
 # ("「…법」 제9조에 따라" 등)를 놓친다 — 앞 단어를 가리지 않고 일반화한다.
-_LABEL_CONNECTOR_RE = re.compile(r"(?:에\s*따른|에\s*따라|에\s*의하여|까지)\s*")
+_LABEL_CONNECTOR_RE = re.compile(
+    r"(?:에\s*따른|에\s*따라|에\s*의하여|에\s*의한|의한|에\s*의거|에\s*해당하는|까지|포함한|등록한\s*자\s*또는)\s*"
+)
 _MAX_LABEL_LEN = 20
 # "충족된 자격" 팝업에 보여줄 목록을 만들 때 쓴다 — 실측: "[업종코드 4440, 4442,
 # 4444]로 등록되어 있는 업체"처럼 키워드가 괄호 **안쪽 맨 앞**에 오고 코드 여러
@@ -249,13 +252,41 @@ _STANDALONE_CODE_RE = re.compile(r"(?<!\d)(?:\d{10}|\d{4})(?!\d)")
 _ITEM_MARKER_RE = re.compile(r"^\s*(?:[가-하]\s*[.)]|[0-9]+\s*[.)]|\([가-하0-9]+\)|[①-⑳])\s*")
 
 
+def _last_name_chunk(text: str) -> str:
+    """코드 괄호 바로 앞의 이름 조각. 앞 항목("…(코드1), ")은 버리되, 이름 자체가 괄호로
+    끝나면("산업디자인전문회사(환경 디자인분야)[업종코드 4442]") 그 괄호까지 이름으로 남긴다."""
+    stripped = text.rstrip()
+    if stripped.endswith(")"):
+        depth = 0
+        for i in range(len(stripped) - 1, -1, -1):
+            ch = stripped[i]
+            if ch == ")":
+                depth += 1
+            elif ch == "(":
+                depth -= 1
+                if depth == 0:
+                    head = re.split(r"[)\]]", stripped[:i])[-1]
+                    inner = re.sub(r"\s+", "", stripped[i + 1 : -1])
+                    if head.strip() and not re.fullmatch(r"[0-9]{4,10}", inner):
+                        return f"{head}({inner})"
+                    break
+    return re.split(r"[)\]]", text)[-1]
+
+
 def _truncate_label(name: str) -> str:
     name = _ITEM_MARKER_RE.sub("", name)
-    if len(name) > _MAX_LABEL_LEN:
-        name = name[-_MAX_LABEL_LEN:]
+    # "산업디자인전문회사(환경디자인을포함한종합디자인분야)"처럼 괄호 분야명이 붙은 이름은 길다 —
+    # 20자로 자르면 "회사(…)"만 남아서, 괄호로 끝나는 이름은 괄호 앞 단어까지 살리도록 넉넉히 둔다.
+    limit = _MAX_LABEL_LEN
+    paren = re.search(r"\(([^()]*)\)$", name)
+    if paren:
+        limit = _MAX_LABEL_LEN + len(paren.group(0))
+    if len(name) > limit:
+        name = name[-limit:]
         if " " in name:  # 잘린 앞 단어 조각을 버리고 온전한 단어부터 남긴다
             name = name.split(" ", 1)[1]
-    return name
+    # 잘라낸 자리에 남은 문장부호("직접생산확인증명서 : 영상…" → ": 영상…")
+    return re.sub(r"^[\s,;，:：·\-\[]+", "", name)
 
 
 def _split_group_entries(content: str, code_re: re.Pattern) -> list[tuple[int, str, str]]:
@@ -365,7 +396,13 @@ def _locate_code_requirements(item: str) -> tuple[str, list[tuple[int, int, str,
             if any(_spans_overlap(group_match.span(), span) for span in consumed):
                 continue
             consumed.append(group_match.span())
-            for pos, code, name in _split_group_entries(group_match.group(1), _GROUP_ENTRY_CODE_RE):
+            entries = _split_group_entries(group_match.group(1), _GROUP_ENTRY_CODE_RE)
+            # "[세부품명: 실물모형및전시물, 세부품명번호 10자리(6010989901)" — 코드 하나에 이름이 없으면
+            # 바로 앞에 따로 적힌 "품명: …"을 이름으로 쓴다(실측: 울산박물관 R26BK01748232).
+            lead = _INNER_ITEM_NAME_RE.search(line[max(0, group_match.start() - 60) : group_match.start()])
+            for pos, code, name in entries:
+                if not name and lead and len(entries) == 1:
+                    name = lead.group(1).strip()
                 name = _truncate_label(name)
                 start = base + group_match.start(1) + pos
                 results.append((start, start + len(code), code, f"{name}({code})" if name else code))
@@ -377,18 +414,30 @@ def _locate_code_requirements(item: str) -> tuple[str, list[tuple[int, int, str,
             code_group = "code" if match.group("code") else "bare_code"
             code = match.group(code_group)
             prefix = line[: match.start()]
-            inside_paren = prefix.rsplit("(", 1)[1].strip(" ,") if "(" in prefix else ""
-            if inside_paren and len(inside_paren) <= _MAX_LABEL_LEN:
+            # 코드가 **아직 닫히지 않은** 괄호 안에 있을 때만 괄호 안쪽을 이름으로 본다.
+            # 예전엔 앞에 "("가 있기만 하면 안쪽으로 봐서, "영상정보디스플레이장치(4511189301),
+            # 교육용로봇(6010621401)"의 두 번째 코드 이름이 "4511189301), 교육용로봇"이 됐다(2026-09-30 제보).
+            last_open = max(prefix.rfind("("), prefix.rfind("["))
+            last_close = max(prefix.rfind(")"), prefix.rfind("]"))
+            is_inside = last_open > last_close
+            inside_paren = prefix[last_open + 1 :].strip(" ,") if is_inside else ""
+            # "[세부품명: 실물모형및전시물, 세부품명번호 10자리(6010989901)" — 괄호 안에 품명을 따로 적은 표기
+            named = _INNER_ITEM_NAME_RE.search(inside_paren) if inside_paren else None
+            if named:
+                name = _truncate_label(named.group(1).strip())
+            elif inside_paren and len(inside_paren) <= _MAX_LABEL_LEN:
                 name = inside_paren
             else:
-                before_paren = prefix.rsplit("(", 1)[0] if "(" in prefix else prefix
-                before_paren = re.split(r"[)\]]", before_paren)[-1]
+                before_paren = prefix[:last_open] if is_inside else prefix
+                before_paren = _last_name_chunk(before_paren)
                 # 실측: 인용부호로 감싼 품목명("조합놀이대")도 있어 대괄호/낫표류
                 # 인용 문장부호와 함께 일반 인용부호("'')도 선행 문자로 떼어낸다.
-                before_paren = re.sub(r"^[\s\-·「『\"'“‘]+", "", before_paren)
+                # 앞 항목과 이어 쓴 쉼표·세미콜론("…(코드1), 이름2(코드2)")도 뗀다.
+                before_paren = re.sub(r"^[\s\-·,;，:：「『\"'“‘]+", "", before_paren)
                 before_paren = _LEADING_CONJUNCTION_RE.sub("", before_paren)
                 segments = [s for s in _LABEL_CONNECTOR_RE.split(before_paren) if s.strip()]
                 name = (segments[-1] if segments else before_paren).strip()
+                name = re.sub(r"^[\s,;，:：]+", "", name)  # "직접생산확인증명서 : 영상…"의 콜론
                 name = name.strip("\"'“‘”’").strip()
                 name = _truncate_label(name)
             start = base + match.start(code_group)

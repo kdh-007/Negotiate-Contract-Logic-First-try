@@ -900,3 +900,21 @@ class TestNoMatchExplain(unittest.TestCase):
         n = notice_from_raw(fixtures.notice("R26X2", title="청사 리모델링", bidprcPsblIndstrytyNm="실내건축공사업"), "공사")
         r = screen.screen(n, cfg)
         self.assertTrue(any("업종만 맞는 공고는 후보로 보지 않음" in l for l in r.match_explain), r.match_explain)
+
+
+class TestCodeLabelsNotBleeding(unittest.TestCase):
+    """2026-09-30 제보: 미보유 세부품명번호가 '4511189301), 교육용로봇(6010621401)'처럼 앞 항목 꼬리가 붙어 표시."""
+
+    def labels(self, text):
+        return [r[3] for r in qualify._locate_code_requirements(text)[1]]
+
+    def test_consecutive_name_code_pairs(self):
+        for text in ["직접생산확인증명서[영상정보디스플레이장치(4511189301), 교육용로봇(6010621401)]를 모두 소지한 자",
+                     "직접생산확인증명서(영상정보디스플레이장치(4511189301), 교육용로봇(6010621401))를 소지한 자",
+                     "직접생산확인증명서 : 영상정보디스플레이장치(세부품명번호 4511189301), 교육용로봇(6010621401) 모두 소지"]:
+            with self.subTest(text=text):
+                self.assertEqual(self.labels(text), ["영상정보디스플레이장치(4511189301)", "교육용로봇(6010621401)"])
+
+    def test_item_name_written_before_code(self):
+        self.assertEqual(self.labels("직접생산확인증명서 [세부품명: 실물모형및전시물, 세부품명번호 10자리(6010989901)"),
+                         ["실물모형및전시물(6010989901)"])
