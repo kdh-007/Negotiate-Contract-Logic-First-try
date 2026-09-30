@@ -129,13 +129,17 @@ const QUAL_EMPTY = {
 };
 const KIND_TAG = { industry: "업종", product: "품명" };
 function reqHtml(req, mixed) {
-  const item = (i) => `<div class="tip-sub ${i.held ? "held" : ""}">${i.held ? "✓" : "✗"} ${mixed ? `<span class="kind">${KIND_TAG[i.kind]}</span> ` : ""}${esc(i.label)}${i.via ? ` <small>← ${esc(i.via)}</small>` : ""}</div>`;
+  // 이미 충족한 "또는" 요건에서 필요 없게 된 항목은 회색 "–" — 붉은색은 실제로 채워야 할 것에만(2026-09-30 요청)
+  const done = req.combos ? req.combos.some((c) => c.held) : req.any_of && req.items.some((i) => i.held);
+  const mark = (held) => held ? "✓" : done ? "–" : "✗";
+  const cls = (held) => held ? "held" : done ? "moot" : "";
+  const item = (i) => `<div class="tip-sub ${cls(i.held)}">${mark(i.held)} ${mixed ? `<span class="kind">${KIND_TAG[i.kind]}</span> ` : ""}${esc(i.label)}${i.via ? ` <small>← ${esc(i.via)}</small>` : ""}</div>`;
   if (req.combos) {
     // 나라장터 원문 "[A]과 [B] 업종 또는 [C]과 [D] 업종"처럼 조합(세트)으로 — 조합 하나를 다 갖추면 충족
-    const row = (r, j) => `<div class="combo-row${r.held ? " held" : ""}">`
-      + `<span class="plus">${j ? "+" : ""}</span>${r.held ? "✓" : "✗"} ${esc(r.label)}${r.via ? ` <small>← ${esc(r.via)}</small>` : ""}</div>`;
+    const row = (r, j) => `<div class="combo-row ${cls(r.held)}">`
+      + `<span class="plus">${j ? "+" : ""}</span>${mark(r.held)} ${esc(r.label)}${r.via ? ` <small>← ${esc(r.via)}</small>` : ""}</div>`;
     const circled = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮";
-    return `<div class="tip-item"><span class="why">아래 ${req.combos.length}개 조합 중 하나를 모두 갖추면 충족</span>`
+    return `<div class="tip-item"><span class="why">아래 ${req.combos.length}개 조합 중 하나를 모두 갖추면 충족${done ? " — 보유로 충족" : ""}</span>`
       + req.combos.map((c, i) => `<div class="tip-sub combo"><span class="no">${circled[i] || `${i + 1}.`}</span><div>${c.rows.map(row).join("")}</div></div>`).join("") + `</div>`;
   }
   // 미보유는 전부 붉은 ✗로 — 흰 글씨면 보유한 자격으로 착각한다(2026-09-30 제보)
@@ -165,7 +169,7 @@ function qualBadge(q) {
     const all = [...p.missing, ...ok];
     if (all.length) {
       const mixed = all.some((r) => new Set((r.items || []).map((i) => i.kind)).size > 1);
-      body += `<div class="tip-title">${esc(p.name)} ${all.length}건 — <span class="good">충족 ${ok.length}</span> · <span class="bad">미달 ${p.missing.length}</span></div>`
+      body += `<div class="tip-title">${esc(p.name)} ${all.length}건 — <span class="good">충족 ${ok.length}</span> · <span class="${p.missing.length ? "bad" : ""}">미달 ${p.missing.length}</span></div>`
         + all.map((r) => reqHtml(r, mixed)).join("");
     } else if (p.held.length)
       body += `<div class="tip-title good">보유로 충족한 자격 ${p.held.length}건</div>` + p.held.map((n) => `<div class="tip-item">✓ ${esc(n)}</div>`).join("");
