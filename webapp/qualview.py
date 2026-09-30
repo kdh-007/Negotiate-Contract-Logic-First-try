@@ -81,7 +81,31 @@ def _items(group, held: tuple[set[str], set[str]]) -> list[dict[str, Any]]:
     return out
 
 
-def _combo_req(group, held: tuple[set[str], set[str]]) -> dict[str, Any]:
+def _plain(label: str) -> str:
+    return re.sub(r"\s+", "", _TRAILING_CODE.sub("", label))
+
+
+def _named_alternatives(items: list[dict[str, Any]], doc_text: str) -> list[dict[str, Any]]:
+    """대신 인정 업종(허용업종) 중 **공고문이 "A 또는 B"로 직접 적은 것**만 고른다.
+
+    나라장터 허용업종은 공고문과 어긋날 때가 있어 기본으로는 숨기지만(폐기물 공고: 공고문은 "1227 반드시"),
+    공고문이 "토목공사업 또는 토목건축공사업을 등록한 자"처럼 적었으면 보여줘야 한다(2026-09-30 제보).
+    공백을 지운 원문에서 대표 이름과 대체 이름이 한 문장 안에서 "또는"으로 이어져 있는지 본다(순서 무관).
+    """
+    if not doc_text or len(items) < 2:
+        return []
+    text = re.sub(r"\s+", "", doc_text)
+    first = re.escape(_plain(items[0]["label"]))
+    out = []
+    for alt in items[1:]:
+        a = re.escape(_plain(alt["label"]))
+        gap = r"[^.。]{0,20}?또는[^.。]{0,20}?"
+        if re.search(first + gap + a, text) or re.search(a + gap + first, text):
+            out.append(alt)
+    return out
+
+
+def _combo_req(group, held: tuple[set[str], set[str]], doc_text: str = "") -> dict[str, Any]:
     """"아래 조합 중 하나" 요건 — 조합마다 행(대표 이름 + 대신 인정 이름들)과 보유 여부."""
     combos = []
     for rows in group.combos:
@@ -90,9 +114,12 @@ def _combo_req(group, held: tuple[set[str], set[str]]) -> dict[str, Any]:
             row_items = _items(SimpleNamespace(allowed_names=row), held)
             if not row_items or any(r["label"] == row_items[0]["label"] for r in out):
                 continue  # 같은 면허가 한 조합에 두 번 — 한 번만
-            via = next((i["label"] for i in row_items[1:] if i["held"]), None) if not row_items[0]["held"] else None
-            # 대신 인정 업종은 보여주지 않는다(공고문 모양 유지) — 그걸로 채웠을 때만 무엇으로 채웠는지 적는다
-            out.append({"label": row_items[0]["label"], "held": any(i["held"] for i in row_items),
+            shown = [row_items[0]] + _named_alternatives(row_items, doc_text)
+            via = None
+            if not any(i["held"] for i in shown):
+                via = next((i["label"] for i in row_items[1:] if i["held"]), None)
+            # 공고문에 없는 대신 인정 업종은 보여주지 않는다(공고문 모양 유지) — 그걸로 채웠을 때만 무엇으로 채웠는지 적는다
+            out.append({"label": " 또는 ".join(i["label"] for i in shown), "held": any(i["held"] for i in row_items),
                         "via": f"{via} (대체 인정)" if via else None})
         if out and not any([r["label"] for r in c["rows"]] == [r["label"] for r in out] for c in combos):
             combos.append({"rows": out, "held": all(r["held"] for r in out)})
@@ -106,7 +133,8 @@ def _section_of(items: list[dict[str, Any]]) -> str:
     return "product" if coded and len(coded) == len(items) and all(i["kind"] == "product" for i in items) else "industry"
 
 
-def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, bool]) -> list[dict[str, Any]]:
+def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, bool],
+          doc_text: str = "") -> list[dict[str, Any]]:
     """부문 2개를 항상 돌려준다. `had_source[key]`: 그 부문 요건을 찾아볼 정보가 있었는지.
 
     충족 쪽은 **보유 자격 하나하나를 그 코드 자릿수로** 부문에 넣는다 — 첨부문서의 "어느 하나"
@@ -126,7 +154,7 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
     for state, source in (("missing", qualification.missing_groups), ("satisfied", qualification.satisfied_groups)):
         for g in source:
             if getattr(g, "combos", None):
-                combo = _combo_req(g, held)
+                combo = _combo_req(g, held, doc_text)
                 if state == "missing":
                     missing["industry"].append(combo)
                 else:  # 채운 조합의 면허들을 보유 자격으로 적는다
@@ -141,7 +169,22 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
                 if not items:
                     continue
                 first = items[0]
-                # 대신 인정 업종은 판정에만 쓰고 보여주지 않는다(2026-09-30 사용자 결정 — 공고문 모양 유지)
+                named = _named_alternatives(items, doc_text)
+                if named:
+                    # 공고문이 "A 또는 B"로 적은 대신 인정 업종은 함께 보여준다 → "아래 N개 중 1개 이상"
+                    req = {"any_of": True, "items": [first] + named}
+                    hidden_held = [i for i in items[1:] if i["held"] and i not in named]
+                    if hidden_held and not any(i["held"] for i in req["items"]):
+                        req["items"] = [dict(first, held=True, via=f"{hidden_held[0]['label']} (대체 인정)")] + named
+                    if state == "missing":
+                        missing[_section_of(items)].append(req)
+                    else:
+                        satisfied[_section_of(items)].append(req)
+                        mine = [i for i in items if i["held"]] or [first]
+                        held_by[mine[0]["kind"]].append(mine[0]["label"])
+                        satisfied_any[mine[0]["kind"]] = True
+                    continue
+                # 공고문에 없는 대신 인정 업종은 판정에만 쓰고 보여주지 않는다(2026-09-30 사용자 결정 — 공고문 모양 유지)
                 req = {"any_of": False, "items": [dict(first, held=any(i["held"] for i in items))]}
                 if state == "missing":
                     missing[_section_of(items)].append(req)

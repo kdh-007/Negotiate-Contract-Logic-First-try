@@ -124,6 +124,31 @@ class TestQualificationView(unittest.TestCase):
         q = qualify.evaluate(qualify.group_license_rows(combo)["C"], [], {"0003"})
         self.assertEqual(qualview.build(q, ({"0003"}, set()), {"industry": True})[0]["need"], 1, "C 보유 → D 하나만 더")
 
+    def test_substitute_shown_only_when_notice_says_or(self):
+        """공고문이 "토목공사업 또는 토목건축공사업"이라 적었으면 대신 인정 업종도 보여주고, 아니면 숨긴다."""
+        from nego import qualify
+        from webapp import qualview
+        rows = [
+            {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "토목공사업/0001",
+             "permsnIndstrytyList": "[토목공사업/0001][토목건축공사업/0003]"},
+            {"bidNtceNo": "N", "lmtGrpNo": "2", "lmtSno": "1", "lcnsLmtNm": "상·하수도설비공사업/4996"},
+            {"bidNtceNo": "N", "lmtGrpNo": "2", "lmtSno": "2", "lcnsLmtNm": "지반조성·포장공사업/4989"},
+        ]
+        q = qualify.evaluate(qualify.group_license_rows(rows)["N"], [])
+        doc = "1) 토목공사업 또는 토목건축공사업을 등록한 자\n2) 지반조성·포장공사업과 상하수도설비공사업을 모두 등록한자"
+        combo = qualview.build(q, (set(), set()), {"industry": True}, doc_text=doc)[0]["missing"][0]["combos"]
+        self.assertEqual(combo[0]["rows"][0]["label"], "토목공사업(0001) 또는 토목건축공사업")
+        combo = qualview.build(q, (set(), set()), {"industry": True})[0]["missing"][0]["combos"]
+        self.assertEqual(combo[0]["rows"][0]["label"], "토목공사업(0001)", "공고문이 없으면 숨김")
+        # 공고문에 이름만 있고 "또는"으로 이어지지 않으면 숨김 (폐기물: "① 1227 ② 종합처분업")
+        waste = [{"bidNtceNo": "W", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "폐기물수집·운반업/1227",
+                  "permsnIndstrytyList": "[폐기물수집·운반업/1227][폐기물종합처분업]"}]
+        q = qualify.evaluate(qualify.group_license_rows(waste)["W"], [])
+        doc = "① 폐기물수집·운반업(업종코드:1227)\n② 폐기물종합처분업(업종코드:1143)"
+        req = qualview.build(q, (set(), set()), {"industry": True}, doc_text=doc)[0]["missing"][0]
+        self.assertFalse(req["any_of"])
+        self.assertEqual([i["label"] for i in req["items"]], ["폐기물수집·운반업(1227)"])
+
     def test_substitute_license_used_for_judgment_but_not_shown(self):
         """허용업종(대신 인정)은 판정에만 쓰고, 그걸로 채웠을 때만 '(대체 인정)'으로 적는다."""
         from nego import qualify
