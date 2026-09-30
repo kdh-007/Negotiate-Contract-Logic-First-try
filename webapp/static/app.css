@@ -96,6 +96,7 @@ button.b.qual { cursor: help; position: relative; font: inherit; font-size: 12px
 .title .ext { color: var(--accent); font-size: 14px; }
 .meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 24px; margin: 0; padding: 10px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .meta div { min-width: 0; }
+.meta .explain { margin: 6px 0 0; padding-left: 18px; font-weight: 400; font-size: 13px; color: var(--muted); line-height: 1.6; }
 .meta .wide { grid-column: 1 / -1; }
 .meta dt { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
 .meta dd { margin: 0; font-size: 14.5px; font-weight: 600; }

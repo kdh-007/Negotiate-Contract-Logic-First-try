@@ -58,6 +58,9 @@ class ScreenResult:
     overseas_flag: bool = False
     # 위 플래그를 왜 붙였는지 — 리포트에서 배지에 마우스를 올리면 보여줄 근거.
     overseas_evidence: str | None = None
+    # "미매칭"으로 빠졌을 때 무엇을 무엇과 비교해서 안 맞았는지 (사람이 읽는 줄 목록).
+    # 판정에는 쓰지 않는다 — 제외된 공고 화면에서 "왜 빠졌지?"를 바로 보려고 남긴다.
+    match_explain: list[str] = field(default_factory=list)
 
 
 def _match_exclude(notice: Notice, exclude_keywords: list[str]) -> str | None:
@@ -120,6 +123,30 @@ def _match_codes(notice: Notice, config: ScreenConfig) -> tuple[list[str], list[
     return product_hits, sorted(set(industry_hits))
 
 
+def _explain_no_match(notice: Notice, config: ScreenConfig, industry_hits: list[str]) -> list[str]:
+    """미매칭 판정의 근거 — 공고의 어느 값을 우리 목록의 무엇과 비교했는지 그대로 적는다."""
+    lines = []
+    target = f"공고명 「{notice.title}」"
+    if notice.product_class_name:
+        target += f" + 대표 세부품명 「{notice.product_class_name}」"
+    shown = ", ".join(config.keywords[:20]) + (" 외" if len(config.keywords) > 20 else "")
+    lines.append(f"키워드: {target}에 관심 키워드 {len(config.keywords)}개({shown}) 중 들어 있는 것이 없음")
+    if notice.product_class_no:
+        name = f" {notice.product_class_name}" if notice.product_class_name else ""
+        lines.append(
+            f"품명코드: 공고 세부품명번호 {notice.product_class_no}{name} — 관심 품명코드 {len(config.product_codes)}개 목록에 없음"
+        )
+    else:
+        lines.append("품명코드: 공고에 세부품명번호가 없음 (용역·공사 공고는 대부분 없음) — 품명코드로는 비교 불가")
+    if industry_hits:
+        lines.append(
+            f"업종: {', '.join(industry_hits)}는 일치하지만, 업종만 맞는 공고는 후보로 보지 않음 (키워드나 품명코드가 함께 맞아야 함)"
+        )
+    elif notice.industry_text:
+        lines.append(f"업종: 공고 참가가능 업종 「{notice.industry_text[:80]}」 — 관심 업종과 겹치지 않음")
+    return lines
+
+
 def screen(notice: Notice, config: ScreenConfig) -> ScreenResult:
     excluded_word = _match_exclude(notice, config.exclude_keywords)
     if excluded_word:
@@ -162,6 +189,7 @@ def screen(notice: Notice, config: ScreenConfig) -> ScreenResult:
             confidence=None,
             excluded_by="미매칭",
             excluded_reason="키워드·품명코드 모두 불일치",
+            match_explain=_explain_no_match(notice, config, industry_hits),
         )
 
     code_matched = bool(product_hits or industry_hits)

@@ -98,6 +98,20 @@ class TestScopeAndSchedule(unittest.TestCase):
         self.assertNotEqual(bid.schedule.earliest[0], "의견등록 마감")
 
 
+class TestLinkedPrespecRemoved(unittest.TestCase):
+    def test_prespec_already_posted_goes_to_rejected(self):
+        config = load_config()
+        config.screen.keywords = ["박물관"]
+        notices = [prespec_from_raw(prespec_raw("R26BD01", bidNtceNoList="R26BK01111111"), "물품"),
+                   prespec_from_raw(prespec_raw("R26BD02"), "물품")]
+        stats = RunStats()
+        cands = build_candidates(notices, config, {}, {}, NOW, stats)
+        self.assertEqual([c.notice.notice_no for c in cands], ["R26BD02"])
+        gone = next(c for c in stats.rejected if c.notice.notice_no == "R26BD01")
+        self.assertEqual(gone.excluded_reason, "본공고 게시됨 (R26BK01111111)")
+        self.assertEqual(stats.screened_out["본공고 게시됨"], 1)
+
+
 class TestCollect(unittest.TestCase):
     def test_failure_does_not_raise(self):
         client = _Client(fail={"사전규격/용역"}, items={"사전규격/물품": [prespec_raw()]})

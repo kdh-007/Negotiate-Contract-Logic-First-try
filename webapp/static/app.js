@@ -196,7 +196,7 @@ function card(c, withActions = true) {
           <div><dt>${c.kind === "사전규격" ? "의견등록 마감" : "입찰 마감"}</dt><dd>${esc(fmtDt(c.deadline))}${dd} ${note}</dd></div>
           <div><dt>수요기관</dt><dd>${esc(c.demand_institution || "-")}</dd></div>
           <div><dt>사업금액</dt><dd>${esc(won(c.budget))}</dd></div>
-          ${c.excluded_reason ? `<div class="wide"><dt>제외 사유</dt><dd>${esc(c.excluded_reason)}</dd></div>` : ""}
+          ${c.excluded_reason ? `<div class="wide"><dt>제외 사유</dt><dd>${esc(c.excluded_reason)}${(c.match_explain || []).length ? `<ul class="explain">${c.match_explain.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}</dd></div>` : ""}
         </dl>
         <div class="why simline">최다 유사: ${s.top[0] ? `(${esc(s.top[0].year)}) ${esc(s.top[0].title)}` : "없음"} · 근거: ${esc(s.basis)}</div>
       </div>

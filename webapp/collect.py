@@ -71,6 +71,7 @@ def serialize(candidate, past: PastIndex, held: tuple[set[str], set[str]] = (set
         "matched_keywords": candidate.screen_result.matched_keywords,
         "is_candidate": candidate.is_candidate,
         "excluded_reason": candidate.excluded_reason,
+        "match_explain": candidate.screen_result.match_explain if not candidate.is_candidate else [],
         "is_re_notice": candidate.is_re_notice,
         "demand_institution": n.demand_institution or n.notice_institution,
         "notice_institution": n.notice_institution,

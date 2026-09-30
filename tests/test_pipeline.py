@@ -878,3 +878,25 @@ class TestConjunctionIsNotAName(unittest.TestCase):
         self.assertIn("6010989901", miss.summary, "①②③은 모두 갖춰야 한다")
         names = [n for g in ok.satisfied_groups + miss.satisfied_groups for n in g.allowed_names]
         self.assertFalse(any(n.startswith("또는") for n in names), names)
+
+
+class TestNoMatchExplain(unittest.TestCase):
+    """미매칭으로 빠진 공고에 '무엇을 무엇과 비교해 안 맞았는지'를 남긴다 (2026-09-30 요청)."""
+
+    def test_explain_lines(self):
+        cfg = screen.ScreenConfig(keywords=["박물관", "전시관"], product_codes=[{"code": "6010989901", "name": "실물모형"}],
+                                  industry_codes=[{"code": "4990", "name": "실내건축공사업"}])
+        n = notice_from_raw(fixtures.notice("R26X1", title="재해문자전광판 설치 사업", prdctClsfcNo="5512190301",
+                                            prdctClsfcNoNm="안내전광판"), "물품")
+        r = screen.screen(n, cfg)
+        self.assertEqual(r.excluded_by, "미매칭")
+        text = "\n".join(r.match_explain)
+        self.assertIn("「재해문자전광판 설치 사업」", text)
+        self.assertIn("관심 키워드 2개(박물관, 전시관)", text)
+        self.assertIn("5512190301", text)
+
+    def test_industry_only_match_is_explained(self):
+        cfg = screen.ScreenConfig(keywords=["박물관"], industry_codes=[{"code": "4990", "name": "실내건축공사업"}])
+        n = notice_from_raw(fixtures.notice("R26X2", title="청사 리모델링", bidprcPsblIndstrytyNm="실내건축공사업"), "공사")
+        r = screen.screen(n, cfg)
+        self.assertTrue(any("업종만 맞는 공고는 후보로 보지 않음" in l for l in r.match_explain), r.match_explain)

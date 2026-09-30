@@ -214,6 +214,16 @@ def build_candidates(
             category=scope.bid_category(notice),
         )
 
+        # 이미 본공고로 나간 사전규격은 후보에서 뺀다 (사용자 요청 2026-09-30) — 같은 사업이
+        # 본공고로 다시 보이고, 사전규격 쪽은 의견등록 마감도 대개 지났다. 제외 목록에는 남긴다.
+        if notice.kind == scope.CATEGORY_PRESPEC and notice.linked_bid_notices:
+            reason = "본공고 게시됨"
+            stats.screened_out[reason] = stats.screened_out.get(reason, 0) + 1
+            record.is_candidate = False
+            record.excluded_reason = f"{reason} ({', '.join(notice.linked_bid_notices)})"
+            stats.rejected.append(record)
+            continue
+
         if not screen_result.matched:
             reason = screen_result.excluded_by or "미매칭"
             detail = screen_result.excluded_reason or ""
