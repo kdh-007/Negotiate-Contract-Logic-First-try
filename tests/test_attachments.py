@@ -450,6 +450,23 @@ class TestFetchAttachmentText(unittest.TestCase):
         result = fetch_attachment_text(FakeSession(b""), att)
         self.assertFalse(result.ok)
         self.assertIn("지원하지 않는", result.error)
+        self.assertTrue(result.skipped, "내역서 같은 형식은 실패가 아니라 건너뜀")
+
+    def test_parse_failure_is_not_skipped(self):
+        att = {"seq": "1", "file_name": "a.hwp", "url": "https://example.com/a.hwp", "ext": "hwp"}
+        result = fetch_attachment_text(FakeSession(b"broken"), att)
+        self.assertFalse(result.ok)
+        self.assertFalse(result.skipped, "읽어야 할 문서를 못 읽은 건 실패로 센다")
+
+    def test_skipped_attachments_are_not_counted(self):
+        raw = {
+            "bidNtceNo": "R26TEST0002", "bidNtceOrd": "000", "bidNtceNm": "테스트 공고",
+            "ntceSpecFileNm1": "내역서.xlsx", "ntceSpecDocUrl1": "https://example.com/1.xlsx",
+        }
+        notice = notice_from_raw(raw, "용역")
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = save_attachment_texts([_FakeCandidate(notice)], Path(tmp), timeout=5.0, session=FakeSession(b"x"))
+        self.assertEqual((stats["attempted"], stats["failed"]), (0, 0))
 
     def test_successful_pdf_round_trip(self):
         # 표준 Helvetica 폰트는 한글을 못 그리므로(WinAnsiEncoding), 여기서는
@@ -956,11 +973,19 @@ class TestZipAttachment(unittest.TestCase):
         with self.assertRaises(AttachmentError):
             extract_text(too_deep, "zip")
 
-    def test_zip_without_documents_is_an_error(self):
-        from nego.attachments import extract_text
+    def test_zip_without_documents_is_skipped_not_failed(self):
+        """내역서·도면만 든 zip은 읽을 대상이 없는 것 — 실패로 세지 않는다."""
+        from nego.attachments import AttachmentUnsupported, extract_text
+
+        with self.assertRaises(AttachmentUnsupported):
+            extract_text(_zip_bytes({"내역서.xlsx": b"x", "도면.dwg": b"y"}), "zip")
+
+    def test_zip_with_broken_document_is_a_failure(self):
+        from nego.attachments import AttachmentUnsupported, extract_text
 
         with self.assertRaises(AttachmentError) as ctx:
-            extract_text(_zip_bytes({"내역서.xlsx": b"x", "도면.dwg": b"y"}), "zip")
+            extract_text(_zip_bytes({"내역서.xlsx": b"x", "공고문.pdf": b"%PDF-broken"}), "zip")
+        self.assertNotIsInstance(ctx.exception, AttachmentUnsupported)
         self.assertIn("읽을 수 있는 문서", str(ctx.exception))
 
     def test_zip_attachment_through_fetch(self):

@@ -44,6 +44,14 @@ class AttachmentError(Exception):
     """다운로드/파싱 단계 실패. 호출측(fetch_attachment_text)이 잡아서 계속 진행한다."""
 
 
+class AttachmentUnsupported(AttachmentError):
+    """애초에 읽을 대상이 아닌 형식(xlsx 내역서 등, 또는 그런 파일만 든 zip).
+
+    실패가 아니라 건너뜀이다 — 실패 건수·경고 로그에 넣지 않는다(2026-09-30 사용자 요청:
+    "내역서 같은 불필요한 첨부파일 파싱 실패는 굳이 카운팅하지 않아도 돼").
+    """
+
+
 @dataclass
 class AttachmentText:
     seq: str
@@ -52,6 +60,7 @@ class AttachmentText:
     ext: str
     text: str = ""
     error: str | None = None
+    skipped: bool = False  # 읽을 대상이 아닌 형식 — 실패로 세지 않는다
 
     @property
     def ok(self) -> bool:
@@ -154,7 +163,7 @@ def _extract_raw(data: bytes, ext: str, depth: int) -> str:
         if depth >= ZIP_MAX_DEPTH + 1:
             raise AttachmentError("압축 파일 안의 압축 파일이 너무 깊습니다")
         return _extract_zip_text(data, depth)
-    raise AttachmentError(f"지원하지 않는 형식입니다: .{ext or '(확장자 없음)'}")
+    raise AttachmentUnsupported(f"지원하지 않는 형식입니다: .{ext or '(확장자 없음)'}")
 
 
 def _zip_member_name(info: zipfile.ZipInfo) -> str:
@@ -182,7 +191,8 @@ def _extract_zip_text(data: bytes, depth: int = 0) -> str:
         raise AttachmentError(f"ZIP 파싱 실패: {err}") from err
 
     parts: list[str] = []
-    skipped: list[str] = []
+    skipped: list[str] = []  # 읽으려다 못 읽은 파일 (실패)
+    unsupported: list[str] = []  # 애초에 읽을 대상이 아닌 형식 (xlsx 등)
     total = 0
     with zf:
         members = [i for i in zf.infolist() if not i.is_dir()]
@@ -193,7 +203,7 @@ def _extract_zip_text(data: bytes, depth: int = 0) -> str:
                 continue
             ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
             if ext and ext not in SUPPORTED_EXTENSIONS:
-                skipped.append(f"{base}(.{ext})")
+                unsupported.append(f"{base}(.{ext})")
                 continue
             if info.file_size > ZIP_MAX_MEMBER_BYTES or total + info.file_size > ZIP_MAX_TOTAL_BYTES:
                 skipped.append(f"{base}(너무 큼)")
@@ -202,6 +212,9 @@ def _extract_zip_text(data: bytes, depth: int = 0) -> str:
                 inner = zf.read(info)
                 total += len(inner)
                 text = _extract_raw(inner, ext, depth + 1)
+            except AttachmentUnsupported:
+                unsupported.append(base)
+                continue
             except AttachmentError as err:
                 skipped.append(f"{base}({err})")
                 continue
@@ -215,6 +228,10 @@ def _extract_zip_text(data: bytes, depth: int = 0) -> str:
 
     if skipped:
         log.info("압축 파일에서 읽지 않은 파일: %s", ", ".join(skipped[:10]) + (" 외" if len(skipped) > 10 else ""))
+    if unsupported:
+        log.debug("압축 파일 안의 읽을 대상이 아닌 파일: %s", ", ".join(unsupported[:10]))
+    if not parts and not skipped:
+        raise AttachmentUnsupported("압축 파일 안에 HWP/HWPX/PDF 문서가 없습니다")
     if not parts:
         raise AttachmentError("압축 파일 안에 읽을 수 있는 문서(HWP/HWPX/PDF)가 없습니다"
                               + (f" — {', '.join(skipped[:5])}" if skipped else ""))
@@ -239,11 +256,15 @@ def fetch_attachment_text(
     # (`extract_text`의 `_sniff_ext`). 확장자가 있는데 지원 형식이 아니면 받지 않는다.
     if ext and ext not in SUPPORTED_EXTENSIONS:
         result.error = f"지원하지 않는 형식입니다: .{ext or '(확장자 없음)'}"
+        result.skipped = True
         return result
 
     try:
         data = download_bytes(session, url, timeout=timeout)
         result.text = extract_text(data, ext)
+    except AttachmentUnsupported as err:
+        result.error = str(err)
+        result.skipped = True
     except AttachmentError as err:
         result.error = str(err)
     except Exception as err:  # 예상 못한 오류도 파이프라인을 죽이면 안 된다
@@ -340,6 +361,9 @@ def save_attachment_texts(
         deadline = None
 
         for result in collect_notice_attachment_texts(session, notice, timeout=timeout):
+            if result.skipped:  # xlsx 내역서 등 — 읽을 대상이 아니라 시도·실패로 세지 않는다
+                log.debug("첨부파일 건너뜀 [%s] %s: %s", notice.notice_no, result.file_name, result.error)
+                continue
             stats["attempted"] += 1
             if not result.ok:
                 log.warning("첨부파일 추출 실패 [%s] %s: %s", notice.notice_no, result.file_name, result.error)

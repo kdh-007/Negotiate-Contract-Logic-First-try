@@ -120,7 +120,7 @@ function dday(c) {
   return `<span class="b dday${c.days_left > 7 ? " far" : ""}" title="${esc(c.deadline_label)} ${esc(fmtDt(c.deadline))}">마감 ${t}</span>`;
 }
 const QUAL_NOTES = {
-  industry: "자격요건 = 업종·면허(업종코드 4자리). 미보유는 요건 단위로 셉니다 — '아래 중 하나' 요건은 그중 하나만 있으면 충족입니다.",
+  industry: "자격요건 = 업종·면허(업종코드 4자리). 미보유는 요건 단위로 셉니다 — 'N개 중 하나만 있으면 충족' 요건은 면허가 여러 개 없어도 1건입니다.",
   product: "세부품명번호 = 직접생산확인 등 품목 요건(10자리). 첨부 공고문을 읽었을 때만 판정됩니다.",
 };
 const QUAL_EMPTY = {
@@ -131,7 +131,11 @@ const KIND_TAG = { industry: "업종", product: "품명" };
 function reqHtml(req, mixed) {
   const item = (i) => `<div class="tip-sub ${i.held ? "held" : ""}">${i.held ? "✓" : "✗"} ${mixed ? `<span class="kind">${KIND_TAG[i.kind]}</span> ` : ""}${esc(i.label)}</div>`;
   if (!req.any_of) return `<div class="tip-item">${esc(req.items[0].label)}</div>`;
-  return `<div class="tip-item"><span class="why">아래 중 하나</span>${req.items.map(item).join("")}</div>`;
+  // "미달 1건"이 면허 1개가 없다는 뜻으로 읽히지 않게, 요건 1건 = 아래 N개 중 택1임을 풀어 쓴다
+  const n = req.items.length;
+  const none = req.items.every((i) => !i.held);
+  const why = `아래 ${n}개 중 하나만 있으면 충족${none ? ` — ${n === 2 ? "둘 다" : "모두"} 미보유` : ""}`;
+  return `<div class="tip-item"><span class="why">${why}</span>${req.items.map(item).join("")}</div>`;
 }
 function qualButton(label, cls, aria, body) {
   return `<button type="button" class="b qual ${cls}" aria-label="${esc(aria)}">${esc(label)}<span class="tip" role="tooltip">${body}</span></button>`;
