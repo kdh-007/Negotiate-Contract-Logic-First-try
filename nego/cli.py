@@ -219,6 +219,7 @@ def main(argv: list[str] | None = None) -> int:
             held_code_names=held_code_names,
             now=now,
             code_names=config.code_names,
+            held_raw=config.held_raw,
         )
         print(
             f"첨부파일 텍스트 추출: 시도 {att_stats['attempted']}건 "

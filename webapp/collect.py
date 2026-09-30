@@ -82,6 +82,7 @@ def serialize(candidate, past: PastIndex, held: tuple[set[str], set[str]] = (set
         "days_left": candidate.days_left,
         "detail_url": n.detail_url or _g2b_url(n),
         "regions": candidate.regions,
+        "region_check": candidate.region_check.to_dict(),
         "joint": {"label": candidate.joint.label, "allowed": candidate.joint.allowed},
         "qualification": {
             "checked": q.checked,
@@ -195,7 +196,7 @@ class Collector:
                 candidates, config.output_dir,
                 held_codes=qualify.load_held_codes(config.held_raw),
                 held_code_names=qualify.load_held_code_names(config.held_raw),
-                now=now, code_names=config.code_names,
+                now=now, code_names=config.code_names, held_raw=config.held_raw,
             )
             log.info("첨부파일: 시도 %d → 성공 %d / 실패 %d · 자격판정 반영 %d건",
                      att["attempted"], att["ok"], att["failed"], att["qualification_determined"])

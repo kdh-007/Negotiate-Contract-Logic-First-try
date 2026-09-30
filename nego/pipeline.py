@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from . import fields as F
-from . import qualify, scope, screen
+from . import qualify, region, scope, screen
 from .config import AppConfig
 from .http_client import ApiError, DataGoKrClient
 from .models import Notice, notice_from_raw, prespec_from_raw
@@ -48,6 +48,8 @@ class Candidate:
     attachment_text: str = ""
     # `--llm-similarity`를 줬을 때만 채워진다 (`llm_similarity.LlmJudgement`).
     llm_similarity: object | None = None
+    # 지역 제한(업체 소재지) 판정 — 표시용, 후보 여부에는 쓰지 않는다 (`region.py`)
+    region_check: region.RegionCheck = field(default_factory=region.RegionCheck)
 
     @property
     def gate_passed(self) -> bool:
@@ -193,6 +195,7 @@ def build_candidates(
     stats.categories = sorted(categories, key=scope.CATEGORIES.index) if categories else None
 
     candidates: list[Candidate] = []
+    company_sido = region.company_sido(config.held_raw)
 
     for notice in scope_result.kept:
         # 파생값은 후보/제외 가릴 것 없이 **모든 협상 공고에 대해** 먼저 계산한다.
@@ -212,6 +215,7 @@ def build_candidates(
             is_re_notice=scope.is_re_notice(notice),
             variant=scope.negotiation_variant(notice),
             category=scope.bid_category(notice),
+            region_check=region.from_api(regions.get(notice.notice_no, []), company_sido),
         )
 
         # 이미 본공고로 나간 사전규격은 후보에서 뺀다 (사용자 요청 2026-09-30) — 같은 사업이

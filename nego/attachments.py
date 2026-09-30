@@ -276,6 +276,7 @@ def save_attachment_texts(
     held_code_names: dict[str, str] | None = None,
     now: datetime | None = None,
     code_names: dict[str, str] | None = None,
+    held_raw: dict | None = None,
 ) -> dict[str, Any]:
     """후보 공고의 첨부파일을 내려받아 텍스트를 `output_dir/attachment_text/`에 저장한다.
 
@@ -368,6 +369,15 @@ def save_attachment_texts(
             # 다시 계산해야 "잔여일수"(D-N)가 새로 채운 마감/일정과 어긋나지 않는다.
             if hasattr(candidate, "days_left"):
                 candidate.days_left = schedule.days_left(now)
+
+        # 첨부 참가자격에 "주된 영업소 소재지가 ○○도" 같은 지역 요건이 있으면 API보다 우선한다
+        if all_items and held_codes is not None and hasattr(candidate, "region_check"):
+            from . import region as _region
+
+            company = _region.company_sido(held_raw or {})
+            candidate.region_check = _region.combine(
+                candidate.region_check, _region.from_text(all_items, company)
+            )
 
         if not needs_check or not all_items:
             continue

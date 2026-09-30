@@ -167,13 +167,31 @@ function badges(c) {
   if (c.ai) out.push(`<span class="b ${c.ai.label === "적합" ? "good" : c.ai.label === "부적합" ? "bad" : "warn"}" title="${esc(c.ai.reason)}">AI ${esc(c.ai.label)}</span>`);
   return out.join("");
 }
+const SIDO_FULL = { 서울: "서울특별시", 부산: "부산광역시", 대구: "대구광역시", 인천: "인천광역시", 광주: "광주광역시",
+  대전: "대전광역시", 울산: "울산광역시", 세종: "세종특별자치시", 경기: "경기도", 강원: "강원특별자치도", 충북: "충청북도",
+  충남: "충청남도", 전북: "전북특별자치도", 전남: "전라남도", 경북: "경상북도", 경남: "경상남도", 제주: "제주특별자치도" };
+function regionBadge(c) {
+  // 지역 제한 판정(업체 소재지 vs 지일 소재지). 후보에서 빼지는 않고 표시만 한다.
+  const r = c.region_check || { status: "미확인", required: [] };
+  const req = (r.required || []).map((s) => SIDO_FULL[s] || s);
+  const tip = [r.source ? `근거: ${r.source}` : "", r.evidence || "", r.company ? `지일 소재지: ${SIDO_FULL[r.company] || r.company}` : ""]
+    .filter(Boolean).join("\n");
+  if (r.status === "미달")
+    return `<span class="b bad" title="${esc(tip)}">지역 미달 (${esc(req.join("·"))}만)</span>`;
+  if (r.status === "충족")
+    return `<span class="b good" title="${esc(tip)}">지역 충족 (${esc(req.slice(0, 2).join("·"))}${req.length > 2 ? " 외" : ""})</span>`;
+  if (c.regions && c.regions.length)
+    return `<span class="b warn" title="${esc(c.regions.join(", "))}">지역제한 ${esc(c.regions.slice(0, 2).join("·"))}${c.regions.length > 2 ? " 외" : ""}</span>`;
+  return `<span class="b" title="나라장터 참가가능지역·첨부 공고문 모두 지역 요건을 찾지 못함 (제한이 없거나 등록되지 않은 것)">지역제한 정보 없음</span>`;
+}
 function badges2(c) {
   const out = [qualBadge(c.qualification)];
-  // 사전규격엔 참가가능지역·공동수급 정보가 없다 — "제한 없음"으로 오해하지 않게 아예 표시하지 않는다
-  if (c.kind === "사전규격") return out.join("");
-  out.push(c.regions.length
-    ? `<span class="b warn" title="${esc(c.regions.join(", "))}">지역제한 ${esc(c.regions.slice(0, 2).join("·"))}${c.regions.length > 2 ? " 외" : ""}</span>`
-    : `<span class="b" title="참가가능지역 정보 없음 = 제한 없음 또는 미등록">지역제한 없음</span>`);
+  // 사전규격엔 참가가능지역·공동수급 API 정보가 없다 — 첨부에서 지역 요건을 찾았을 때만 표시
+  if (c.kind === "사전규격") {
+    if (c.region_check && c.region_check.status !== "미확인") out.push(regionBadge(c));
+    return out.join("");
+  }
+  out.push(regionBadge(c));
   out.push(`<span class="b ${c.joint.allowed ? "info" : ""}">공동수급 ${esc(c.joint.label)}</span>`);
   return out.join("");
 }
