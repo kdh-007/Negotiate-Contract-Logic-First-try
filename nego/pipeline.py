@@ -8,14 +8,15 @@
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from . import fields as F
-from . import qualify, scope, screen
+from . import qualify, region, scope, screen
 from .config import AppConfig
 from .http_client import ApiError, DataGoKrClient
-from .models import Notice, notice_from_raw
+from .models import Notice, notice_from_raw, prespec_from_raw
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +48,11 @@ class Candidate:
     attachment_text: str = ""
     # `--llm-similarity`를 줬을 때만 채워진다 (`llm_similarity.LlmJudgement`).
     llm_similarity: object | None = None
+    # 지역 제한(업체 소재지) 판정 — 표시용, 후보 여부에는 쓰지 않는다 (`region.py`)
+    region_check: region.RegionCheck = field(default_factory=region.RegionCheck)
+    # 첨부 공고문에서 찾은, 판정하지 않고 "확인 필요"로만 보여줄 요건 — 실적·현장설명회·기술인력
+    # (`text_requirements.flag_requirements`, [{kind, text, date?}])
+    text_flags: list = field(default_factory=list)
 
     @property
     def gate_passed(self) -> bool:
@@ -87,6 +93,10 @@ class RunStats:
     # 리포트 헤더의 "조회 기간" 표시용. --from-store처럼 API를 안 부른 실행에서는 None.
     period_begin: datetime | None = None
     period_end: datetime | None = None
+    # 사전규격: 수집했는지, 몇 건 받았는지, 실패 사유(실패해도 본공고 결과는 그대로 낸다)
+    prespec_requested: bool = False
+    prespec_fetched: int = 0
+    prespec_error: str | None = None
 
 
 def _api_window(now: datetime, lookback_days: int) -> tuple[str, str]:
@@ -142,6 +152,34 @@ def collect_notices(
     return collected
 
 
+def collect_prespecs(client: DataGoKrClient, begin: str, end: str, stats: RunStats) -> list[Notice]:
+    """사전규격 3종(용역·물품·공사)을 조회한다.
+
+    본공고와 달리 **실패해도 멈추지 않는다** — 사전규격은 별도 서비스라 활용신청이
+    안 돼 있거나 주소가 바뀌어 실패할 수 있는데, 그 때문에 본공고 수집까지 버리면 안 된다.
+    실패한 업무구분은 `stats.prespec_error`에 사유를 남기고 건너뛴다.
+    """
+    stats.prespec_requested = True
+    base_url = os.environ.get("PRESPEC_BASE_URL", "").strip() or F.PRESPEC_BASE_URL
+    collected: list[Notice] = []
+    errors: list[str] = []
+    for work_type, operation in F.PRESPEC_OPERATIONS.items():
+        label = f"사전규격/{work_type}"
+        try:
+            raw_items = client.fetch_all_pages_chunked(base_url, operation, {"inqryDiv": "1"}, begin, end, label)
+        except ApiError as err:
+            log.warning("%s 조회 실패 — 사전규격은 건너뛰고 본공고만 진행합니다: %s", label, err)
+            errors.append(f"{label}: {err}")
+            continue
+        notices = [prespec_from_raw(raw, work_type) for raw in raw_items]
+        notices = [n for n in notices if n.notice_no]
+        log.info("%s 조회 완료: %d건", label, len(notices))
+        collected.extend(notices)
+    stats.prespec_fetched = len(collected)
+    stats.prespec_error = " / ".join(errors) or None
+    return collected
+
+
 def build_candidates(
     notices: list[Notice],
     config: AppConfig,
@@ -160,13 +198,15 @@ def build_candidates(
     stats.categories = sorted(categories, key=scope.CATEGORIES.index) if categories else None
 
     candidates: list[Candidate] = []
+    company_sido = region.company_sido(config.held_raw)
+    held_codes = qualify.load_held_codes(config.held_raw)
 
     for notice in scope_result.kept:
         # 파생값은 후보/제외 가릴 것 없이 **모든 협상 공고에 대해** 먼저 계산한다.
         # 전부 로컬 계산이라 비용이 없고, 나중에 "왜 걸러졌지?"를 볼 때 이 값들이 필요하다.
         schedule = screen.build_schedule(notice)
         screen_result = screen.screen(notice, config.screen)
-        qualification = qualify.evaluate(license_groups.get(notice.notice_no, []), config.held_names)
+        qualification = qualify.evaluate(license_groups.get(notice.notice_no, []), config.held_names, held_codes)
 
         record = Candidate(
             notice=notice,
@@ -179,7 +219,18 @@ def build_candidates(
             is_re_notice=scope.is_re_notice(notice),
             variant=scope.negotiation_variant(notice),
             category=scope.bid_category(notice),
+            region_check=region.from_api(regions.get(notice.notice_no, []), company_sido),
         )
+
+        # 이미 본공고로 나간 사전규격은 후보에서 뺀다 (사용자 요청 2026-09-30) — 같은 사업이
+        # 본공고로 다시 보이고, 사전규격 쪽은 의견등록 마감도 대개 지났다. 제외 목록에는 남긴다.
+        if notice.kind == scope.CATEGORY_PRESPEC and notice.linked_bid_notices:
+            reason = "본공고 게시됨"
+            stats.screened_out[reason] = stats.screened_out.get(reason, 0) + 1
+            record.is_candidate = False
+            record.excluded_reason = f"{reason} ({', '.join(notice.linked_bid_notices)})"
+            stats.rejected.append(record)
+            continue
 
         if not screen_result.matched:
             reason = screen_result.excluded_by or "미매칭"
@@ -210,9 +261,11 @@ def run(
     now: datetime | None = None,
     categories: set[str] | None = None,
     complete_days: int | None = None,
+    include_prespec: bool = False,
 ) -> tuple[list[Candidate], RunStats, list[Notice]]:
     """`complete_days`를 주면 조회 기간을 오늘 뺀 직전 N일(날짜 단위)로 잡는다
-    (매일/매주 발송용). 없으면 기존처럼 최근 `lookback_days`일 ~ 지금."""
+    (매일/매주 발송용). 없으면 기존처럼 최근 `lookback_days`일 ~ 지금.
+    `include_prespec`이면 같은 기간의 사전규격도 받아 본공고와 같은 필터·판정을 태운다."""
     now = now or datetime.now()
     stats = RunStats()
     client = DataGoKrClient(config.api)
@@ -232,6 +285,8 @@ def run(
     # cli.py까지 전파해 종료코드 1로 끝나게 둔다 — Actions 워크플로가 그걸 보고
     # 새 Run으로 재시도한다.
     notices = collect_notices(client, begin, end, stats)
+    if include_prespec:
+        notices = notices + collect_prespecs(client, begin, end, stats)
 
     license_groups, license_error = qualify.fetch_license_groups(client, begin, end)
     stats.license_error = license_error

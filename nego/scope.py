@@ -33,6 +33,9 @@ CATEGORY_NEGOTIATED = "협상"
 CATEGORY_SPEC_PRICE = "규격가격동시입찰"
 CATEGORY_BID = "입찰"
 CATEGORIES = (CATEGORY_NEGOTIATED, CATEGORY_SPEC_PRICE, CATEGORY_BID)
+# 사전규격은 낙찰방법이 정해지기 전 단계라 위 세 유형으로 나눌 수 없다 — 따로 분류한다.
+# `--categories`(발송 주기용 유형 선택)와는 무관하게, 사전규격을 수집한 실행이면 항상 남는다.
+CATEGORY_PRESPEC = "사전규격"
 
 # 협상은 아니지만 제안서로 겨루는 방식이라 업역이 겹친다.
 # 제외하지 않고 태그만 달아 둔다 — 나중에 판단할 수 있게.
@@ -64,6 +67,8 @@ def is_private_contract(notice: Notice) -> bool:
 
 def bid_category(notice: Notice) -> str | None:
     """공고 유형. 수의계약이면 None(수집 범위 밖)."""
+    if notice.kind == CATEGORY_PRESPEC:
+        return CATEGORY_PRESPEC
     if is_private_contract(notice):
         return None
     award = _normalize(notice.award_method)
@@ -157,7 +162,7 @@ def apply_scope(notices: list[Notice], categories: set[str] | None = None) -> Sc
 
     kept = competitive
     if categories is not None:
-        kept = [n for n in competitive if bid_category(n) in categories]
+        kept = [n for n in competitive if bid_category(n) in categories or n.kind == CATEGORY_PRESPEC]
     adjacent = [n for n in kept if is_adjacent(n)]
 
     return ScopeResult(

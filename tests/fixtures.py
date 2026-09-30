@@ -115,7 +115,7 @@ def license_rows() -> list[dict[str, Any]]:
             "lcnsLmtNm": "실내건축공사업/4990",
             "permsnIndstrytyList": "[실내건축공사업/4990]",
         },
-        # 공고2: 두 그룹 모두 지일 보유 업종 → 충족
+        # 공고2: 한 그룹 안 두 행(모두 필요) — 둘 다 지일 보유 업종 → 충족
         {
             "bidNtceNo": "R26TEST00002",
             "lmtGrpNo": "1",
@@ -125,12 +125,13 @@ def license_rows() -> list[dict[str, Any]]:
         },
         {
             "bidNtceNo": "R26TEST00002",
-            "lmtGrpNo": "2",
-            "lmtSno": "1",
+            "lmtGrpNo": "1",
+            "lmtSno": "2",
             "lcnsLmtNm": "산업디자인전문회사(환경디자인분야)/4442",
             "permsnIndstrytyList": "[산업디자인전문회사(환경디자인분야)/4442]",
         },
-        # 공고9: 미보유 업종 2개 그룹 → 기존 규칙상 제외 대상
+        # 공고9: 한 그룹 안 두 행(모두 필요) — 둘 다 미보유 → 미달 요건 2건.
+        # 두 번째 행은 허용업종이 있어 "기계설비공사업 또는 전기공사업"이다.
         {
             "bidNtceNo": "R26TEST00009",
             "lmtGrpNo": "1",
@@ -140,8 +141,8 @@ def license_rows() -> list[dict[str, Any]]:
         },
         {
             "bidNtceNo": "R26TEST00009",
-            "lmtGrpNo": "2",
-            "lmtSno": "1",
+            "lmtGrpNo": "1",
+            "lmtSno": "2",
             "lcnsLmtNm": "기계설비공사업/0009",
             "permsnIndstrytyList": "[기계설비공사업/0009][전기공사업/0007]",
         },
@@ -149,11 +150,9 @@ def license_rows() -> list[dict[str, Any]]:
 
 
 def substring_overmatch_rows() -> list[dict[str, Any]]:
-    """부분일치 특성을 기록해두는 픽스처.
+    """'건축공사업(0002)' 요건 — 보유 '실내건축공사업'의 부분 문자열이지만 다른 면허다.
 
-    기존 시스템과 동일하게 업종명을 **양방향 부분일치**로 대조하므로,
-    '건축공사업'은 보유 업종 '실내건축공사업'의 부분 문자열이라 충족으로 판정된다.
-    현행 동작이며 변경 대상이 아니다 — 다만 이런 성질이 있다는 걸 테스트로 남겨 둔다.
+    예전 양방향 부분일치에선 충족으로 잘못 나왔다. 지금은 미달이어야 한다.
     """
     return [
         {

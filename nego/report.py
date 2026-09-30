@@ -84,8 +84,7 @@ _CHECK_SVG = (
 # 면허제한정보 API 필드가 실측상 "이름/코드"를 그대로 붙여 내려주는 경우가
 # 있다(예: lcnsLmtNm="실내건축공사업/4990") — 첨부파일에서 뽑은 항목은 이미
 # "이름(코드)" 형식이라 팝업 안에서 표기가 안 맞아 보인다. qualify.py의
-# allowed_names 자체는 매칭(_is_group_satisfied의 양방향 부분일치)에 쓰여서
-# 거기서 코드를 붙이면 매칭이 깨진다(실측으로 확인됨) — 그래서 이 변환은
+# allowed_names 자체는 매칭(_is_group_satisfied)에 쓰이므로 이 변환은
 # 표시 직전, 여기서만 한다.
 _RAW_CODE_SUFFIX_RE = re.compile(r"^(.+)/([0-9]{4,10})$")
 
@@ -105,11 +104,14 @@ def _dedupe_names_preferring_code(names: list[str]) -> list[str]:
     by_base: dict[str, str] = {}
     order: list[str] = []
     for n in names:
-        base = n.split("(", 1)[0]
+        # 맨 뒤 "(코드)"만 떼고 비교한다. 예전엔 첫 "(" 앞까지를 이름으로 봐서 "산업디자인전문회사(시각디자인분야)"·
+        # "(환경디자인분야)"·"(종합디자인분야)"가 전부 같은 이름으로 합쳐져 "또는" 요건이 하나만 보였다(2026-09-30 제보).
+        base = re.sub(r"\s*\(\d{4,10}\)\s*$", "", n)
+        has_code = base != n
         if base not in by_base:
             order.append(base)
             by_base[base] = n
-        elif "(" in n and "(" not in by_base[base]:
+        elif has_code and re.sub(r"\s*\(\d{4,10}\)\s*$", "", by_base[base]) == by_base[base]:
             by_base[base] = n
     return [by_base[b] for b in order]
 
@@ -265,6 +267,11 @@ def render_console(candidates: list[Candidate], stats: RunStats) -> str:
         lines.append(f"  ⚠ 조회 실패: {', '.join(stats.failed_operations)}")
     if stats.license_error:
         lines.append("  ⚠ 면허제한정보 조회 실패 → 자격 게이트 미적용 (fail-open)")
+    if stats.prespec_requested:
+        # 위 "수집 N건"은 본공고만 센 값이다. 사전규격은 대상 유형부터 함께 센다.
+        lines.append(f"  사전규격 {stats.prespec_fetched}건 함께 수집 (본공고와 같은 필터 적용)")
+        if stats.prespec_error:
+            lines.append(f"  ⚠ 사전규격 조회 실패 (본공고는 정상): {stats.prespec_error}")
     lines.append("")
 
     if not candidates:

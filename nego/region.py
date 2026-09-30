@@ -1,0 +1,119 @@
+"""지역 제한 판정 — 공고가 요구하는 업체 소재지(시·도)와 지일 소재지를 비교한다.
+
+2026-09-30 사용자 요청: 경기북부어린이박물관 공고가 "주된 영업소의 소재지가 경기도에 있는 업체"만
+받는데(공동수급 불허) 자격판정은 "자격 충족"으로 나왔다. 면허·품목만 보고 소재지는 안 봤기 때문.
+
+- 근거는 두 가지: 나라장터 참가가능지역 API(`candidate.regions`)와 첨부 공고문의 참가자격 문장.
+- 결과는 충족 / 미달 / 미확인 3상태. **후보에서 빼지는 않는다** — 지역제한은 필터 없이 표시만
+  한다는 기존 결정(2026-09-28)을 따른다. 담당자가 배지를 보고 판단한다.
+- 시·도 단위로만 판정한다. "동두천시 관내"처럼 시·군만 적힌 경우는 어느 도인지 표가 없어 미확인.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+# 시·도 표준명 → 문서에 나오는 표기들 (옛 이름·줄임말 포함)
+SIDO_ALIASES: dict[str, tuple[str, ...]] = {
+    "서울": ("서울특별시", "서울시", "서울"),
+    "부산": ("부산광역시", "부산시", "부산"),
+    "대구": ("대구광역시", "대구시", "대구"),
+    "인천": ("인천광역시", "인천시", "인천"),
+    "광주": ("광주광역시", "광주시"),  # "광주"만 쓰면 경기도 광주시와 헷갈려서 뺀다
+    "대전": ("대전광역시", "대전시", "대전"),
+    "울산": ("울산광역시", "울산시", "울산"),
+    "세종": ("세종특별자치시", "세종시", "세종"),
+    "경기": ("경기도", "경기"),
+    "강원": ("강원특별자치도", "강원도", "강원"),
+    "충북": ("충청북도", "충북"),
+    "충남": ("충청남도", "충남"),
+    "전북": ("전북특별자치도", "전라북도", "전북"),
+    "전남": ("전라남도", "전남"),
+    "경북": ("경상북도", "경북"),
+    "경남": ("경상남도", "경남"),
+    "제주": ("제주특별자치도", "제주도", "제주"),
+}
+_ALIAS_TO_SIDO = sorted(
+    ((alias, sido) for sido, aliases in SIDO_ALIASES.items() for alias in aliases), key=lambda x: -len(x[0])
+)
+# 두 글자 줄임말("경기", "서울")은 뒤에 다른 한글이 붙으면 다른 낱말이다("경기장", "서울대") —
+# "경기 지역", "경기 내", "경기권"처럼 띄어 쓰거나 내·권·지역이 올 때만 인정한다.
+_SIDO_RE = re.compile(
+    "|".join(
+        re.escape(a) + (r"(?:(?=[내권])|(?![가-힣]))" if len(a) == 2 else "")
+        for a, _ in _ALIAS_TO_SIDO
+    )
+)
+
+# 소재지 요건 문장의 신호어 — "주된 영업소 소재지", "본점(본사) 소재지", "~에 소재한", "관내 업체"
+_LOCATION_HINT_RE = re.compile(r"소재지|소재한|소재하는|주된\s*영업소|본점|본사|관내")
+# 지역 제한이 아니라 다른 뜻으로 시·도 이름이 나오는 문장
+# (실측: 남자현지사 제안요청서 "대구·경북 소재 업체와 공동으로 참여를 권장함" — 권장은 제한이 아니다)
+_NOT_LIMIT_RE = re.compile(r"공동수급|공동으로|분담|지역의무|구성원|하도급|납품\s*장소|설치\s*장소|현장|권장|권고|우대|가점|가산")
+
+
+def sido_of(name: str | None) -> str | None:
+    """'경기도', '강원특별자치도 정선군', '서울특별시 강남구' → 표준 시·도명."""
+    if not name:
+        return None
+    text = re.sub(r"\s+", "", name)
+    for alias, sido in _ALIAS_TO_SIDO:
+        if text.startswith(re.sub(r"\s+", "", alias)):
+            return sido
+    return None
+
+
+@dataclass
+class RegionCheck:
+    status: str = "미확인"  # 충족 / 미달 / 미확인
+    required: list[str] = field(default_factory=list)  # 요구 시·도(표준명)
+    company: str | None = None
+    source: str | None = None  # "나라장터 참가가능지역" / "첨부 공고문"
+    evidence: str | None = None
+
+    def to_dict(self) -> dict:
+        return {"status": self.status, "required": self.required, "company": self.company,
+                "source": self.source, "evidence": self.evidence}
+
+
+def company_sido(held_raw: dict) -> str | None:
+    return sido_of((held_raw or {}).get("companyRegion"))
+
+
+def _judge(required: set[str], company: str | None, source: str, evidence: str) -> RegionCheck:
+    ordered = sorted(required, key=list(SIDO_ALIASES).index)
+    if company is None:
+        return RegionCheck("미확인", ordered, None, source, evidence)
+    status = "충족" if company in required else "미달"
+    return RegionCheck(status, ordered, company, source, evidence)
+
+
+def from_api(regions: list[str], company: str | None) -> RegionCheck:
+    """나라장터 참가가능지역 목록. 비어 있으면 '제한 없음'이 아니라 '정보 없음'이다."""
+    required = {s for s in (sido_of(r) for r in regions) if s}
+    if not required:
+        return RegionCheck(company=company)
+    return _judge(required, company, "나라장터 참가가능지역", ", ".join(dict.fromkeys(regions)))
+
+
+def from_text(items: list[str], company: str | None) -> RegionCheck | None:
+    """첨부 참가자격 항목에서 '주된 영업소의 소재지가 경기도에 있는 업체' 같은 문장을 찾는다."""
+    for item in items:
+        for sentence in re.split(r"(?<=[.。])\s+|\n", item):
+            if not _LOCATION_HINT_RE.search(sentence) or _NOT_LIMIT_RE.search(sentence):
+                continue
+            # 정규식이 긴 표기부터 맞춰서 "경기도"를 "경기"로 두 번 세지 않는다
+            required = {sido_of(m.group(0)) for m in _SIDO_RE.finditer(sentence)} - {None}
+            if not required:
+                continue
+            evidence = re.sub(r"\s+", " ", sentence).strip()[:160]
+            return _judge(required, company, "첨부 공고문", evidence)
+    return None
+
+
+def combine(api: RegionCheck, text: RegionCheck | None) -> RegionCheck:
+    """첨부 공고문 쪽을 우선한다 — 공고문이 원문이고, API는 발주기관이 비워 두는 일이 많다."""
+    if text is not None and text.status != "미확인":
+        return text
+    return api

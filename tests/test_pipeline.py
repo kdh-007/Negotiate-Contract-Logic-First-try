@@ -155,7 +155,7 @@ class TestJointSupply(unittest.TestCase):
 
 
 class TestQualification(unittest.TestCase):
-    """판정 규칙은 기존 시스템과 동일해야 한다 (변경 금지)."""
+    """자격 판정 규칙. 이름 비교는 부분일치가 아니라 코드 비교 + 이름 완전일치(2026-09-30 변경)."""
 
     held = ["실내건축공사업", "산업디자인전문회사(환경디자인분야)", "전시사업자(전시장치사업자)"]
 
@@ -175,10 +175,8 @@ class TestQualification(unittest.TestCase):
         self.assertTrue(result.passes)
 
     def test_one_missing_group_passes(self):
-        groups = [
-            qualify.LicenseGroup("1", ["실내건축공사업"]),
-            qualify.LicenseGroup("2", ["전기공사업"]),
-        ]
+        # 한 그룹 안 두 행 = 둘 다 필요 (그룹끼리는 "또는"이라 요건을 AND로 걸려면 행으로 둔다)
+        groups = [qualify.LicenseGroup("1", rows=[["실내건축공사업"], ["전기공사업"]])]
         result = qualify.evaluate(groups, self.held)
         self.assertEqual(result.missing_count, 1)
         self.assertTrue(result.passes, "1개까지는 통과 — 기존 규칙")
@@ -186,23 +184,25 @@ class TestQualification(unittest.TestCase):
     def test_satisfied_groups_tracked_separately_from_missing(self):
         """자격판정 팝업에서 파란 원(충족)도 빨간 원(미달)과 같은 형식으로
         보여주려면 어떤 그룹이 충족됐는지 알아야 한다."""
-        groups = [
-            qualify.LicenseGroup("1", ["실내건축공사업"]),  # 보유 — 충족
-            qualify.LicenseGroup("2", ["전기공사업"]),  # 미보유 — 미달
-        ]
+        groups = [qualify.LicenseGroup("1", rows=[["실내건축공사업"], ["전기공사업"]])]  # 보유 행 + 미보유 행
         result = qualify.evaluate(groups, self.held)
-        self.assertEqual([g.group_no for g in result.satisfied_groups], ["1"])
-        self.assertEqual([g.group_no for g in result.missing_groups], ["2"])
+        self.assertEqual([g.allowed_names for g in result.satisfied_groups], [["실내건축공사업"]])
+        self.assertEqual([g.allowed_names for g in result.missing_groups], [["전기공사업"]])
 
-    def test_substring_matching_is_permissive(self):
-        """현행 동작 기록: '건축공사업'이 보유 업종 '실내건축공사업'에 부분일치로 걸린다.
+    def test_substring_name_does_not_satisfy(self):
+        """'실내건축공사업' 보유가 '건축공사업(0002)' 요건을 채우지 않는다.
 
-        기존 시스템과 같은 양방향 부분일치를 쓰기 때문이다. 변경 대상이 아니며,
-        이런 성질이 있다는 것만 테스트로 남겨 둔다.
+        예전엔 이름 양방향 부분일치라 충족으로 나왔다(2026-09-30 백령 체험관 증축공사에서 드러남).
+        코드 비교 + 이름 완전일치로 바꿈.
         """
         groups = qualify.group_license_rows(fixtures.substring_overmatch_rows())["R26SUBSTR"]
-        result = qualify.evaluate(groups, self.held)
-        self.assertEqual(result.missing_count, 0)
+        result = qualify.evaluate(groups, self.held, {"0006", "4990"})
+        self.assertEqual(result.missing_count, 1)
+
+    def test_code_match_satisfies_even_if_name_differs(self):
+        groups = [qualify.LicenseGroup("1", ["실내건축공사업(표기다름)/4990"])]
+        self.assertEqual(qualify.evaluate(groups, [], {"4990"}).missing_count, 0)
+        self.assertEqual(qualify.evaluate(groups, [], {"0006"}).missing_count, 1)
 
     def test_two_missing_groups_excluded(self):
         groups = qualify.group_license_rows(fixtures.license_rows())["R26TEST00009"]
@@ -550,12 +550,10 @@ class TestQualification(unittest.TestCase):
         self.assertEqual(result.summary, "자격 충족")
 
     def test_summary_lists_missing_license_names(self):
-        groups = [
-            qualify.LicenseGroup("1", ["실내건축공사업"]),
-            qualify.LicenseGroup("2", ["전기공사업", "정보통신공사업"]),
-        ]
+        # 행의 맨 앞이 대표 면허, 뒤는 대신 인정 업종 — 요약엔 대표 면허만 (대체 인정은 팝업에서)
+        groups = [qualify.LicenseGroup("1", rows=[["실내건축공사업"], ["전기공사업", "정보통신공사업"]])]
         result = qualify.evaluate(groups, self.held)
-        self.assertEqual(result.summary, "자격 미달(전기공사업/정보통신공사업)")
+        self.assertEqual(result.summary, "자격 미달(전기공사업)")
 
     def test_summary_dedupes_name_repeated_within_one_group_before_matching_other_groups(self):
         """실측 재현(Run #45, R26BK01731335): 첨부문서 한 항목 안에서 같은 코드가
@@ -587,6 +585,22 @@ class TestScreen(unittest.TestCase):
         result = self._screen(fixtures.notice("X", title="○○박물관 전시물 유지보수 용역"))
         self.assertFalse(result.matched)
         self.assertEqual(result.excluded_by, "제외키워드")
+
+    def test_conflict_goes_to_review_when_enabled(self):
+        """관심·제외 키워드 공존 → 웹앱(review_conflicts)에선 "검토필요"로 남긴다. 기본(CLI)은 예전처럼 제외."""
+        from dataclasses import replace
+
+        raw = fixtures.notice("X", title="체험관 전시연출 설계 및 제작설치 정비 용역")
+        on = screen.screen(notice_from_raw(raw, "용역"), replace(self.config, review_conflicts=True))
+        self.assertTrue(on.matched)
+        self.assertEqual((on.confidence, on.review_exclude, on.matched_keywords), ("검토필요", "정비", ["체험관"]))
+        self.assertEqual(self._screen(raw).excluded_by, "제외키워드")
+        only_exclude = fixtures.notice("Y", title="청사 정비 용역")
+        self.assertEqual(screen.screen(notice_from_raw(only_exclude, "용역"),
+                                       replace(self.config, review_conflicts=True)).excluded_by, "제외키워드")
+        cheap = fixtures.notice("Z", title="체험관 정비", presmptPrce="50000000")
+        self.assertEqual(screen.screen(notice_from_raw(cheap, "용역"),
+                                       replace(self.config, review_conflicts=True)).excluded_by, "최소예산", "예산 조건은 그대로")
 
     def test_budget_below_minimum_blocks(self):
         result = self._screen(fixtures.notice("X", title="○○과학관 전시", presmptPrce="50000000"))
@@ -863,3 +877,184 @@ class TestEndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestConjunctionIsNotAName(unittest.TestCase):
+    """'(업종코드 4442 또는 4444)'에서 '또는'이 4442의 이름으로 붙던 문제 (2026-09-30)."""
+
+    def test_or_codes_in_parens(self):
+        items = ["① 소프트웨어사업자(디지털콘텐츠개발서비스사업, 업종코드 1469)로 등록한 자",
+                 "② 산업디자인전문회사(업종코드 4442 또는 4444)로 등록한 자",
+                 "③ 직접생산확인증명서[세부품명 : 실물모형및전시물, 세부품명번호 10자리 : 6010989901]를 소지한 자"]
+        ok = qualify.evaluate_attachment_text(items, {"1469", "4444", "6010989901"}, {})
+        self.assertEqual(ok.summary, "자격 충족", "②는 4442·4444 중 하나면 된다")
+        miss = qualify.evaluate_attachment_text(items, {"1469", "4442"}, {})
+        self.assertIn("6010989901", miss.summary, "①②③은 모두 갖춰야 한다")
+        names = [n for g in ok.satisfied_groups + miss.satisfied_groups for n in g.allowed_names]
+        self.assertFalse(any(n.startswith("또는") for n in names), names)
+
+
+class TestNoMatchExplain(unittest.TestCase):
+    """미매칭으로 빠진 공고에 '무엇을 무엇과 비교해 안 맞았는지'를 남긴다 (2026-09-30 요청)."""
+
+    def test_explain_lines(self):
+        cfg = screen.ScreenConfig(keywords=["박물관", "전시관"], product_codes=[{"code": "6010989901", "name": "실물모형"}],
+                                  industry_codes=[{"code": "4990", "name": "실내건축공사업"}])
+        n = notice_from_raw(fixtures.notice("R26X1", title="재해문자전광판 설치 사업", prdctClsfcNo="5512190301",
+                                            prdctClsfcNoNm="안내전광판"), "물품")
+        r = screen.screen(n, cfg)
+        self.assertEqual(r.excluded_by, "미매칭")
+        text = "\n".join(r.match_explain)
+        self.assertIn("「재해문자전광판 설치 사업」", text)
+        self.assertIn("관심 키워드 2개(박물관, 전시관)", text)
+        self.assertIn("5512190301", text)
+
+    def test_industry_only_match_is_explained(self):
+        cfg = screen.ScreenConfig(keywords=["박물관"], industry_codes=[{"code": "4990", "name": "실내건축공사업"}])
+        n = notice_from_raw(fixtures.notice("R26X2", title="청사 리모델링", bidprcPsblIndstrytyNm="실내건축공사업"), "공사")
+        r = screen.screen(n, cfg)
+        self.assertTrue(any("업종만 맞는 공고는 후보로 보지 않음" in l for l in r.match_explain), r.match_explain)
+
+
+class TestCodeLabelsNotBleeding(unittest.TestCase):
+    """2026-09-30 제보: 미보유 세부품명번호가 '4511189301), 교육용로봇(6010621401)'처럼 앞 항목 꼬리가 붙어 표시."""
+
+    def labels(self, text):
+        return [r[3] for r in qualify._locate_code_requirements(text)[1]]
+
+    def test_consecutive_name_code_pairs(self):
+        for text in ["직접생산확인증명서[영상정보디스플레이장치(4511189301), 교육용로봇(6010621401)]를 모두 소지한 자",
+                     "직접생산확인증명서(영상정보디스플레이장치(4511189301), 교육용로봇(6010621401))를 소지한 자",
+                     "직접생산확인증명서 : 영상정보디스플레이장치(세부품명번호 4511189301), 교육용로봇(6010621401) 모두 소지"]:
+            with self.subTest(text=text):
+                self.assertEqual(self.labels(text), ["영상정보디스플레이장치(4511189301)", "교육용로봇(6010621401)"])
+
+    def test_item_name_written_before_code(self):
+        self.assertEqual(self.labels("직접생산확인증명서 [세부품명: 실물모형및전시물, 세부품명번호 10자리(6010989901)"),
+                         ["실물모형및전시물(6010989901)"])
+
+
+class TestOverlappingLicenseGroups(unittest.TestCase):
+    """2026-09-30 실측: 공고문 '건축(또는 토목건축)공사업'인데 면허제한 API는 두 그룹으로 나눠 줌."""
+
+    ROWS = [
+        {"bidNtceNo": "R26BK09", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "건축공사업/0002",
+         "permsnIndstrytyList": "[건축공사업/0002][토목건축공사업]"},
+        {"bidNtceNo": "R26BK09", "lmtGrpNo": "2", "lmtSno": "1", "lcnsLmtNm": "토목건축공사업/0003",
+         "permsnIndstrytyList": "[토목건축공사업/0003]"},
+    ]
+
+    def test_merged_into_one_or_requirement(self):
+        groups = qualify.group_license_rows(self.ROWS)["R26BK09"]
+        none = qualify.evaluate(groups, ["실내건축공사업"], {"0006"})
+        self.assertEqual(none.missing_count, 1, "요건 1건")
+        self.assertEqual(len(none.missing_groups[0].allowed_names), 2, "건축 또는 토목건축")
+        self.assertEqual(qualify.evaluate(groups, ["건축공사업"]).missing_count, 0, "건축공사업만 있어도 충족")
+        self.assertEqual(qualify.evaluate(groups, ["토목건축공사업"]).missing_count, 0)
+
+    def test_rows_in_one_group_are_all_required(self):
+        groups = qualify.group_license_rows(fixtures.license_rows())["R26TEST00009"]
+        self.assertEqual(qualify.evaluate(groups, []).missing_count, 2)
+
+    def test_separate_groups_are_alternatives(self):
+        """나라장터 "[출판사(1517)] 업종 또는 [인쇄사(1518)] 업종" — API는 그룹 두 개로 준다
+        (2026-09-30 국립세종도서관 정책도서 발행 공고). 출판사만 있어도 충족이어야 한다."""
+        rows = [
+            {"bidNtceNo": "R26BK10", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "출판사/1517", "permsnIndstrytyList": "[출판사/1517]"},
+            {"bidNtceNo": "R26BK10", "lmtGrpNo": "2", "lmtSno": "1", "lcnsLmtNm": "인쇄사/1518", "permsnIndstrytyList": "[인쇄사/1518]"},
+        ]
+        groups = qualify.group_license_rows(rows)["R26BK10"]
+        held = qualify.evaluate(groups, ["출판사"], {"1517"})
+        self.assertEqual(held.missing_count, 0)
+        self.assertEqual(held.satisfied_groups[0].allowed_names, ["출판사/1517", "인쇄사/1518"])
+        none = qualify.evaluate(groups, [], set())
+        self.assertEqual(none.missing_count, 1, "택1 요건 1건")
+
+    def test_common_row_is_required_and_rest_is_choice(self):
+        """그룹1 [4442, 1469] 또는 그룹2 [4444, 1469] → 공고문처럼 "1469 반드시" + "4442·4444 중 1개 이상"."""
+        rows = [
+            {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "산업디자인전문회사(환경디자인분야)/4442"},
+            {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "2", "lcnsLmtNm": "소프트웨어사업자(디지털콘텐츠개발서비스사업)/1469"},
+            {"bidNtceNo": "N", "lmtGrpNo": "2", "lmtSno": "1", "lcnsLmtNm": "산업디자인전문회사(종합디자인분야)/4444"},
+            {"bidNtceNo": "N", "lmtGrpNo": "2", "lmtSno": "2", "lcnsLmtNm": "소프트웨어사업자(디지털콘텐츠개발서비스사업)/1469"},
+        ]
+        groups = qualify.group_license_rows(rows)["N"]
+        reqs = qualify.license_requirements(groups)
+        self.assertEqual([r.allowed_names for r in reqs], [
+            ["소프트웨어사업자(디지털콘텐츠개발서비스사업)/1469"],
+            ["산업디자인전문회사(환경디자인분야)/4442", "산업디자인전문회사(종합디자인분야)/4444"],
+        ])
+        self.assertEqual(qualify.evaluate(groups, [], {"4444", "1469"}).missing_count, 0)
+        missing = qualify.evaluate(groups, [], {"4442"}).missing_groups
+        self.assertEqual([g.allowed_names for g in missing], [["소프트웨어사업자(디지털콘텐츠개발서비스사업)/1469"]])
+
+    def test_waste_notice_required_plus_one_of_six(self):
+        """폐기물 공고 공고문: "① 수집·운반업(1227) 반드시 + ②~⑦ 중 1개 이상". 나라장터는 6조합으로 준다."""
+        pairs = ["6786", "1143", "6770", "1257", "6778", "1388"]
+        rows = []
+        for g, code in enumerate(pairs, 1):
+            rows.append({"bidNtceNo": "W", "lmtGrpNo": str(g), "lmtSno": "1", "lcnsLmtNm": "폐기물수집·운반업/1227",
+                         "permsnIndstrytyList": "[폐기물수집·운반업/1227][폐기물종합처분업]"})
+            rows.append({"bidNtceNo": "W", "lmtGrpNo": str(g), "lmtSno": "2", "lcnsLmtNm": f"처분재활용{code}/{code}"})
+        groups = qualify.group_license_rows(rows)["W"]
+        reqs = qualify.license_requirements(groups)
+        self.assertEqual(len(reqs), 2)
+        self.assertEqual(reqs[0].rows, [["폐기물수집·운반업/1227", "폐기물종합처분업"]], "필수 + 대체 인정")
+        self.assertEqual(len(reqs[1].allowed_names), 6)
+        self.assertEqual(qualify.evaluate(groups, [], {"1227", "6770"}).missing_count, 0)
+        self.assertEqual(qualify.evaluate(groups, [], {"6770"}).missing_count, 1)
+
+    def test_amended_notice_rows_are_not_repeated(self):
+        """정정공고 차수 3개(000·001·002)가 같은 행을 또 보내도 겹치지 않고 마지막 차수만 쓴다
+        (2026-09-30 제보: 토목공사업 ×3, 상·하수도/지반조성 번갈아 ×3)."""
+        rows = []
+        for ord_ in ("000", "001", "002"):
+            rows += [
+                {"bidNtceNo": "R", "bidNtceOrd": ord_, "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "토목공사업/0001"},
+                {"bidNtceNo": "R", "bidNtceOrd": ord_, "lmtGrpNo": "2", "lmtSno": "1", "lcnsLmtNm": "상·하수도설비공사업/4996"},
+                {"bidNtceNo": "R", "bidNtceOrd": ord_, "lmtGrpNo": "2", "lmtSno": "2", "lcnsLmtNm": "지반조성·포장공사업/4989"},
+            ]
+        groups = qualify.group_license_rows(rows)["R"]
+        self.assertEqual([g.rows for g in groups], [
+            [["토목공사업/0001"]],
+            [["상·하수도설비공사업/4996"], ["지반조성·포장공사업/4989"]],
+        ])
+        reqs = qualify.license_requirements(groups)
+        self.assertEqual([len(c) for c in reqs[0].combos], [1, 2], "① 토목공사업 또는 ② 상·하수도 + 지반조성")
+
+    def test_rows_with_same_license_merge_into_one_requirement(self):
+        """같은 차수 안에서 대표 면허가 같은 행이 허용업종만 달리해 여러 번 와도 한 요건으로 합친다."""
+        rows = [
+            {"bidNtceNo": "R", "bidNtceOrd": "000", "lmtGrpNo": "1", "lmtSno": str(i), "lcnsLmtNm": "토목공사업/0001",
+             "permsnIndstrytyList": alt}
+            for i, alt in enumerate(["[토목공사업/0001]", "[토목건축공사업/0003]", "[토목공사업/0001]"], 1)
+        ]
+        for i in range(6):
+            name = "상·하수도설비공사업/4996" if i % 2 == 0 else "지반조성·포장공사업/4989"
+            rows.append({"bidNtceNo": "R", "bidNtceOrd": "000", "lmtGrpNo": "2", "lmtSno": str(i + 1), "lcnsLmtNm": name})
+        groups = qualify.group_license_rows(rows)["R"]
+        self.assertEqual(groups[0].rows, [["토목공사업/0001", "토목건축공사업"]])  # 허용업종 목록은 코드를 떼어 둔다
+        self.assertEqual(groups[1].rows, [["상·하수도설비공사업/4996"], ["지반조성·포장공사업/4989"]])
+        from webapp import qualview
+        q = qualify.evaluate(groups, [])
+        self.assertEqual(qualview.build(q, (set(), set()), {"industry": True})[0]["need"], 1, "토목공사업 하나면 됨")
+
+    def test_latest_amendment_wins(self):
+        rows = [
+            {"bidNtceNo": "R", "bidNtceOrd": "000", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "조경공사업/0005"},
+            {"bidNtceNo": "R", "bidNtceOrd": "001", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "실내건축공사업/4990"},
+        ]
+        self.assertEqual(qualify.group_license_rows(rows)["R"][0].allowed_names, ["실내건축공사업/4990"])
+
+    def test_combo_needs_every_license_of_one_set(self):
+        """"A와 B" 또는 "C와 D" — 한 조합을 다 갖춰야 충족. A·C처럼 조합을 섞으면 미달."""
+        rows = [
+            {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "A/0001"},
+            {"bidNtceNo": "N", "lmtGrpNo": "1", "lmtSno": "2", "lcnsLmtNm": "B/0002"},
+            {"bidNtceNo": "N", "lmtGrpNo": "2", "lmtSno": "1", "lcnsLmtNm": "C/0003"},
+            {"bidNtceNo": "N", "lmtGrpNo": "2", "lmtSno": "2", "lcnsLmtNm": "D/0004"},
+        ]
+        groups = qualify.group_license_rows(rows)["N"]
+        self.assertEqual(qualify.evaluate(groups, [], {"0003", "0004"}).missing_count, 0)
+        self.assertEqual(qualify.evaluate(groups, [], {"0001", "0003"}).missing_count, 1)
+        self.assertEqual(qualify.evaluate(groups, [], set()).summary, "자격 미달(A(0001) + B(0002)/C(0003) + D(0004))")

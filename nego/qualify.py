@@ -1,12 +1,17 @@
 """자격조건(면허·업종 제한) 판정.
 
-**판정 규칙은 기존 시스템(`matching/qualificationFilter.ts`)과 동일하게 유지한다.**
-회사가 정한 사업 판단이므로 임의로 바꾸지 않는다.
+판정 틀은 기존 시스템(`matching/qualificationFilter.ts`)을 따른다. 단, 업종 이름 비교는
+기존 코드의 양방향 부분일치 대신 **코드 비교 + 이름 완전일치**로 바꿨다(2026-09-30 사용자 결정 —
+기존 코드에 부분일치를 쓰라는 규칙 설명이 없었고, "실내건축공사업"이 "건축공사업"을 충족하는 오판을 냈다).
 
-  - 제한그룹(`lmtGrpNo`) 하나가 자격조건 하나의 단위
-  - 그룹 안에 여러 업종이 나열되면 그중 하나만 보유해도 그 그룹은 충족(OR)
-  - 충족하지 못한 그룹이 2개 이상이면 제외 (1개까지는 통과)
-  - 조회 실패 / 정보 없음이면 걸러내지 않고 통과 (fail-open)
+  면허제한정보 API의 구조 (2026-09-30 실측 두 건으로 바로잡음 — 예전엔 그룹끼리 "모두 필요"로 봤다):
+  - 제한그룹(`lmtGrpNo`)끼리는 **"또는"** — 그룹 하나만 다 채우면 참가 가능.
+    나라장터 화면 "[출판사(1517)] 업종 또는 [인쇄사(1518)] 업종을 등록한 업체"가 API에선 그룹1 출판사,
+    그룹2 인쇄사로 온다(국립세종도서관 정책도서 발행). 백령 체험관 "건축(또는 토목건축)공사업"도 같은 모양.
+  - 한 그룹 안의 행(`lmtSno`)끼리는 **"모두 필요"**, 행 하나의 허용업종목록(`permsnIndstrytyList`)은
+    그 행을 대신할 수 있는 업종("또는")이다.
+  - 화면·리포트는 "요건마다 이 중 하나"(AND of OR) 모양으로 보여주므로 `license_requirements`가
+    그룹들을 그 모양으로 펼친다. 조회 실패 / 정보 없음이면 걸러내지 않고 통과 (fail-open).
 
 공동수급·지역은 **판정에 개입하지 않고 정보로만** 수집한다.
 
@@ -33,6 +38,12 @@ MAX_ALLOWED_MISSING_QUALIFICATIONS = 1
 class LicenseGroup:
     group_no: str
     allowed_names: list[str] = field(default_factory=list)
+    # 면허제한 API 그룹일 때만: 행(lmtSno)별 허용 이름 목록. 행끼리는 모두 필요, 행 안은 "또는".
+    # 비어 있으면 allowed_names 전체가 한 행("이 중 하나")이다.
+    rows: list[list[str]] = field(default_factory=list)
+    # "조합 중 하나" 요건일 때만: 조합(=API 제한그룹) 목록. 조합 하나 = 행 목록(모두 필요), 행 = 대신 인정되는
+    # 이름 목록("또는"). 나라장터 "[A]과 [B] 업종 또는 [C]과 [D] 업종"을 원문처럼 조합으로 보여주려고 둔다.
+    combos: list[list[list[str]]] = field(default_factory=list)
 
 
 @dataclass
@@ -71,8 +82,17 @@ class QualificationResult:
         # 제거한 뒤 이어야, 같은 요건이면 다른 그룹이라도 "A"로 합쳐진다.
         # 같은 자격이 여러 그룹에서 각각 미충족으로 걸리는 경우(예: 첨부문서
         # 항목 여러 개가 같은 코드를 요구)도 이 순서로 함께 걸러진다.
-        names = ("/".join(dict.fromkeys(g.allowed_names)) for g in self.missing_groups)
-        missing_names = ", ".join(dict.fromkeys(names))
+        # "반드시" 요건(rows 한 줄)은 대표 면허만 — 나라장터가 대신 인정하는 업종까지 늘어놓으면 요약이 읽히지 않는다
+        names = (
+            g.rows[0][0] if len(g.rows) == 1 and g.rows[0] else "/".join(dict.fromkeys(g.allowed_names))
+            for g in self.missing_groups
+        )
+        # 같은 코드인데 표기만 다른 요건("G2B분류번호 교육훈련장비(6010999901)"·"육훈련장비(6010999901)")은 한 번만
+        by_code: dict[str, str] = {}
+        for name in names:
+            code = re.search(r"\((\d{4,10})\)$", name)
+            by_code.setdefault(code.group(1) if code else name, name)
+        missing_names = ", ".join(by_code.values())
         return f"자격 미달({missing_names})"
 
 
@@ -83,14 +103,9 @@ def split_industry_list(text: str) -> list[str]:
     대괄호 단위로 나눈 뒤 마지막 '/' 뒤의 코드를 떼어 업종명만 남긴다.
     대괄호가 없으면 콤마·슬래시로 나눈다.
 
-    **코드를 여기서 버리는 건 의도한 것이다 — 건드리지 말 것.** 리포트에
-    "이름(코드)"로 통일해서 보여주고 싶다는 요청이 있었지만, 그 코드를
-    이름에 그대로 붙이면 `_is_group_satisfied`의 양방향 부분일치가 깨진다
-    (실측: held="실내건축공사업" 은 allowed="건축공사업"의 상위 문자열이라
-    지금은 매칭되는데, allowed가 "건축공사업(0002)"가 되는 순간 어느
-    방향으로도 부분일치가 안 돼 매칭이 깨짐 — `test_substring_matching_is_permissive`
-    로 이미 한 번 이 버그를 실측으로 잡았다). 표시용 "이름(코드)" 변환은
-    `report.py`에서 이 리스트를 다치지 않고 별도로 한다.
+    허용업종 목록의 코드는 여기서 버린다(이름 완전일치용). 코드 비교는 같은 그룹의
+    lcnsLmtNm("건축공사업/0002")에 남은 코드로 한다. 표시용 "이름(코드)" 변환은
+    `report.py`에서 별도로 한다.
     """
     bracketed = re.findall(r"\[([^\]]+)\]", text)
     if bracketed:
@@ -112,13 +127,17 @@ def group_license_rows(raw_items: list[RawItem]) -> dict[str, list[LicenseGroup]
     페이지 단위로 내려준다. 그래서 공고별로 호출하지 않고 **기간 전체를 1회 받아
     여기서 공고번호별로 묶는다.** 공고 수가 늘어도 API 호출 횟수가 늘지 않는다.
     """
-    by_notice: dict[str, dict[str, list[str]]] = {}
+    # 공고번호 → 차수 → 그룹 → 행. 정정공고로 차수가 여럿이면 조회기간 안에 차수마다 같은 행이 또 온다 —
+    # 전부 한 공고로 합치면 같은 면허가 차수 수만큼 겹쳐 나온다(2026-09-30 제보: 토목공사업이 3번,
+    # 상·하수도/지반조성이 번갈아 3번). **가장 마지막 차수만** 쓴다(정정 내용이 최신이다).
+    by_notice: dict[str, dict[str, dict[str, list[list[str]]]]] = {}
 
     for item in raw_items:
         notice_no = F.pick_by(item, F.LICENSE_LIMIT_FIELDS, "notice_no")
         group_no = F.pick_by(item, F.LICENSE_LIMIT_FIELDS, "group_no")
         if not notice_no or not group_no:
             continue
+        notice_ord = F.pick_by(item, F.LICENSE_LIMIT_FIELDS, "notice_ord") or ""
 
         names: list[str] = []
         license_name = F.pick_by(item, F.LICENSE_LIMIT_FIELDS, "license_name")
@@ -135,29 +154,135 @@ def group_license_rows(raw_items: list[RawItem]) -> dict[str, list[LicenseGroup]
         if not names:
             continue
 
-        groups = by_notice.setdefault(notice_no, {})
-        groups.setdefault(group_no, []).extend(names)
+        rows = by_notice.setdefault(notice_no, {}).setdefault(notice_ord, {}).setdefault(group_no, [])
+        row = _dedupe_names(names)
+        if not row:
+            continue
+        # 같은 그룹에서 대표 면허(lcnsLmtNm)가 같은 행은 **한 요건**이다 — 허용업종만 다른 행이 여러 개 오거나
+        # 똑같은 행이 되풀이돼도(2026-09-30 제보: 토목공사업 ×3, 상·하수도/지반조성 번갈아 ×3) 대표 면허 하나로
+        # 합치고 허용업종은 "또는"으로 모은다. 행끼리는 "모두 필요"라 같은 면허를 두 번 세면 안 된다.
+        same = next((r for r in rows if _license_base(r[0]) == _license_base(row[0])), None)
+        if same is None:
+            rows.append(row)
+        else:
+            same[:] = _dedupe_names(same + row)
 
-    return {
-        notice_no: [LicenseGroup(group_no=g, allowed_names=names) for g, names in groups.items()]
-        for notice_no, groups in by_notice.items()
-    }
+    out: dict[str, list[LicenseGroup]] = {}
+    for notice_no, by_ord in by_notice.items():
+        groups = by_ord[max(by_ord, key=lambda o: (len(o), o))]  # "000" < "001" < … (자릿수 같음)
+        out[notice_no] = [
+            LicenseGroup(group_no=g, allowed_names=_dedupe_names([n for row in rows for n in row]), rows=rows)
+            for g, rows in groups.items()
+        ]
+    return out
 
 
-def _is_group_satisfied(group: LicenseGroup, held_names: list[str]) -> bool:
-    """기존 시스템과 동일한 양방향 부분일치."""
+def _is_group_satisfied(group: LicenseGroup, held_names: list[str], held_codes: set[str] | frozenset[str] = frozenset()) -> bool:
+    """그룹 안 허용업종 중 하나라도 보유하면 충족(OR).
+
+    - 허용업종에 코드가 붙어 있으면("건축공사업/0002", "건축공사업(0002)") 보유 코드와 비교한다.
+    - 그리고 코드를 뗀 이름이 보유 업종 이름과 **완전히 같으면**(공백 무시) 충족이다.
+      부분일치는 쓰지 않는다 — "실내건축공사업"은 "건축공사업"이 아니다.
+
+    예전엔 이름 양방향 부분일치였다 — 옮겨 온 기존 코드(`qualificationFilter.ts`)가 그렇게 짜여 있었을 뿐
+    규칙으로 정해진 근거는 없었다. 그 탓에 보유 "실내건축공사업(0006)"이 "건축공사업(0002)"을 충족한
+    것으로 나왔다(2026-09-30, 옹진군 백령 체험관 증축공사). 사용자 결정으로 코드 비교로 바꿈.
+    """
+    if group.combos:
+        return any(
+            all(_is_group_satisfied(LicenseGroup("", row), held_names, held_codes) for row in combo)
+            for combo in group.combos
+        )
+    held_bases = {_license_base(h) for h in held_names}
     for allowed in group.allowed_names:
-        for held in held_names:
-            if allowed in held or held in allowed:
-                return True
+        code = _license_code(allowed)
+        if (code and code in held_codes) or _license_base(allowed) in held_bases:
+            return True
     return False
 
 
-def evaluate(groups: list[LicenseGroup], held_names: list[str]) -> QualificationResult:
+_LICENSE_CODE_RE = re.compile(r"(?:/\s*|\()(\d{4,10})\)?\s*$")
+
+
+def _license_code(name: str) -> str | None:
+    """'토목건축공사업/0003', '토목건축공사업(0003)' → '0003'. 코드가 없으면 None."""
+    m = _LICENSE_CODE_RE.search(name)
+    return m.group(1) if m else None
+
+
+def _license_base(name: str) -> str:
+    """'토목건축공사업/0003', '토목건축공사업(0003)', '토목건축공사업' → '토목건축공사업' (비교용)."""
+    name = re.sub(r"\s*/\s*\d{4,10}\s*$", "", name)
+    name = re.sub(r"\(\d{4,10}\)\s*$", "", name)
+    return re.sub(r"\s+", "", name)
+
+
+def _dedupe_names(names: list[str]) -> list[str]:
+    """같은 면허가 "토목건축공사업"·"토목건축공사업/0003"처럼 두 번 들어오면 코드 있는 쪽 하나만 남긴다."""
+    out: dict[str, str] = {}
+    for n in names:
+        base = _license_base(n)
+        if not base:
+            continue
+        if base not in out or (_license_code(n) and not _license_code(out[base])):
+            out[base] = n
+    return list(out.values())
+
+
+def _row_label(row: list[str]) -> str:
+    """행의 대표 이름(lcnsLmtNm, 맨 앞)을 "이름(코드)"로."""
+    name = row[0]
+    code = _license_code(name)
+    return f"{_license_base(name)}({code})" if code else _license_base(name)
+
+
+def license_requirements(
+    groups: list[LicenseGroup], held_names: list[str] = (), held_codes: set[str] | frozenset[str] = frozenset()
+) -> list[LicenseGroup]:
+    """면허제한 그룹들("그룹 A 또는 그룹 B", 그룹 안 행은 모두 필요)을 화면·판정용 요건 목록으로 바꾼다.
+    요건끼리는 모두 필요하다. 공고문이 쓰는 모양("① 반드시 + ②~⑦ 중 1개 이상")에 맞춘다.
+
+    - 그룹이 하나 → 그 그룹의 행이 각각 "반드시" 요건
+    - 모든 그룹에 똑같이 든 행(대표 면허 기준) → "반드시" 요건 (폐기물 공고의 수집·운반업 1227)
+    - 나머지가 그룹마다 한 행씩 → 그 행들을 합친 "이 중 하나" 요건 1건 (출판사 또는 인쇄사 / ②~⑦ 중 1개)
+    - 나머지가 그보다 복잡하면 → "아래 조합 중 하나" 요건 1건 (`combos`, "A와 B" 또는 "C와 D")
+    "반드시" 요건은 `rows=[행]`을 달아 둔다 — 행의 맨 앞이 대표 면허, 나머지는 나라장터가 대신 인정하는 업종.
+    """
+    grouped = [[_dedupe_names(r) for r in (g.rows or [g.allowed_names]) if _dedupe_names(r)] for g in groups]
+    grouped = [rows for rows in grouped if rows]
+    if not grouped:
+        return []
+
+    def key(row: list[str]) -> str:
+        return _license_base(row[0])
+
+    def must(no: str, row: list[str]) -> LicenseGroup:
+        return LicenseGroup(group_no=no, allowed_names=list(row), rows=[list(row)])
+
+    if len(grouped) == 1:
+        return [must(f"필수{i + 1}", r) for i, r in enumerate(grouped[0])]
+
+    common_keys = set.intersection(*({key(r) for r in rows} for rows in grouped))
+    out = [must(f"필수{i + 1}", r) for i, r in enumerate(r for r in grouped[0] if key(r) in common_keys)]
+    residuals = [[r for r in rows if key(r) not in common_keys] for rows in grouped]
+    if any(not res for res in residuals):  # 공통 면허만으로 채워지는 그룹이 있으면 나머지는 선택 사항
+        return out
+    if all(len(res) == 1 for res in residuals):
+        out.append(LicenseGroup(group_no="택1", allowed_names=_dedupe_names([n for res in residuals for n in res[0]])))
+        return out
+    labels = [" + ".join(_row_label(r) for r in res) for res in residuals]
+    out.append(LicenseGroup(group_no="조합", allowed_names=list(dict.fromkeys(labels)), combos=residuals))
+    return out
+
+
+def evaluate(
+    groups: list[LicenseGroup], held_names: list[str], held_codes: set[str] | frozenset[str] = frozenset()
+) -> QualificationResult:
     if not groups:
         return QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False)
+    groups = license_requirements(groups, held_names, held_codes)
 
-    missing = [g for g in groups if not _is_group_satisfied(g, held_names)]
+    missing = [g for g in groups if not _is_group_satisfied(g, held_names, held_codes)]
     satisfied = [g for g in groups if g not in missing]
     return QualificationResult(
         total_groups=len(groups),
@@ -204,6 +329,7 @@ _INNER_PREFIXED_GROUP_RE = re.compile(
     r"[(\[]\s*(?:업종코드|세부품명번호)\s*(?:[0-9]+\s*자리\s*,?\s*)?([^()\[\]]*)[)\]]"
 )
 _GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{4,10}")
+_INNER_ITEM_NAME_RE = re.compile(r"(?:세부)?품명\s*[:：]\s*([^,，;()\[\]]+?)\s*(?:[,，;]|$)")
 _BARE_GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{10}")
 _GROUP_ENTRY_STRIP_CHARS = " ,·/;、"
 # "다음 중 어느 하나"는 항목 전체를 OR로 만든다.
@@ -221,13 +347,16 @@ _COMMA_LINK_RE = re.compile(r"[ \t\u3000]*[)\]]?[ \t\u3000]*,")
 # 같은 줄에 요건이 둘 이상 나열되면(PDF 등) 뒷 요건의 이름표 앞에 앞 요건의
 # 괄호와 접속어가 딸려온다 — 닫는 괄호 이후만 남기고 앞머리 접속어를 뗀다.
 _LEADING_CONJUNCTION_RE = re.compile(r"^(?:또는|혹은|및|그리고)\s+")
+_CONJUNCTION_ONLY_RE = re.compile(r"\s*(?:또는|혹은|및|그리고|등|/)?\s*")
 # 이름표에서 떼어낼 절차성 어구. 법령 인용("~에 따른/따라/의하여")과, 실측으로
 # 확인된 마감 안내 어구("~까지")를 둘 다 다룬다 — 실측(사용자 제보,
 # 2026-09-17): "...규정」에 의하여 국가종합전자조달시스템G2B(나라장터)에
 # 입찰참가자격등록 마감일시까지 조합놀이대(세부품명번호...)"에서 "마감일시까지"
 # 뒤가 실제 품목명이었다. "에 따라"는 "규정에 따라"로 좁혀 놓으면 다른 인용구
 # ("「…법」 제9조에 따라" 등)를 놓친다 — 앞 단어를 가리지 않고 일반화한다.
-_LABEL_CONNECTOR_RE = re.compile(r"(?:에\s*따른|에\s*따라|에\s*의하여|까지)\s*")
+_LABEL_CONNECTOR_RE = re.compile(
+    r"(?:에\s*따른|에\s*따라|에\s*의하여|에\s*의한|의한|에\s*의거|에\s*해당하는|까지|포함한|등록한\s*자\s*또는)\s*"
+)
 _MAX_LABEL_LEN = 20
 # "충족된 자격" 팝업에 보여줄 목록을 만들 때 쓴다 — 실측: "[업종코드 4440, 4442,
 # 4444]로 등록되어 있는 업체"처럼 키워드가 괄호 **안쪽 맨 앞**에 오고 코드 여러
@@ -248,13 +377,41 @@ _STANDALONE_CODE_RE = re.compile(r"(?<!\d)(?:\d{10}|\d{4})(?!\d)")
 _ITEM_MARKER_RE = re.compile(r"^\s*(?:[가-하]\s*[.)]|[0-9]+\s*[.)]|\([가-하0-9]+\)|[①-⑳])\s*")
 
 
+def _last_name_chunk(text: str) -> str:
+    """코드 괄호 바로 앞의 이름 조각. 앞 항목("…(코드1), ")은 버리되, 이름 자체가 괄호로
+    끝나면("산업디자인전문회사(환경 디자인분야)[업종코드 4442]") 그 괄호까지 이름으로 남긴다."""
+    stripped = text.rstrip()
+    if stripped.endswith(")"):
+        depth = 0
+        for i in range(len(stripped) - 1, -1, -1):
+            ch = stripped[i]
+            if ch == ")":
+                depth += 1
+            elif ch == "(":
+                depth -= 1
+                if depth == 0:
+                    head = re.split(r"[)\]]", stripped[:i])[-1]
+                    inner = re.sub(r"\s+", "", stripped[i + 1 : -1])
+                    if head.strip() and not re.fullmatch(r"[0-9]{4,10}", inner):
+                        return f"{head}({inner})"
+                    break
+    return re.split(r"[)\]]", text)[-1]
+
+
 def _truncate_label(name: str) -> str:
     name = _ITEM_MARKER_RE.sub("", name)
-    if len(name) > _MAX_LABEL_LEN:
-        name = name[-_MAX_LABEL_LEN:]
+    # "산업디자인전문회사(환경디자인을포함한종합디자인분야)"처럼 괄호 분야명이 붙은 이름은 길다 —
+    # 20자로 자르면 "회사(…)"만 남아서, 괄호로 끝나는 이름은 괄호 앞 단어까지 살리도록 넉넉히 둔다.
+    limit = _MAX_LABEL_LEN
+    paren = re.search(r"\(([^()]*)\)$", name)
+    if paren:
+        limit = _MAX_LABEL_LEN + len(paren.group(0))
+    if len(name) > limit:
+        name = name[-limit:]
         if " " in name:  # 잘린 앞 단어 조각을 버리고 온전한 단어부터 남긴다
             name = name.split(" ", 1)[1]
-    return name
+    # 잘라낸 자리에 남은 문장부호("직접생산확인증명서 : 영상…" → ": 영상…")
+    return re.sub(r"^[\s,;，:：·\-\[]+", "", name)
 
 
 def _split_group_entries(content: str, code_re: re.Pattern) -> list[tuple[int, str, str]]:
@@ -267,6 +424,10 @@ def _split_group_entries(content: str, code_re: re.Pattern) -> list[tuple[int, s
     for i, match in enumerate(matches):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
         name = content[match.end() : end].strip(_GROUP_ENTRY_STRIP_CHARS)
+        # "(업종코드 4442 또는 4444)"처럼 코드 사이에 접속사만 있으면 그건 이름이 아니다 —
+        # 예전엔 "또는(4442)"로 표시됐다. 비워 두면 이름 사전·등록증에서 찾아 채운다.
+        if _CONJUNCTION_ONLY_RE.fullmatch(name):
+            name = ""
         pairs.append((match.start(), match.group(0), name))
     return pairs
 
@@ -360,7 +521,13 @@ def _locate_code_requirements(item: str) -> tuple[str, list[tuple[int, int, str,
             if any(_spans_overlap(group_match.span(), span) for span in consumed):
                 continue
             consumed.append(group_match.span())
-            for pos, code, name in _split_group_entries(group_match.group(1), _GROUP_ENTRY_CODE_RE):
+            entries = _split_group_entries(group_match.group(1), _GROUP_ENTRY_CODE_RE)
+            # "[세부품명: 실물모형및전시물, 세부품명번호 10자리(6010989901)" — 코드 하나에 이름이 없으면
+            # 바로 앞에 따로 적힌 "품명: …"을 이름으로 쓴다(실측: 울산박물관 R26BK01748232).
+            lead = _INNER_ITEM_NAME_RE.search(line[max(0, group_match.start() - 60) : group_match.start()])
+            for pos, code, name in entries:
+                if not name and lead and len(entries) == 1:
+                    name = lead.group(1).strip()
                 name = _truncate_label(name)
                 start = base + group_match.start(1) + pos
                 results.append((start, start + len(code), code, f"{name}({code})" if name else code))
@@ -372,18 +539,30 @@ def _locate_code_requirements(item: str) -> tuple[str, list[tuple[int, int, str,
             code_group = "code" if match.group("code") else "bare_code"
             code = match.group(code_group)
             prefix = line[: match.start()]
-            inside_paren = prefix.rsplit("(", 1)[1].strip(" ,") if "(" in prefix else ""
-            if inside_paren and len(inside_paren) <= _MAX_LABEL_LEN:
+            # 코드가 **아직 닫히지 않은** 괄호 안에 있을 때만 괄호 안쪽을 이름으로 본다.
+            # 예전엔 앞에 "("가 있기만 하면 안쪽으로 봐서, "영상정보디스플레이장치(4511189301),
+            # 교육용로봇(6010621401)"의 두 번째 코드 이름이 "4511189301), 교육용로봇"이 됐다(2026-09-30 제보).
+            last_open = max(prefix.rfind("("), prefix.rfind("["))
+            last_close = max(prefix.rfind(")"), prefix.rfind("]"))
+            is_inside = last_open > last_close
+            inside_paren = prefix[last_open + 1 :].strip(" ,") if is_inside else ""
+            # "[세부품명: 실물모형및전시물, 세부품명번호 10자리(6010989901)" — 괄호 안에 품명을 따로 적은 표기
+            named = _INNER_ITEM_NAME_RE.search(inside_paren) if inside_paren else None
+            if named:
+                name = _truncate_label(named.group(1).strip())
+            elif inside_paren and len(inside_paren) <= _MAX_LABEL_LEN:
                 name = inside_paren
             else:
-                before_paren = prefix.rsplit("(", 1)[0] if "(" in prefix else prefix
-                before_paren = re.split(r"[)\]]", before_paren)[-1]
+                before_paren = prefix[:last_open] if is_inside else prefix
+                before_paren = _last_name_chunk(before_paren)
                 # 실측: 인용부호로 감싼 품목명("조합놀이대")도 있어 대괄호/낫표류
                 # 인용 문장부호와 함께 일반 인용부호("'')도 선행 문자로 떼어낸다.
-                before_paren = re.sub(r"^[\s\-·「『\"'“‘]+", "", before_paren)
+                # 앞 항목과 이어 쓴 쉼표·세미콜론("…(코드1), 이름2(코드2)")도 뗀다.
+                before_paren = re.sub(r"^[\s\-·,;，:：「『\"'“‘]+", "", before_paren)
                 before_paren = _LEADING_CONJUNCTION_RE.sub("", before_paren)
                 segments = [s for s in _LABEL_CONNECTOR_RE.split(before_paren) if s.strip()]
                 name = (segments[-1] if segments else before_paren).strip()
+                name = re.sub(r"^[\s,;，:：]+", "", name)  # "직접생산확인증명서 : 영상…"의 콜론
                 name = name.strip("\"'“‘”’").strip()
                 name = _truncate_label(name)
             start = base + match.start(code_group)
@@ -506,9 +685,22 @@ def evaluate_attachment_text(
     missing: list[LicenseGroup] = []
     parsed_labels: dict[str, str] = {}
 
+    name_held: list[str] = []  # 이름으로 대조해 보유 확인된 요건 (충족 표시용)
     for idx, item in enumerate(items):
         or_groups = [[(code, _label(code, label)) for code, label in bundle] for bundle in _or_groups(item)]
         if not or_groups:
+            # 코드 없이 이름만 적힌 업종·직접생산 품목 — 보유 목록·코드 사전에 있는 이름으로만 판정한다
+            from .text_requirements import name_bundles
+
+            bundles = name_bundles(item, held_code_names, lookup)
+            if not bundles:
+                continue
+            group_no = f"이름{idx}"
+            groups.append(LicenseGroup(group_no=group_no, allowed_names=[r.label for b in bundles for r in b]))
+            missing_labels = [r.label for b in bundles if not any(r.held for r in b) for r in b]
+            if missing_labels:
+                missing.append(LicenseGroup(group_no=group_no, allowed_names=missing_labels))
+            name_held.extend(r.label for b in bundles for r in b if r.held)
             continue
 
         group_no = str(idx)
@@ -542,6 +734,7 @@ def evaluate_attachment_text(
         for code in found_codes
         if code in held_codes
     ]
+    satisfied_names += [n for n in dict.fromkeys(name_held) if n not in satisfied_names]
     satisfied_groups = [LicenseGroup(group_no="held", allowed_names=satisfied_names)] if satisfied_names else []
 
     return QualificationResult(

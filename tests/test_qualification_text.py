@@ -192,3 +192,90 @@ class TestRealFixtures(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSkipsTableOfContents(unittest.TestCase):
+    """실측(2026-09-29, 울산박물관 R26BK01748232): 목차의 "2. 입찰참가자격  2"를 절로 착각해
+    참가자격이 쪽 번호 한 줄만 잡혔다."""
+
+    def test_body_section_after_toc(self):
+        text = "\n".join([
+            "목차",
+            "  1. 사업 개요   1",
+            "  2. 입찰참가자격   2",
+            "  3. 제안서 작성 요령   5",
+            "1. 사업 개요",
+            "사업명: 울산박물관 상설전시실 무장애 관광 콘텐츠 개발",
+            "2. 입찰참가자격",
+            "① 소프트웨어사업자(디지털콘텐츠개발서비스사업, 업종코드 1469)로 등록한 자",
+            "② 산업디자인전문회사(업종코드 4442 또는 4444)로 등록한 자",
+            "③ 직접생산확인증명서[세부품명번호 10자리 : 6010989901]를 소지한 자",
+            "3. 제안서 작성 요령",
+        ])
+        sec = find_qualification_section(text)
+        self.assertIsNotNone(sec)
+        self.assertEqual(len(sec.items), 3)
+        self.assertIn("6010989901", sec.items[2])
+
+    def test_toc_only_document_still_returns_something(self):
+        sec = find_qualification_section("2. 입찰참가자격   2\n3. 기타   3")
+        self.assertIsNotNone(sec)
+
+
+class TestHeadingVariants(unittest.TestCase):
+    """실측(과거 제안요청서 206건): "2. 입찰참가자격" 말고도 여러 제목 형태가 있다."""
+
+    BODY = "\n가. 「지방자치단체를 당사자로 하는 계약에 관한 법률 시행령」 제13조에 의한 자격을 갖춘 자\n나. 실내건축공사업(4990) 등록업체\n"
+
+    def _heading(self, heading, after="3. 제안서 작성 요령"):
+        sec = find_qualification_section(heading + self.BODY + after)
+        return sec.heading if sec else None
+
+    def test_accepted_forms(self):
+        for h in ["3. 참가자격", "나. 입찰참가자격", "3) 입찰참가자격", "Ⅰ. 입찰 참가자격", "□ 입찰 참가 자격",
+                  "1.3 입찰참가자격", "1. 입찰 참가 자격 및 제한", "2. 입찰참가자격 및 관련사항",
+                  "다. 입찰참가자격 : 다음 조건을 모두 충족한 자", "2. 입찰참가자격[입찰공고문 참조]", "입찰참가자격"]:
+            with self.subTest(h=h):
+                self.assertIsNotNone(self._heading(h), h)
+
+    def test_rejects_document_list_sentence(self):
+        # 제출서류 목록의 한 줄 — 제목이 아니다
+        self.assertIsNone(find_qualification_section("붙임서류\n1. 입찰 참가자격을 증명하는 서류 사본 1통\n2. 사업자등록증"))
+
+    def test_korean_letter_section_ends_at_next_letter(self):
+        text = "나. 입찰참가자격" + self.BODY.replace("가.", "1)").replace("나.", "2)") + "다. 입찰방법\n총액입찰"
+        sec = find_qualification_section(text)
+        self.assertNotIn("총액입찰", sec.body)
+
+    def test_prefers_bid_qualification_heading(self):
+        text = ("5. 참가자격\n요약: 관련 법령에 따른 자격을 갖춘 업체로서 공고문을 참조하시기 바랍니다\n6. 일정\n"
+                "2. 입찰참가자격" + self.BODY + "3. 끝")
+        self.assertEqual(find_qualification_section(text).heading, "2. 입찰참가자격")
+
+
+class TestHeadingAfterBody(unittest.TestCase):
+    """실측(2026-09-30, 울산박물관 R26BK01748232): 한글 파일의 절 제목이 본문 뒤에 붙어 나와
+    ("…있어야 함2. 입찰참가자격") 제목으로는 목차 줄만 잡혔다. 항목 묶음으로 찾는다.
+    (본문 가~타 항목은 사용자가 보내준 원문, 앞뒤 목차·다른 절은 재현용으로 덧붙임)"""
+
+    def setUp(self):
+        path = Path(__file__).parent / "fixtures" / "ulsan_museum_heading_after_body.txt"
+        self.text = path.read_text(encoding="utf-8")
+
+    def test_finds_item_block_and_strips_glued_heading(self):
+        sec = find_qualification_section(self.text)
+        self.assertTrue(sec.items[0].startswith("가."))
+        self.assertTrue(any("6010989901" in i for i in sec.items))
+        self.assertFalse(sec.body.rstrip().endswith("입찰참가자격"))
+        self.assertNotIn("A4 용지", sec.body, "다음 절(제안서 작성 요령)의 가. 항목까지 삼키면 안 된다")
+
+    def test_verdict_all_required(self):
+        from nego.qualify import evaluate_attachment_text
+
+        items = find_qualification_section(self.text).items
+        self.assertEqual(evaluate_attachment_text(items, {"1469", "4444", "6010989901"}, {}).summary, "자격 충족")
+        self.assertIn("6010989901", evaluate_attachment_text(items, {"1469", "4442"}, {}).summary)
+
+    def test_evaluation_section_is_not_qualification(self):
+        text = "가. 제안서 평가는 참가자격 요건을 갖춘 업체를 대상으로 기술능력평가와 가격평가로 구분\n나. 기술능력 80점"
+        self.assertIsNone(find_qualification_section(text))

@@ -283,7 +283,10 @@ class TestExtensionMismatchSniffing(unittest.TestCase):
 
     def test_sniff_detects_pdf_zip_and_ole_magic_bytes(self):
         self.assertEqual(_sniff_ext(b"%PDF-1.4\n..."), "pdf")
-        self.assertEqual(_sniff_ext(b"PK\x03\x04" + b"\x00" * 10), "hwpx")
+        # zip 형식은 안에 Contents/section*.xml이 있어야 HWPX, 아니면 일반 압축 파일(zip)
+        self.assertEqual(_sniff_ext(b"PK\x03\x04" + b"\x00" * 10), "zip")
+        self.assertEqual(_sniff_ext(_zip_bytes({"Contents/section0.xml": b"<x/>", "mimetype": b"application/hwp+zip"})), "hwpx")
+        self.assertEqual(_sniff_ext(_zip_bytes({"공고문.pdf": b"%PDF-1.4"})), "zip")
         self.assertEqual(_sniff_ext(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 10), "hwp")
 
     def test_sniff_returns_none_for_unrecognized_bytes(self):
@@ -443,10 +446,27 @@ class TestFetchAttachmentText(unittest.TestCase):
         self.assertIn("URL", result.error)
 
     def test_unsupported_extension_reports_error(self):
-        att = {"seq": "1", "file_name": "a.zip", "url": "https://example.com/a.zip", "ext": "zip"}
+        att = {"seq": "1", "file_name": "a.xlsx", "url": "https://example.com/a.xlsx", "ext": "xlsx"}
         result = fetch_attachment_text(FakeSession(b""), att)
         self.assertFalse(result.ok)
         self.assertIn("지원하지 않는", result.error)
+        self.assertTrue(result.skipped, "내역서 같은 형식은 실패가 아니라 건너뜀")
+
+    def test_parse_failure_is_not_skipped(self):
+        att = {"seq": "1", "file_name": "a.hwp", "url": "https://example.com/a.hwp", "ext": "hwp"}
+        result = fetch_attachment_text(FakeSession(b"broken"), att)
+        self.assertFalse(result.ok)
+        self.assertFalse(result.skipped, "읽어야 할 문서를 못 읽은 건 실패로 센다")
+
+    def test_skipped_attachments_are_not_counted(self):
+        raw = {
+            "bidNtceNo": "R26TEST0002", "bidNtceOrd": "000", "bidNtceNm": "테스트 공고",
+            "ntceSpecFileNm1": "내역서.xlsx", "ntceSpecDocUrl1": "https://example.com/1.xlsx",
+        }
+        notice = notice_from_raw(raw, "용역")
+        with tempfile.TemporaryDirectory() as tmp:
+            stats = save_attachment_texts([_FakeCandidate(notice)], Path(tmp), timeout=5.0, session=FakeSession(b"x"))
+        self.assertEqual((stats["attempted"], stats["failed"]), (0, 0))
 
     def test_successful_pdf_round_trip(self):
         # 표준 Helvetica 폰트는 한글을 못 그리므로(WinAnsiEncoding), 여기서는
@@ -897,3 +917,80 @@ class TestSaveAttachmentTexts(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _zip_bytes(files: dict, cp949_names: bool = False) -> bytes:
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    swaps = []
+    with zipfile.ZipFile(buf, "w") as zf:
+        for i, (name, data) in enumerate(files.items()):
+            if cp949_names:
+                # 관공서 zip처럼 파일명을 CP949 바이트로, UTF-8 플래그 없이 넣는다 —
+                # zipfile은 비ASCII 이름에 UTF-8 플래그를 켜므로 같은 길이 ASCII 이름으로 쓰고 바이트를 바꿔 끼운다
+                raw = name.encode("cp949")
+                placeholder = (f"N{i}" + "_" * len(raw))[: len(raw)]
+                swaps.append((placeholder.encode(), raw))
+                name = placeholder
+            zf.writestr(name, data)
+    out = buf.getvalue()
+    for old, new in swaps:
+        out = out.replace(old, new)
+    return out
+
+
+class TestZipAttachment(unittest.TestCase):
+    """입찰서류.zip처럼 공고문·과업지시서를 압축해 올린 첨부 (실측: 가양4단지 R26BK01745222)."""
+
+    def test_reads_documents_inside_zip(self):
+        from nego.attachments import extract_text
+
+        data = _zip_bytes({
+            "입찰서류/과업지시서.pdf": _build_pdf("Task order parking lot"),
+            "입찰서류/내역서.xlsx": b"PK\x03\x04 not read",
+            "입찰서류/공고문.pdf": _build_pdf("Notice civil works"),
+        })
+        text = extract_text(data, "zip")
+        self.assertIn("Task order parking lot", text)
+        self.assertIn("Notice civil works", text)
+        self.assertIn("[압축 안] 입찰서류/과업지시서.pdf", text)
+        self.assertNotIn("not read", text)
+
+    def test_cp949_file_names_are_restored(self):
+        from nego.attachments import extract_text
+
+        data = _zip_bytes({"과업지시서.pdf": _build_pdf("Hello")}, cp949_names=True)
+        self.assertIn("[압축 안] 과업지시서.pdf", extract_text(data, "zip"))
+
+    def test_nested_zip_one_level(self):
+        from nego.attachments import extract_text
+
+        inner = _zip_bytes({"제안요청서.pdf": _build_pdf("Inner RFP")})
+        self.assertIn("Inner RFP", extract_text(_zip_bytes({"묶음.zip": inner}), "zip"))
+        too_deep = _zip_bytes({"a.zip": _zip_bytes({"b.zip": inner})})
+        with self.assertRaises(AttachmentError):
+            extract_text(too_deep, "zip")
+
+    def test_zip_without_documents_is_skipped_not_failed(self):
+        """내역서·도면만 든 zip은 읽을 대상이 없는 것 — 실패로 세지 않는다."""
+        from nego.attachments import AttachmentUnsupported, extract_text
+
+        with self.assertRaises(AttachmentUnsupported):
+            extract_text(_zip_bytes({"내역서.xlsx": b"x", "도면.dwg": b"y"}), "zip")
+
+    def test_zip_with_broken_document_is_a_failure(self):
+        from nego.attachments import AttachmentUnsupported, extract_text
+
+        with self.assertRaises(AttachmentError) as ctx:
+            extract_text(_zip_bytes({"내역서.xlsx": b"x", "공고문.pdf": b"%PDF-broken"}), "zip")
+        self.assertNotIsInstance(ctx.exception, AttachmentUnsupported)
+        self.assertIn("읽을 수 있는 문서", str(ctx.exception))
+
+    def test_zip_attachment_through_fetch(self):
+        data = _zip_bytes({"과업지시서.pdf": _build_pdf("Fetched")})
+        att = {"seq": "3", "file_name": "입찰서류_최종.zip", "url": "https://example.com/3.zip", "ext": "zip"}
+        result = fetch_attachment_text(FakeSession(data), att)
+        self.assertTrue(result.ok, result.error)
+        self.assertIn("Fetched", result.text)

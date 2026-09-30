@@ -1,4 +1,4 @@
-"""공고 첨부파일(HWP/HWPX/PDF) 다운로드 및 텍스트 추출.
+"""공고 첨부파일(HWP/HWPX/PDF, 그리고 이것들을 묶은 ZIP) 다운로드 및 텍스트 추출.
 
 API가 안 주는 정보(과업내용·평가기준)를 다루기 위한 밑작업이다. 오늘 범위는
 **평문 텍스트 추출까지만** — 지역제한/면허제한/공동수급처럼 API로 이미 수집한
@@ -16,6 +16,7 @@ import logging
 import re
 import zipfile
 import zlib
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -30,11 +31,25 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-SUPPORTED_EXTENSIONS = {"hwp", "hwpx", "pdf"}
+SUPPORTED_EXTENSIONS = {"hwp", "hwpx", "pdf", "zip"}
+
+# ZIP 안전장치 — 발주기관이 올린 압축 파일이라도 압축 폭탄·거대 파일로 수집이 멈추면 안 된다.
+ZIP_MAX_MEMBERS = 60  # 압축 안에서 읽을 최대 파일 수
+ZIP_MAX_MEMBER_BYTES = 80 * 1024 * 1024  # 파일 하나 최대(풀었을 때)
+ZIP_MAX_TOTAL_BYTES = 300 * 1024 * 1024  # 압축 하나에서 푸는 총량
+ZIP_MAX_DEPTH = 1  # zip 안의 zip은 한 겹까지만
 
 
 class AttachmentError(Exception):
     """다운로드/파싱 단계 실패. 호출측(fetch_attachment_text)이 잡아서 계속 진행한다."""
+
+
+class AttachmentUnsupported(AttachmentError):
+    """애초에 읽을 대상이 아닌 형식(xlsx 내역서 등, 또는 그런 파일만 든 zip).
+
+    실패가 아니라 건너뜀이다 — 실패 건수·경고 로그에 넣지 않는다(2026-09-30 사용자 요청:
+    "내역서 같은 불필요한 첨부파일 파싱 실패는 굳이 카운팅하지 않아도 돼").
+    """
 
 
 @dataclass
@@ -45,6 +60,7 @@ class AttachmentText:
     ext: str
     text: str = ""
     error: str | None = None
+    skipped: bool = False  # 읽을 대상이 아닌 형식 — 실패로 세지 않는다
 
     @property
     def ok(self) -> bool:
@@ -99,32 +115,127 @@ _ZIP_MAGIC_PREFIXES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
 _PDF_MAGIC = b"%PDF"
 
 
+def _is_hwpx_zip(data: bytes) -> bool:
+    """zip 형식 중 HWPX(한글 문서)인지 — 그냥 압축 파일(입찰서류.zip 등)과 구분한다."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            names = zf.namelist()
+            if any(_HWPX_SECTION_RE.match(n) for n in names):
+                return True
+            if "mimetype" in names:
+                return b"hwp" in zf.read("mimetype")[:64].lower()
+    except (zipfile.BadZipFile, KeyError, OSError):
+        return False
+    return False
+
+
 def _sniff_ext(data: bytes) -> str | None:
     if data.startswith(_PDF_MAGIC):
         return "pdf"
     if data.startswith(_ZIP_MAGIC_PREFIXES):
-        return "hwpx"
+        return "hwpx" if _is_hwpx_zip(data) else "zip"
     if data.startswith(_OLE_MAGIC):
         return "hwp"
     return None
 
 
 def extract_text(data: bytes, ext: str) -> str:
+    return redact_personal_contacts(_extract_raw(data, ext, depth=0))
+
+
+def _extract_raw(data: bytes, ext: str, depth: int) -> str:
     ext = ext.lower().lstrip(".")
     sniffed = _sniff_ext(data)
     if sniffed and sniffed != ext and sniffed in SUPPORTED_EXTENSIONS:
-        log.info("확장자(.%s)와 실제 파일 내용(.%s)이 달라 실제 내용 기준으로 처리합니다", ext, sniffed)
+        if ext:
+            log.info("확장자(.%s)와 실제 파일 내용(.%s)이 달라 실제 내용 기준으로 처리합니다", ext, sniffed)
+        else:
+            log.info("파일 이름에 확장자가 없어 내용으로 형식을 판별했습니다: .%s", sniffed)
         ext = sniffed
 
     if ext == "pdf":
-        text = _extract_pdf_text(data)
-    elif ext == "hwpx":
-        text = _extract_hwpx_text(data)
-    elif ext == "hwp":
-        text = _extract_hwp_text(data)
-    else:
-        raise AttachmentError(f"지원하지 않는 형식입니다: .{ext or '(확장자 없음)'}")
-    return redact_personal_contacts(text)
+        return _extract_pdf_text(data)
+    if ext == "hwpx":
+        return _extract_hwpx_text(data)
+    if ext == "hwp":
+        return _extract_hwp_text(data)
+    if ext == "zip":
+        if depth >= ZIP_MAX_DEPTH + 1:
+            raise AttachmentError("압축 파일 안의 압축 파일이 너무 깊습니다")
+        return _extract_zip_text(data, depth)
+    raise AttachmentUnsupported(f"지원하지 않는 형식입니다: .{ext or '(확장자 없음)'}")
+
+
+def _zip_member_name(info: zipfile.ZipInfo) -> str:
+    """한국 관공서 zip은 파일명을 CP949로 넣고 UTF-8 표시(플래그 0x800)를 안 켠 경우가 많다 —
+    그러면 zipfile이 CP437로 읽어 이름이 깨진다. 되돌려서 CP949로 다시 읽는다."""
+    name = info.filename
+    if info.flag_bits & 0x800:
+        return name
+    try:
+        return name.encode("cp437").decode("cp949")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return name
+
+
+def _extract_zip_text(data: bytes, depth: int = 0) -> str:
+    """압축 파일 안의 HWP/HWPX/PDF(와 한 겹 안쪽 zip)를 모두 읽어 파일별로 이어 붙인다.
+
+    파일 하나를 못 읽어도 나머지는 계속 읽는다. 하나도 못 읽으면 AttachmentError.
+    이어 붙인 결과가 곧 이 첨부파일의 원문이 되므로 참가자격 절 찾기·자격판정·
+    마감 보충·싱크로율이 다른 첨부와 똑같이 적용된다.
+    """
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as err:
+        raise AttachmentError(f"ZIP 파싱 실패: {err}") from err
+
+    parts: list[str] = []
+    skipped: list[str] = []  # 읽으려다 못 읽은 파일 (실패)
+    unsupported: list[str] = []  # 애초에 읽을 대상이 아닌 형식 (xlsx 등)
+    total = 0
+    with zf:
+        members = [i for i in zf.infolist() if not i.is_dir()]
+        for info in members[:ZIP_MAX_MEMBERS]:
+            name = _zip_member_name(info)
+            base = name.rsplit("/", 1)[-1]
+            if not base or base.startswith(("._", "~$")) or "__MACOSX" in name:
+                continue
+            ext = base.rsplit(".", 1)[-1].lower() if "." in base else ""
+            if ext and ext not in SUPPORTED_EXTENSIONS:
+                unsupported.append(f"{base}(.{ext})")
+                continue
+            if info.file_size > ZIP_MAX_MEMBER_BYTES or total + info.file_size > ZIP_MAX_TOTAL_BYTES:
+                skipped.append(f"{base}(너무 큼)")
+                continue
+            try:
+                inner = zf.read(info)
+                total += len(inner)
+                text = _extract_raw(inner, ext, depth + 1)
+            except AttachmentUnsupported:
+                unsupported.append(base)
+                continue
+            except AttachmentError as err:
+                skipped.append(f"{base}({err})")
+                continue
+            except Exception as err:  # 파일 하나 때문에 압축 전체를 버리지 않는다
+                skipped.append(f"{base}(예상 못한 오류: {err})")
+                continue
+            if text.strip():
+                parts.append(f"=== [압축 안] {name} ===\n{text}")
+        if len(members) > ZIP_MAX_MEMBERS:
+            skipped.append(f"그 밖 {len(members) - ZIP_MAX_MEMBERS}개(파일 수 제한)")
+
+    if skipped:
+        log.info("압축 파일에서 읽지 않은 파일: %s", ", ".join(skipped[:10]) + (" 외" if len(skipped) > 10 else ""))
+    if unsupported:
+        log.debug("압축 파일 안의 읽을 대상이 아닌 파일: %s", ", ".join(unsupported[:10]))
+    if not parts and not skipped:
+        raise AttachmentUnsupported("압축 파일 안에 HWP/HWPX/PDF 문서가 없습니다")
+    if not parts:
+        raise AttachmentError("압축 파일 안에 읽을 수 있는 문서(HWP/HWPX/PDF)가 없습니다"
+                              + (f" — {', '.join(skipped[:5])}" if skipped else ""))
+    return "\n\n".join(parts)
 
 
 def fetch_attachment_text(
@@ -141,13 +252,19 @@ def fetch_attachment_text(
     if not url:
         result.error = "다운로드 URL이 없습니다"
         return result
-    if ext not in SUPPORTED_EXTENSIONS:
+    # 확장자가 아예 없으면(사전규격 문서 URL은 파일명 필드가 없다) 받아서 내용으로 판별한다
+    # (`extract_text`의 `_sniff_ext`). 확장자가 있는데 지원 형식이 아니면 받지 않는다.
+    if ext and ext not in SUPPORTED_EXTENSIONS:
         result.error = f"지원하지 않는 형식입니다: .{ext or '(확장자 없음)'}"
+        result.skipped = True
         return result
 
     try:
         data = download_bytes(session, url, timeout=timeout)
         result.text = extract_text(data, ext)
+    except AttachmentUnsupported as err:
+        result.error = str(err)
+        result.skipped = True
     except AttachmentError as err:
         result.error = str(err)
     except Exception as err:  # 예상 못한 오류도 파이프라인을 죽이면 안 된다
@@ -180,6 +297,7 @@ def save_attachment_texts(
     held_code_names: dict[str, str] | None = None,
     now: datetime | None = None,
     code_names: dict[str, str] | None = None,
+    held_raw: dict | None = None,
 ) -> dict[str, Any]:
     """후보 공고의 첨부파일을 내려받아 텍스트를 `output_dir/attachment_text/`에 저장한다.
 
@@ -243,6 +361,9 @@ def save_attachment_texts(
         deadline = None
 
         for result in collect_notice_attachment_texts(session, notice, timeout=timeout):
+            if result.skipped:  # xlsx 내역서 등 — 읽을 대상이 아니라 시도·실패로 세지 않는다
+                log.debug("첨부파일 건너뜀 [%s] %s: %s", notice.notice_no, result.file_name, result.error)
+                continue
             stats["attempted"] += 1
             if not result.ok:
                 log.warning("첨부파일 추출 실패 [%s] %s: %s", notice.notice_no, result.file_name, result.error)
@@ -272,6 +393,21 @@ def save_attachment_texts(
             # 다시 계산해야 "잔여일수"(D-N)가 새로 채운 마감/일정과 어긋나지 않는다.
             if hasattr(candidate, "days_left"):
                 candidate.days_left = schedule.days_left(now)
+
+        # 첨부 참가자격에 "주된 영업소 소재지가 ○○도" 같은 지역 요건이 있으면 API보다 우선한다
+        if all_items and held_codes is not None and hasattr(candidate, "region_check"):
+            from . import region as _region
+
+            company = _region.company_sido(held_raw or {})
+            candidate.region_check = _region.combine(
+                candidate.region_check, _region.from_text(all_items, company)
+            )
+
+        # 실적·현장설명회·기술인력 요건 — 판정 없이 "확인 필요" 칩으로 (2026-09-30 사용자 요청)
+        if hasattr(candidate, "text_flags"):
+            from .text_requirements import flag_requirements
+
+            candidate.text_flags = flag_requirements(all_items, getattr(candidate, "attachment_text", ""))
 
         if not needs_check or not all_items:
             continue
@@ -469,8 +605,25 @@ def _render_cell(tc: ET.Element) -> str:
 # 참고: 표/그림 같은 인라인 컨트롤 문자 뒤에 예약된 텍스트 슬롯을 정교하게
 # 건너뛰지는 않는다 — 문단 본문은 정상 추출되지만 표/이미지가 많은 문서는
 # 경계 부분에 약간의 잡음이 섞일 수 있다. 실제 공고 첨부파일로 검증 필요.
+#
+# 2026-09-29 수정: 위 "잡음"이 실측으로 확인됨 — 목차 줄마다 "사업 개요葘ȃ 1",
+# "2. 입찰참가자격 礮ȃ 2"처럼 원문에 없는 한자가 섞였다(울산박물관 R26BK01748232).
+# HWP 5.0 규격상 컨트롤 문자 중 인라인(4~9, 19, 20)·확장(1~3, 11, 12, 14~18, 21~23)
+# 형은 [코드 1워드][부가 데이터 6워드][같은 코드 1워드] 총 8워드를 차지하는데, 예전엔
+# 코드 1워드만 지워서 부가 데이터 6워드가 UTF-16으로 읽혀 한자처럼 보였다. 이제 8워드
+# 블록을 통째로 건너뛴다(닫는 코드가 같을 때만 — 아니면 1워드만 지워 본문을 삼키지 않게).
+# 탭(9)은 목차의 점선 채움 자리라 공백 하나로 남긴다.
+# 글자겹치기(0x17, "spct")는 "①" 같은 원문자를 그리는 기능이라 버리지 않고, 별도
+# CTRL_HEADER 레코드(tag 0x47)에 든 실제 글자로 채운다 (jiil-past-contracts 과거 실적
+# 추출에서 먼저 검증한 방식, 브랜치 claude/modest-faraday-gw058m).
 
 _HWPTAG_PARA_TEXT = 0x43
+_HWPTAG_CTRL_HEADER = 0x47
+_HWP_BLOCK_CONTROL_CODES = {1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23}
+_HWP_BLOCK_LEN = 8  # 여는 코드 + 부가 데이터 6워드 + 닫는 코드
+_HWP_TAB = 0x09
+_CHAR_OVERLAP_ANCHOR_CODE = 0x17
+_CHAR_OVERLAP_CTRL_ID = b"spct"
 
 
 def _extract_hwp_text(data: bytes) -> str:
@@ -534,8 +687,8 @@ def _inflate_raw(data: bytes) -> bytes:
         raise AttachmentError(f"HWP 섹션 압축 해제 실패: {err}") from err
 
 
-def _hwp_section_paragraphs(payload: bytes) -> list[str]:
-    paragraphs = []
+def _iter_hwp_records(payload: bytes):
+    """섹션 페이로드를 (tag_id, record_bytes) 레코드 스트림으로 순회한다."""
     offset = 0
     length = len(payload)
     while offset + 4 <= length:
@@ -550,14 +703,63 @@ def _hwp_section_paragraphs(payload: bytes) -> list[str]:
             offset += 4
         record = payload[offset : offset + size]
         offset += size
+        yield tag_id, record
+
+
+def _extract_char_overlap_text(record: bytes) -> str:
+    """"spct"(글자겹치기) 컨트롤 레코드에서 겹쳐진 문자를 꺼낸다.
+    구조: b"spct" + 문자 길이(uint16) + 그 길이만큼의 UTF-16LE 문자 + 서식 파라미터."""
+    if len(record) < 6 or record[:4] != _CHAR_OVERLAP_CTRL_ID:
+        return ""
+    char_len = int.from_bytes(record[4:6], "little")
+    end = 6 + char_len * 2
+    if char_len <= 0 or end > len(record):
+        return ""
+    return record[6:end].decode("utf-16le", errors="ignore")
+
+
+def _hwp_section_paragraphs(payload: bytes) -> list[str]:
+    records = list(_iter_hwp_records(payload))
+    # 글자겹치기 컨트롤을 문서 순서대로 먼저 모아, 문단 디코딩 중 0x17 블록을 만날 때마다 하나씩 쓴다
+    overlap_queue = deque(
+        _extract_char_overlap_text(record)
+        for tag_id, record in records
+        if tag_id == _HWPTAG_CTRL_HEADER and record[:4] == _CHAR_OVERLAP_CTRL_ID
+    )
+    paragraphs = []
+    for tag_id, record in records:
         if tag_id == _HWPTAG_PARA_TEXT and record:
-            text = _decode_para_text(record)
+            text = _decode_para_text(record, overlap_queue)
             if text:
                 paragraphs.append(text)
     return paragraphs
 
 
-def _decode_para_text(record: bytes) -> str:
-    raw = record.decode("utf-16le", errors="ignore")
-    # 표/그림 등 인라인 컨트롤 문자(0x00~0x1F, 개행 제외)는 걷어낸다.
-    return "".join(ch for ch in raw if ch == "\n" or ord(ch) >= 0x20)
+def _decode_para_text(record: bytes, overlap_queue: "deque[str] | None" = None) -> str:
+    """문단 레코드를 텍스트로. 개행(0x0A)은 살리고, 8워드 컨트롤 블록은 부가 데이터까지
+    통째로 건너뛰며(탭은 공백 하나), 그 밖 컨트롤 문자(<0x20)는 1워드만 지운다."""
+    chars = record.decode("utf-16le", errors="ignore")
+    n = len(chars)
+    out: list[str] = []
+    i = 0
+    while i < n:
+        ch = chars[i]
+        code = ord(ch)
+        if code == 0x0A:
+            out.append("\n")
+            i += 1
+            continue
+        if code < 0x20:
+            block_end = i + _HWP_BLOCK_LEN - 1
+            if code in _HWP_BLOCK_CONTROL_CODES and block_end < n and chars[block_end] == ch:
+                if code == _HWP_TAB:
+                    out.append(" ")
+                elif code == _CHAR_OVERLAP_ANCHOR_CODE and overlap_queue:
+                    out.append(overlap_queue.popleft())
+                i = block_end + 1
+            else:
+                i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
