@@ -127,13 +127,17 @@ def group_license_rows(raw_items: list[RawItem]) -> dict[str, list[LicenseGroup]
     페이지 단위로 내려준다. 그래서 공고별로 호출하지 않고 **기간 전체를 1회 받아
     여기서 공고번호별로 묶는다.** 공고 수가 늘어도 API 호출 횟수가 늘지 않는다.
     """
-    by_notice: dict[str, dict[str, list[list[str]]]] = {}
+    # 공고번호 → 차수 → 그룹 → 행. 정정공고로 차수가 여럿이면 조회기간 안에 차수마다 같은 행이 또 온다 —
+    # 전부 한 공고로 합치면 같은 면허가 차수 수만큼 겹쳐 나온다(2026-09-30 제보: 토목공사업이 3번,
+    # 상·하수도/지반조성이 번갈아 3번). **가장 마지막 차수만** 쓴다(정정 내용이 최신이다).
+    by_notice: dict[str, dict[str, dict[str, list[list[str]]]]] = {}
 
     for item in raw_items:
         notice_no = F.pick_by(item, F.LICENSE_LIMIT_FIELDS, "notice_no")
         group_no = F.pick_by(item, F.LICENSE_LIMIT_FIELDS, "group_no")
         if not notice_no or not group_no:
             continue
+        notice_ord = F.pick_by(item, F.LICENSE_LIMIT_FIELDS, "notice_ord") or ""
 
         names: list[str] = []
         license_name = F.pick_by(item, F.LICENSE_LIMIT_FIELDS, "license_name")
@@ -150,16 +154,24 @@ def group_license_rows(raw_items: list[RawItem]) -> dict[str, list[LicenseGroup]
         if not names:
             continue
 
-        groups = by_notice.setdefault(notice_no, {})
-        groups.setdefault(group_no, []).append(_dedupe_names(names))
+        rows = by_notice.setdefault(notice_no, {}).setdefault(notice_ord, {}).setdefault(group_no, [])
+        row = _dedupe_names(names)
+        # 같은 차수 안에서도 똑같은 행이 두 번 오면 한 번만 (행끼리는 "모두 필요"라 중복은 뜻이 없다)
+        if row and not any(_row_key(r) == _row_key(row) for r in rows):
+            rows.append(row)
 
-    return {
-        notice_no: [
+    out: dict[str, list[LicenseGroup]] = {}
+    for notice_no, by_ord in by_notice.items():
+        groups = by_ord[max(by_ord, key=lambda o: (len(o), o))]  # "000" < "001" < … (자릿수 같음)
+        out[notice_no] = [
             LicenseGroup(group_no=g, allowed_names=_dedupe_names([n for row in rows for n in row]), rows=rows)
             for g, rows in groups.items()
         ]
-        for notice_no, groups in by_notice.items()
-    }
+    return out
+
+
+def _row_key(row: list[str]) -> frozenset[str]:
+    return frozenset(_license_base(n) for n in row)
 
 
 def _is_group_satisfied(group: LicenseGroup, held_names: list[str], held_codes: set[str] | frozenset[str] = frozenset()) -> bool:

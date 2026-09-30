@@ -988,6 +988,31 @@ class TestOverlappingLicenseGroups(unittest.TestCase):
         self.assertEqual(qualify.evaluate(groups, [], {"1227", "6770"}).missing_count, 0)
         self.assertEqual(qualify.evaluate(groups, [], {"6770"}).missing_count, 1)
 
+    def test_amended_notice_rows_are_not_repeated(self):
+        """정정공고 차수 3개(000·001·002)가 같은 행을 또 보내도 겹치지 않고 마지막 차수만 쓴다
+        (2026-09-30 제보: 토목공사업 ×3, 상·하수도/지반조성 번갈아 ×3)."""
+        rows = []
+        for ord_ in ("000", "001", "002"):
+            rows += [
+                {"bidNtceNo": "R", "bidNtceOrd": ord_, "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "토목공사업/0001"},
+                {"bidNtceNo": "R", "bidNtceOrd": ord_, "lmtGrpNo": "2", "lmtSno": "1", "lcnsLmtNm": "상·하수도설비공사업/4996"},
+                {"bidNtceNo": "R", "bidNtceOrd": ord_, "lmtGrpNo": "2", "lmtSno": "2", "lcnsLmtNm": "지반조성·포장공사업/4989"},
+            ]
+        groups = qualify.group_license_rows(rows)["R"]
+        self.assertEqual([g.rows for g in groups], [
+            [["토목공사업/0001"]],
+            [["상·하수도설비공사업/4996"], ["지반조성·포장공사업/4989"]],
+        ])
+        reqs = qualify.license_requirements(groups)
+        self.assertEqual([len(c) for c in reqs[0].combos], [1, 2], "① 토목공사업 또는 ② 상·하수도 + 지반조성")
+
+    def test_latest_amendment_wins(self):
+        rows = [
+            {"bidNtceNo": "R", "bidNtceOrd": "000", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "조경공사업/0005"},
+            {"bidNtceNo": "R", "bidNtceOrd": "001", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "실내건축공사업/4990"},
+        ]
+        self.assertEqual(qualify.group_license_rows(rows)["R"][0].allowed_names, ["실내건축공사업/4990"])
+
     def test_combo_needs_every_license_of_one_set(self):
         """"A와 B" 또는 "C와 D" — 한 조합을 다 갖춰야 충족. A·C처럼 조합을 섞으면 미달."""
         rows = [
