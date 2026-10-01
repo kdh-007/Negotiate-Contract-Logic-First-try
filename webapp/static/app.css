@@ -42,6 +42,9 @@ h1 { font-size: 20px; margin: 0; }
 .tabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 700; }
 main { padding: 16px 24px 48px; max-width: 1400px; }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.toolbar .range { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+.toolbar .range[hidden] { display: none; }
+input[type="date"] { color-scheme: light dark; }
 .chk { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); }
 .job { color: var(--muted); font-size: 13px; }
 .job.err { color: var(--bad); }

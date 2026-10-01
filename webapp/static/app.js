@@ -448,7 +448,8 @@ function showJob(job) {
   const st = $("#jobStatus"), lg = $("#jobLog"), btn = $("#btnCollect");
   btn.disabled = job.running;
   st.classList.toggle("err", !!job.error);
-  if (job.running) st.textContent = `수집 중… (${fmtDt(job.started_at)} 시작, 최근 ${job.params.days}일)`;
+  const span = job.params.begin ? `${job.params.begin} ~ ${job.params.end}` : `최근 ${job.params.days}일`;
+  if (job.running) st.textContent = `수집 중… (${fmtDt(job.started_at)} 시작, ${span})`;
   else if (job.error) st.textContent = `실패: ${job.error}`;
   else if (job.finished_at) st.textContent = `완료 ${fmtDt(job.finished_at)}`;
   else st.textContent = "";
@@ -467,8 +468,11 @@ async function pollJob() {
 $("#btnCollect").addEventListener("click", async () => {
   if (needName()) return;
   try {
+    const custom = $("#period").value === "custom";
+    const range = custom ? { begin: $("#rangeBegin").value, end: $("#rangeEnd").value } : { days: Number($("#period").value) };
+    if (custom && (!range.begin || !range.end)) return alert("시작일과 종료일을 모두 고르세요");
     const job = await api("/api/collect", {
-      days: Number($("#period").value), attachments: $("#optAttach").checked, ai: $("#optAi").checked,
+      ...range, attachments: $("#optAttach").checked, ai: $("#optAi").checked,
       prespec: $("#optPrespec").checked,
     });
     showJob(job);
@@ -574,8 +578,21 @@ $("#pastYear").addEventListener("change", renderPast);
   $("#pastInfo").textContent = META.past_error ? META.past_error : `과거 실적 ${META.past_count}건 (${years})`;
   const period = $("#period");
   META.periods.forEach((d) => period.append(new Option(`최근 ${d}일`, d)));
+  period.append(new Option("직접 지정", "custom"));
   period.value = store.get("period", "7");
-  period.addEventListener("change", () => store.set("period", period.value));
+  if (!period.value) period.value = "7";
+  // 직접 지정: 시작일·종료일 (오늘까지, 최대 N일). 기본값은 최근 7일
+  const rb = $("#rangeBegin"), re_ = $("#rangeEnd"), ymd = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const today = ymd(new Date());
+  rb.max = re_.max = today;
+  rb.value = store.get("rangeBegin", ymd(new Date(Date.now() - 6 * 864e5)));
+  re_.value = store.get("rangeEnd", today);
+  rb.title = re_.title = `최대 ${META.max_custom_days}일`;
+  const syncRange = () => { $("#rangeWrap").hidden = period.value !== "custom"; };
+  syncRange();
+  period.addEventListener("change", () => { store.set("period", period.value); syncRange(); });
+  rb.addEventListener("change", () => store.set("rangeBegin", rb.value));
+  re_.addEventListener("change", () => store.set("rangeEnd", re_.value));
   if (!META.has_ai_key) { $("#optAi").disabled = true; $("#optAiWrap").title = "서버에 ANTHROPIC_API_KEY가 없어 AI 판단을 쓸 수 없습니다"; }
   if (!META.has_service_key) $("#jobStatus").textContent = "서버에 NARA_SERVICE_KEY가 없어 불러오기가 실패합니다";
   showTab(store.get("tab", "live"));

@@ -46,7 +46,11 @@ class FakePast:
         return self.projects
 
 
-def fixture_run(config, days, attachments, cats, prespec=False):
+RUN_PERIODS = []
+
+
+def fixture_run(config, days, attachments, cats, prespec=False, period=None):
+    RUN_PERIODS.append(period)
     config.screen.keywords = ["전시관", "박물관", "과학관", "체험관", "전시디자인", "전시물"]
     stats = RunStats()
     notices = [notice_from_raw(raw, "용역") for raw in fixtures.service_notices()]
@@ -367,6 +371,33 @@ class TestServer(unittest.TestCase):
         res = self.call("/api/results")[1]
         self.assertEqual(res["comment_counts"][keys[0]], 1)
         self.assertEqual(res["states"][keys[0]]["status"], "참가")
+
+    def test_custom_period(self):
+        """직접 지정 구간: 시작일 00:00 ~ 종료일 23:59(오늘이면 지금까지). 잘못된 구간은 400."""
+        from datetime import date, timedelta as td
+        from webapp.collect import custom_period
+
+        now = datetime(2026, 10, 1, 14, 30)
+        self.assertEqual(custom_period("2026-09-01", "2026-09-30", now),
+                         (datetime(2026, 9, 1), datetime(2026, 9, 30, 23, 59)))
+        self.assertEqual(custom_period("2026-09-25", "2026-10-01", now)[1], now)
+        for bad in (("2026-09-30", "2026-09-01"), ("2026-06-01", "2026-09-30"), ("2026/09/01", "2026-09-30")):
+            with self.assertRaises(ValueError):
+                custom_period(*bad, now)
+        self.assertEqual(self.call("/api/collect", {"begin": "2026-09-30", "end": "2026-09-01"})[0], 400)
+
+        begin = (date.today() - td(days=10)).isoformat()
+        end = (date.today() - td(days=3)).isoformat()
+        RUN_PERIODS.clear()
+        status, job = self.call("/api/collect", {"begin": begin, "end": end, "attachments": False})
+        self.assertEqual((status, job["params"]["begin"], job["params"]["end"], job["params"]["days"]), (202, begin, end, None))
+        for _ in range(100):
+            job = self.call("/api/job")[1]
+            if not job["running"]:
+                break
+            time.sleep(0.05)
+        self.assertIsNone(job["error"])
+        self.assertEqual([(p[0].date().isoformat(), p[1].date().isoformat()) for p in RUN_PERIODS], [(begin, end)])
 
     def test_bad_period_and_missing_key(self):
         self.assertEqual(self.call("/api/collect", {"days": 5})[0], 400)
