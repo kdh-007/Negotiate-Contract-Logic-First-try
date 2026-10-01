@@ -49,9 +49,11 @@ main { padding: 16px 24px 48px; max-width: 1400px; margin: 0 auto; }
 .toolbar .range[hidden] { display: none; }
 input[type="date"] { color-scheme: light dark; }
 /* 날짜 칸 옆 달력 버튼 — 브라우저 기본 달력 아이콘이 안 보이는 PC가 있어(2026-10-01 제보) 직접 붙인다 */
-.datebox { display: inline-flex; align-items: center; gap: 2px; }
+.datebox { position: relative; display: inline-flex; align-items: center; }
+.datebox input[type="date"] { padding-right: 30px; }
 .datebox input[type="date"]::-webkit-calendar-picker-indicator { display: none; }
-.datebox .cal { border: 0; background: transparent; padding: 2px 4px; font-size: 16px; line-height: 1; cursor: pointer; }
+.datebox .cal { position: absolute; right: 6px; border: 0; background: transparent; padding: 2px; line-height: 0; color: var(--muted); cursor: pointer; }
+.datebox .cal:hover { color: var(--ink); }
 .chk { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); }
 .job { color: var(--muted); font-size: 13px; }
 .job.err { color: var(--bad); }
