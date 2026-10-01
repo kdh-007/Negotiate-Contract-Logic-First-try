@@ -199,6 +199,11 @@ function taskFit(c) {
   if (s.level === "낮음") return { rank: 1, cls: "bad", label: "과업 무관 가능성", tip: `첨부 과업 내용 기준 싱크로율${score}${near}` };
   return { rank: 0, cls: "", label: "판정 불가", tip: "과거 실적과 비교할 수 없습니다" };
 }
+// 검토 필요 카드의 "최다 유사" 줄 앞에 붙는 과업 유사 칩 (2026-10-01 요청 — 위쪽 배지 줄에서 옮김)
+function fitChip(c) {
+  const f = taskFit(c);
+  return chip(f.label, f.cls, f.label, esc(f.tip), f.cls);
+}
 function byTaskFit(list) {
   return [...list].sort((a, b) => (taskFit(b).rank - taskFit(a).rank) || ((b.sync?.score ?? -1) - (a.sync?.score ?? -1)));
 }
@@ -207,8 +212,6 @@ function badges(c) {
   if (c.review_exclude) {
     out.push(chip(`제외 키워드 "${c.review_exclude}" · 관심 "${(c.matched_keywords || []).join(", ")}"`, "warn", "검토 필요",
       `공고명에 제외 키워드 「${esc(c.review_exclude)}」와 관심 키워드 「${esc((c.matched_keywords || []).join(", "))}」가 함께 있어 빼지 않고 남겼습니다. 참가여부를 남겨 주시면 판단 기준을 고치는 데 씁니다.`));
-    const f = taskFit(c);
-    out.push(chip(f.label, f.cls, f.label, esc(f.tip), f.cls));
   }
   else if (c.confidence === "강력추천") out.push(chip("강력추천", "star", "강력추천", "관심 키워드와 관심 품명·업종 코드가 모두 맞는 공고입니다."));
   else if (c.confidence) out.push(chip(c.confidence, "", c.confidence, "관심 키워드나 관심 품명코드 중 하나만 맞는 공고입니다."));
@@ -303,7 +306,7 @@ function card(c, withActions = true) {
           <div><dt>사업금액</dt><dd>${esc(won(c.budget))}</dd></div>
           ${c.excluded_reason ? `<div class="wide"><dt>제외 사유</dt><dd>${esc(c.excluded_reason)}${(c.match_explain || []).length ? `<ul class="explain">${c.match_explain.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}</dd></div>` : ""}
         </dl>
-        <div class="why simline">최다 유사: ${s.top[0] ? `(${esc(s.top[0].year)}) ${esc(s.top[0].title)}` : "없음"} · 근거: ${esc(s.basis)}</div>
+        <div class="why simline">${c.review_exclude ? fitChip(c) + " " : ""}최다 유사: ${s.top[0] ? `(${esc(s.top[0].year)}) ${esc(s.top[0].title)}` : "없음"} · 근거: ${esc(s.basis)}</div>
       </div>
       <button type="button" class="card-side lv-${esc(s.level)}" title="눌러서 비슷한 과거 실적 보기">
         <span class="pct">${pct(s.score)}</span>
