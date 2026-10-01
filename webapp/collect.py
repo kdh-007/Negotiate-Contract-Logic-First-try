@@ -24,6 +24,24 @@ log = logging.getLogger(__name__)
 
 AI_LABEL = {"유사": "적합", "부분 유사": "검토필요", "무관": "부적합"}
 PERIODS = [1, 3, 7, 14, 30]
+MAX_CUSTOM_DAYS = 92  # 직접 지정 구간 상한 — 나라장터 호출량 보호 (긴 구간은 30일 단위로 나눠 조회한다)
+
+
+def custom_period(begin: str, end: str, now: datetime) -> tuple[datetime, datetime]:
+    """"YYYY-MM-DD" 두 개 → [시작일 00:00, 종료일 23:59] (종료일이 오늘이면 지금까지)."""
+    try:
+        b = datetime.strptime(begin, "%Y-%m-%d")
+        e = datetime.strptime(end, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        raise ValueError("기간은 YYYY-MM-DD 형식의 시작일·종료일로 지정하세요") from None
+    if b > e:
+        raise ValueError("시작일이 종료일보다 늦습니다")
+    if b.date() > now.date():
+        raise ValueError("시작일이 오늘보다 늦습니다")
+    if (e - b).days + 1 > MAX_CUSTOM_DAYS:
+        raise ValueError(f"직접 지정 기간은 {MAX_CUSTOM_DAYS}일까지입니다")
+    e_end = e.replace(hour=23, minute=59)
+    return b, min(e_end, now)
 # 저장되는 수집 결과의 판정·표시 형식 버전. 자격 판정·팝업 자료가 바뀔 때 올린다 — 화면이 예전 버전으로
 # 수집된 결과를 보여주고 있으면 "다시 불러오기" 안내를 띄운다(2026-09-30: 코드를 받고도 옛 결과를 보고
 # 중복·개수 오류가 그대로라고 여긴 일이 두 번 있었음).
@@ -175,29 +193,37 @@ class Collector:
         self._runner = runner or self._run_nego
         self._config_loader = config_loader
 
-    def start(self, days: int, attachments: bool, ai: bool, categories: list[str] | None,
-              prespec: bool = True) -> Job:
-        if days not in PERIODS:
+    def start(self, days: int | None, attachments: bool, ai: bool, categories: list[str] | None,
+              prespec: bool = True, begin: str | None = None, end: str | None = None) -> Job:
+        """`begin`·`end`("YYYY-MM-DD")를 주면 그 구간, 아니면 최근 `days`일."""
+        period = None
+        if begin or end:
+            period = custom_period(begin or "", end or "", datetime.now())
+            days = None
+        elif days not in PERIODS:
             raise ValueError(f"기간은 {PERIODS}일 중 하나")
         cats = scope.parse_categories(",".join(categories)) if categories else None
         with self._lock:
             if self.job.running:
                 raise RuntimeError("이미 수집 중입니다")
             self.job = Job(running=True, started_at=datetime.now().isoformat(timespec="seconds"),
-                           params={"days": days, "attachments": attachments, "ai": ai, "prespec": prespec,
+                           params={"days": days, "begin": begin if period else None, "end": end if period else None,
+                                   "attachments": attachments, "ai": ai, "prespec": prespec,
                                    "categories": sorted(cats) if cats else None})
-        threading.Thread(target=self._work, args=(self.job, days, attachments, ai, cats, prespec),
+        threading.Thread(target=self._work, args=(self.job, days, attachments, ai, cats, prespec, period),
                          daemon=True).start()
         return self.job
 
-    def _run_nego(self, config: AppConfig, days: int, attachments: bool, cats, prespec: bool = True):
+    def _run_nego(self, config: AppConfig, days: int | None, attachments: bool, cats, prespec: bool = True,
+                  period: tuple[datetime, datetime] | None = None):
         from nego.pipeline import run
 
-        config.lookback_days = days
+        if days:
+            config.lookback_days = days
         # 관심·제외 키워드가 함께 있는 공고는 빼지 않고 "검토 필요"로 — 웹앱에서만 (CLI·자동 발송은 예전처럼 제외)
         config.screen.review_conflicts = True
         now = datetime.now()
-        candidates, stats, _ = run(config, now, cats, include_prespec=prespec)
+        candidates, stats, _ = run(config, now, cats, include_prespec=prespec, period=period)
         if attachments:
             from nego.attachments import save_attachment_texts
 
@@ -213,7 +239,8 @@ class Collector:
                 log.info("이름 미확인 코드 (config/code_names.json에 추가): %s", ", ".join(att["unnamed_codes"]))
         return candidates, stats
 
-    def _work(self, job: Job, days: int, attachments: bool, ai: bool, cats, prespec: bool = True) -> None:
+    def _work(self, job: Job, days: int | None, attachments: bool, ai: bool, cats, prespec: bool = True,
+              period: tuple[datetime, datetime] | None = None) -> None:
         handler = _JobLogHandler(job)
         root = logging.getLogger()
         root.addHandler(handler)
@@ -224,9 +251,11 @@ class Collector:
             config = self._config_loader()
             if not config.api.service_key:
                 raise RuntimeError("NARA_SERVICE_KEY 환경변수가 없습니다 (서버를 띄운 창에 설정)")
-            log.info("수집 시작: 최근 %d일%s%s", days, " + 사전규격" if prespec else "",
+            span = (f"{period[0]:%Y-%m-%d} ~ {period[1]:%Y-%m-%d}" if period else f"최근 {days}일")
+            log.info("수집 시작: %s%s%s", span, " + 사전규격" if prespec else "",
                      " + 첨부 자격판정" if attachments else "")
-            candidates, stats = self._runner(config, days, attachments, cats, prespec)
+            candidates, stats = (self._runner(config, days, attachments, cats, prespec, period) if period
+                                 else self._runner(config, days, attachments, cats, prespec))
             if ai:
                 import os
                 _judge_ai(candidates, self.past, int(os.environ.get("LLM_MAX_CANDIDATES", "30")))

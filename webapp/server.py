@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 from nego import scope
 
-from .collect import PERIODS, RESULT_FORMAT, Collector
+from .collect import MAX_CUSTOM_DAYS, PERIODS, RESULT_FORMAT, Collector
 from .store import STATUSES, Store
 from .sync import BORDER, HIGH, PastIndex
 
@@ -100,7 +100,7 @@ def make_handler(app: App):
                     years[str(p.get("year"))] = years.get(str(p.get("year")), 0) + 1
                 return self._json({
                     "past_count": len(app.past.projects), "past_years": years,
-                    "past_error": app.past.error, "periods": PERIODS, "statuses": STATUSES,
+                    "past_error": app.past.error, "periods": PERIODS, "max_custom_days": MAX_CUSTOM_DAYS, "statuses": STATUSES,
                     "result_format": RESULT_FORMAT,
                     "categories": scope.CATEGORIES, "sync_thresholds": {"high": HIGH, "border": BORDER},
                     "has_service_key": bool(os.environ.get("NARA_SERVICE_KEY", "").strip()),
@@ -140,7 +140,9 @@ def make_handler(app: App):
                 if url.path == "/api/collect":
                     cats = data.get("categories") or None
                     job = app.collector.start(
-                        days=int(data.get("days", 7)),
+                        days=int(data["days"]) if data.get("days") else None,
+                        begin=data.get("begin") or None,
+                        end=data.get("end") or None,
                         attachments=bool(data.get("attachments", True)),
                         ai=bool(data.get("ai", False)),
                         categories=list(cats) if cats else None,

@@ -262,15 +262,20 @@ def run(
     categories: set[str] | None = None,
     complete_days: int | None = None,
     include_prespec: bool = False,
+    period: tuple[datetime, datetime] | None = None,
 ) -> tuple[list[Candidate], RunStats, list[Notice]]:
     """`complete_days`를 주면 조회 기간을 오늘 뺀 직전 N일(날짜 단위)로 잡는다
-    (매일/매주 발송용). 없으면 기존처럼 최근 `lookback_days`일 ~ 지금.
-    `include_prespec`이면 같은 기간의 사전규격도 받아 본공고와 같은 필터·판정을 태운다."""
+    (매일/매주 발송용). `period`(시작, 끝)를 주면 그 구간(웹앱 "직접 지정"). 둘 다 없으면 기존처럼
+    최근 `lookback_days`일 ~ 지금. `include_prespec`이면 같은 기간의 사전규격도 받아 본공고와 같은 필터·판정을 태운다."""
     now = now or datetime.now()
     stats = RunStats()
     client = DataGoKrClient(config.api)
 
-    if complete_days:
+    if period:
+        period_begin, period_end = period
+        begin, end = period_begin.strftime("%Y%m%d%H%M"), period_end.strftime("%Y%m%d%H%M")
+        stats.period_begin, stats.period_end = period_begin, period_end
+    elif complete_days:
         period_begin, period_end = complete_days_window(now, complete_days)
         begin, end = period_begin.strftime("%Y%m%d%H%M"), period_end.strftime("%Y%m%d%H%M")
         stats.period_begin, stats.period_end = period_begin, period_end
