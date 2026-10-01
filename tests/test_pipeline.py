@@ -1081,6 +1081,24 @@ class TestOverlappingLicenseGroups(unittest.TestCase):
         ]
         self.assertEqual(qualify.group_license_rows(rows)["R"][0].allowed_names, ["실내건축공사업/4990"])
 
+    def test_combos_factor_into_required_and_pick_one(self):
+        """나라장터 조합 4개 = 0036·4990 공통 + (4442 또는 4444) + (1469 또는 1426) — 경우의 수를 나열하지 않고
+        필수 2건 + "N개 중 1개 이상" 2건으로 푼다(2026-10-01 요청). 판정은 조합 판정과 같아야 한다."""
+        sets = [["0036", "4990", "4442", "1469"], ["0036", "4990", "4444", "1469"],
+                ["0036", "4990", "4442", "1426"], ["0036", "1426", "4444", "4990"]]
+        rows = [{"bidNtceNo": "S", "lmtGrpNo": str(g + 1), "lmtSno": str(i + 1), "lcnsLmtNm": f"업종{c}/{c}"}
+                for g, codes in enumerate(sets) for i, c in enumerate(codes)]
+        groups = qualify.group_license_rows(rows)["S"]
+        reqs = qualify.license_requirements(groups)
+        self.assertEqual([(r.group_no.split("-")[0].rstrip("0123456789"), len(r.allowed_names), bool(r.combos)) for r in reqs],
+                         [("필수", 1, False), ("필수", 1, False), ("택", 2, False), ("택", 2, False)])
+        self.assertEqual(qualify.evaluate(groups, [], {"0036", "4990", "4444", "1426"}).missing_count, 0)
+        self.assertEqual(qualify.evaluate(groups, [], {"0036", "4990", "4444"}).missing_count, 1)
+        # 조합이 일부만 있으면(모든 경우의 수가 아니면) 칸으로 못 나눔 → 예전처럼 조합으로
+        part = qualify.group_license_rows(rows[:12])["S"]
+        self.assertTrue(qualify.license_requirements(part)[-1].combos)
+        self.assertEqual(qualify.evaluate(part, [], {"0036", "4990", "4444", "1426"}).missing_count, 1)
+
     def test_combo_needs_every_license_of_one_set(self):
         """"A와 B" 또는 "C와 D" — 한 조합을 다 갖춰야 충족. A·C처럼 조합을 섞으면 미달."""
         rows = [

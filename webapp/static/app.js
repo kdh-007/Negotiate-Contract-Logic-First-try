@@ -4,7 +4,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // 이 화면이 기대하는 수집 결과 형식 — webapp/collect.py RESULT_FORMAT과 같이 올린다
-const APP_FORMAT = 14;
+const APP_FORMAT = 15;
 const store = {
   get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* 저장 불가여도 동작 */ } },
@@ -180,7 +180,7 @@ function reqHtml(req, mixed) {
       + req.combos.map((c, i) => `<div class="tip-sub combo"><span class="no">${circled[i] || `${i + 1}.`}</span><div>${c.rows.map(row).join("")}</div></div>`).join("") + `</div>`;
   }
   // 미보유는 전부 붉은 ✗로 — 흰 글씨면 보유한 자격으로 착각한다(2026-09-30 제보)
-  if (!req.any_of) return `<div class="tip-item"><span class="why">${esc(req.why || "반드시 보유")}</span>${item(req.items[0])}</div>`;
+  if (!req.any_of) return `<div class="tip-item"><span class="why">${esc(req.why || "필수 보유")}</span>${item(req.items[0])}</div>`;
   // "미달 1건"이 면허 1개가 없다는 뜻으로 읽히지 않게, 요건 1건 = 아래 N개 중 택1임을 풀어 쓴다
   const n = req.items.length;
   const none = req.items.every((i) => !i.held);
