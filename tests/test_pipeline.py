@@ -628,18 +628,14 @@ class TestScreen(unittest.TestCase):
         homepage = screen.screen(notice_from_raw(fixtures.notice("H", title="○○군청 홈페이지 고도화 용역"), "용역"), config)
         self.assertEqual((homepage.excluded_by, homepage.excluded_reason), ("제외키워드", "홈페이지 고도화"))
 
-    def test_product_code_match_also_goes_to_review(self):
-        """공고명에 관심 키워드가 없어도 대표 세부품명번호가 관심 품명코드면 제외 키워드가 있어도 "검토 필요"(2026-10-01)."""
+    def test_product_code_match_alone_is_not_review(self):
+        """관심 품명코드만 맞고 관심 키워드가 없으면 제외 키워드대로 제외 — "검토 필요"는 관심 키워드가 있을 때만(2026-10-01)."""
         from dataclasses import replace
 
         config = replace(self.config, review_conflicts=True,
                          product_codes=[{"code": "6010989901", "name": "실물모형및전시물"}])
         raw = fixtures.notice("P", title="○○군 홍보시설 구매 설치 정비", prdctClsfcNo="6010989901")
-        res = screen.screen(notice_from_raw(raw, "물품"), config)
-        self.assertEqual((res.matched, res.confidence, res.review_exclude, res.matched_product_codes),
-                         (True, "검토필요", "정비", ["실물모형및전시물"]))
-        no_code = fixtures.notice("Q", title="○○군 홍보시설 구매 설치 정비", prdctClsfcNo="1111111111")
-        self.assertEqual(screen.screen(notice_from_raw(no_code, "물품"), config).excluded_by, "제외키워드")
+        self.assertEqual(screen.screen(notice_from_raw(raw, "물품"), config).excluded_by, "제외키워드")
 
     def test_budget_below_minimum_blocks(self):
         result = self._screen(fixtures.notice("X", title="○○과학관 전시", presmptPrce="50000000"))
