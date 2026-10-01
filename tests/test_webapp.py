@@ -399,6 +399,47 @@ class TestServer(unittest.TestCase):
         self.assertIsNone(job["error"])
         self.assertEqual([(p[0].date().isoformat(), p[1].date().isoformat()) for p in RUN_PERIODS], [(begin, end)])
 
+    def _collect_and_wait(self, body):
+        status, job = self.call("/api/collect", body)
+        self.assertEqual(status, 202)
+        for _ in range(100):
+            job = self.call("/api/job")[1]
+            if not job["running"]:
+                break
+            time.sleep(0.05)
+        self.assertIsNone(job["error"])
+        return job
+
+    def test_each_viewer_picks_a_run(self):
+        """사람마다 다른 수집 결과를 골라 본다 — ?run=번호, 목록, 누른 사람 이름, 지워진 번호는 최신으로."""
+        first = self._collect_and_wait({"days": 7, "attachments": False, "name": "김지일"})
+        second = self._collect_and_wait({"days": 1, "attachments": False})
+        self.assertNotEqual(first["run_id"], second["run_id"])
+
+        res = self.call("/api/results")[1]
+        self.assertEqual(res["run"]["id"], second["run_id"], "기본은 최신")
+        self.assertEqual([r["id"] for r in res["runs"]][:2], [second["run_id"], first["run_id"]])
+        listed = {r["id"]: r for r in res["runs"]}
+        self.assertEqual((listed[first["run_id"]]["by"], listed[first["run_id"]]["days"]), ("김지일", 7))
+        self.assertIsNone(listed[second["run_id"]]["by"])
+        self.assertGreater(listed[first["run_id"]]["candidates"], 0)
+
+        mine = self.call(f"/api/results?run={first['run_id']}")[1]
+        self.assertEqual((mine["run"]["id"], mine["missing"]), (first["run_id"], False))
+        gone = self.call("/api/results?run=999999")[1]
+        self.assertEqual((gone["run"]["id"], gone["missing"]), (second["run_id"], True))
+
+    def test_old_runs_are_pruned(self):
+        from webapp.store import Store
+
+        with tempfile.TemporaryDirectory() as d:
+            st = Store(Path(d) / "s.sqlite3")
+            st.KEEP_RUNS = 3
+            ids = [st.save_run("2026-10-01T10:00:00", {"days": 1}, {"candidates": [], "rejected": [], "stats": {}})
+                   for _ in range(5)]
+            self.assertEqual([r["id"] for r in st.list_runs()], ids[-3:][::-1])
+            self.assertIsNone(st.run(ids[0]))
+
     def test_bad_period_and_missing_key(self):
         self.assertEqual(self.call("/api/collect", {"days": 5})[0], 400)
         self.collector._config_loader = load_config  # 서비스키 없는 설정

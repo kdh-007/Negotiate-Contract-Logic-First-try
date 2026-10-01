@@ -341,6 +341,8 @@ function render() {
     ? (stale ? `<span class="job err">⚠ 이 결과는 이전 버전으로 수집됐습니다 — 자격 판정·표시가 최신 규칙과 다를 수 있으니 '나라장터에서 불러오기'를 다시 눌러 주세요.</span><br>` : "")
       + `후보 <b>${all.length}</b>건 중 <b>${shown.length}</b>건 표시 · 강력추천 ${strong} · 싱크로율 높음 <b>${lv("높음")}</b> / 경계선 ${lv("경계선")} / 낮음 ${lv("낮음")}`
       + ` · 조회 ${esc(fmtDt(RUN.stats.period_begin))} ~ ${esc(fmtDt(RUN.stats.period_end))} · 수집 ${esc(fmtDt(RUN.finished_at))}`
+      + (RUN.params.by ? ` (${esc(RUN.params.by)})` : "")
+      + (RUNS.length && RUNS[0].id !== RUN.id ? ` · <span class="newer">더 최근 수집 결과가 있습니다 — '보는 결과'에서 고르세요</span>` : "")
       + (RUN.params.attachments ? "" : " · <span title='첨부 참가자격 미반영'>첨부 자격판정 안 함</span>")
       + (RUN.stats.license_error ? ` · <span class="job err">면허제한정보 조회 실패</span>` : "")
       + (RUN.stats.prespec_requested ? ` · 사전규격 ${RUN.stats.prespec_fetched}건 수집` : " · 사전규격 미수집")
@@ -428,12 +430,29 @@ function renderSearch() {
 $("#qText").addEventListener("input", renderSearch);
 
 // ── 서버 호출 ──
+// ── 보는 수집 결과 — 사람(브라우저)마다 따로 고른다. "latest"면 누가 수집하든 가장 최근 결과를 따라간다 ──
+let VIEW = store.get("viewRun", "latest") || "latest", RUNS = [];
+function setView(v) { VIEW = String(v); store.set("viewRun", VIEW); }
+function runLabel(r) {
+  const span = r.begin ? `${r.begin.slice(5)}~${r.end.slice(5)}` : r.days ? `최근 ${r.days}일`
+    : `${fmtDt(r.period_begin).slice(5, 10)}~${fmtDt(r.period_end).slice(5, 10)}`;
+  return `${fmtDt(r.finished_at).slice(5)} · ${span} · ${r.by || "이름 없음"} · 후보 ${r.candidates ?? "?"}`;
+}
+function renderRunSel() {
+  const sel = $("#runSel");
+  sel.replaceChildren(new Option("가장 최근 결과 (자동)", "latest"), ...RUNS.map((r) => new Option(runLabel(r), String(r.id))));
+  sel.value = RUNS.some((r) => String(r.id) === VIEW) ? VIEW : "latest";
+  sel.disabled = !RUNS.length;
+}
 async function loadResults() {
-  const data = await api("/api/results");
-  RUN = data.run; STATES = data.states; COUNTS = data.comment_counts;
+  const data = await api(VIEW === "latest" ? "/api/results" : `/api/results?run=${encodeURIComponent(VIEW)}`);
+  if (data.missing) setView("latest");  // 고른 결과가 오래돼 지워졌으면 최신으로
+  RUN = data.run; RUNS = data.runs || []; STATES = data.states; COUNTS = data.comment_counts;
+  renderRunSel();
   showJob(data.job);
   render();
 }
+$("#runSel").addEventListener("change", (e) => { setView(e.target.value); loadResults().catch((err) => alert(err.message)); });
 async function setState(key, patch) {
   if (needName()) return;
   try {
@@ -463,7 +482,13 @@ async function pollJob() {
   const job = await api("/api/job").catch(() => null);
   if (!job) return;
   showJob(job);
-  if (!job.running) loadResults();
+  if (job.running) return;
+  // 내가 누른 수집이 끝났으면 내 화면은 그 결과로 고정 — 다른 사람이 나중에 수집해도 바뀌지 않는다
+  if (job.run_id && job.started_at && job.started_at === store.get("myJob", "")) {
+    setView(job.run_id);
+    store.set("myJob", "");
+  }
+  loadResults();
 }
 $("#btnCollect").addEventListener("click", async () => {
   // 불러오기는 누가 돌렸는지 남기지 않으므로 이름 없이도 된다 (참가여부·담당·대화만 이름 필요)
@@ -473,8 +498,9 @@ $("#btnCollect").addEventListener("click", async () => {
     if (custom && (!range.begin || !range.end)) return alert("시작일과 종료일을 모두 고르세요");
     const job = await api("/api/collect", {
       ...range, attachments: $("#optAttach").checked, ai: $("#optAi").checked,
-      prespec: $("#optPrespec").checked,
+      prespec: $("#optPrespec").checked, name: myName(),
     });
+    store.set("myJob", job.started_at);
     showJob(job);
   } catch (e) { alert(e.message); }
 });

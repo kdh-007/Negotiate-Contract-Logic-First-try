@@ -165,10 +165,11 @@ class Job:
     params: dict[str, Any] = field(default_factory=dict)
     log: list[str] = field(default_factory=list)
     error: str | None = None
+    run_id: int | None = None  # 저장된 결과 번호 — 수집을 누른 사람 화면이 이 결과로 고정된다
 
     def snapshot(self) -> dict[str, Any]:
         return {"running": self.running, "started_at": self.started_at, "finished_at": self.finished_at,
-                "params": self.params, "log": self.log[-30:], "error": self.error}
+                "params": self.params, "log": self.log[-30:], "error": self.error, "run_id": self.run_id}
 
 
 class _JobLogHandler(logging.Handler):
@@ -194,7 +195,7 @@ class Collector:
         self._config_loader = config_loader
 
     def start(self, days: int | None, attachments: bool, ai: bool, categories: list[str] | None,
-              prespec: bool = True, begin: str | None = None, end: str | None = None) -> Job:
+              prespec: bool = True, begin: str | None = None, end: str | None = None, by: str | None = None) -> Job:
         """`begin`·`end`("YYYY-MM-DD")를 주면 그 구간, 아니면 최근 `days`일."""
         period = None
         if begin or end:
@@ -208,6 +209,7 @@ class Collector:
                 raise RuntimeError("이미 수집 중입니다")
             self.job = Job(running=True, started_at=datetime.now().isoformat(timespec="seconds"),
                            params={"days": days, "begin": begin if period else None, "end": end if period else None,
+                                   "by": (by or "").strip()[:30] or None,
                                    "attachments": attachments, "ai": ai, "prespec": prespec,
                                    "categories": sorted(cats) if cats else None})
         threading.Thread(target=self._work, args=(self.job, days, attachments, ai, cats, prespec, period),
@@ -275,7 +277,7 @@ class Collector:
                     "period_begin": _iso(stats.period_begin), "period_end": _iso(stats.period_end),
                 },
             }
-            self.store.save_run(job.started_at, job.params, payload)
+            job.run_id = self.store.save_run(job.started_at, job.params, payload)
             log.info("수집 완료: 후보 %d건 · 제외 %d건", len(payload["candidates"]), len(payload["rejected"]))
         except Exception as err:  # 화면에 사유를 그대로 보여준다 (서비스키는 가림)
             key = config.api.service_key if config else ""

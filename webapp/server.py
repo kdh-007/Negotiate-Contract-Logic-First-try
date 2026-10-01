@@ -107,8 +107,12 @@ def make_handler(app: App):
                     "has_ai_key": bool(os.environ.get("ANTHROPIC_API_KEY", "").strip()),
                 })
             if url.path == "/api/results":
+                # ?run=번호 — 사람마다 고른 수집 결과. 없거나 지워진 번호면 최신 결과(missing=True로 알림)
+                wanted = q.get("run", [""])[0]
+                run = app.store.run(int(wanted)) if wanted.isdigit() else None
                 return self._json({
-                    "run": app.store.latest_run(), "states": app.store.states(),
+                    "run": run or app.store.latest_run(), "missing": bool(wanted) and run is None,
+                    "runs": app.store.list_runs(), "states": app.store.states(),
                     "comment_counts": app.store.comment_counts(), "job": app.collector.job.snapshot(),
                 })
             if url.path == "/api/job":
@@ -147,6 +151,7 @@ def make_handler(app: App):
                         ai=bool(data.get("ai", False)),
                         categories=list(cats) if cats else None,
                         prespec=bool(data.get("prespec", True)),
+                        by=str(data.get("name") or "") or None,
                     )
                     return self._json(job.snapshot(), HTTPStatus.ACCEPTED)
                 if url.path == "/api/state":
