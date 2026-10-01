@@ -55,7 +55,10 @@ const F = {
   part: new Set(),
   ai: new Set(),
   sync: new Set(),
+  flag: new Set(),
 };
+// "확인 필요" 칩 분류(2026-10-01 요청) — 버튼 이름 → text_flags의 kind. 여러 개 고르면 그중 하나라도 있는 공고
+const FLAG_FILTER = { "실적 요건": "실적", "현장설명회": "현장설명회", "기술인력": "인력", "건축사사무소": "건축사사무소" };
 
 // ── 탭 ──
 document.querySelectorAll(".tabs [data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
@@ -105,6 +108,7 @@ function renderFilters() {
     chipRow("참가여부", "part", ["미지정", ...(META ? META.statuses : [])], true),
     chipRow("AI 판단", "ai", ["적합", "검토필요", "부적합", "미판정"], true),
     chipRow("싱크로율", "sync", ["높음", "경계선", "낮음", "판정 불가"], true),
+    chipRow("확인 필요", "flag", [...Object.keys(FLAG_FILTER), "없음"], true),
   );
 }
 
@@ -123,6 +127,11 @@ function passes(c) {
   if (F.part.size && !F.part.has(stateOf(c).status || "미지정")) return false;
   if (F.ai.size && !F.ai.has(c.ai ? c.ai.label : "미판정")) return false;
   if (F.sync.size && !F.sync.has(c.sync.level)) return false;
+  if (F.flag.size) {
+    const kinds = new Set((c.text_flags || []).map((f) => f.kind));
+    const hit = [...F.flag].some((opt) => opt === "없음" ? !kinds.size : kinds.has(FLAG_FILTER[opt]));
+    if (!hit) return false;
+  }
   return true;
 }
 
