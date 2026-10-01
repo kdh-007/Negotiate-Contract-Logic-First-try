@@ -164,6 +164,26 @@ function reqHtml(req, mixed) {
   // 항목 사이에 "또는"을 끼워 공고문 "A 또는 B" 모양이 보이게 한다(2026-10-01 요청)
   return `<div class="tip-item"><span class="why">${why}</span>${req.items.map(item).join(`<div class="or-sep">또는</div>`)}</div>`;
 }
+// 팝업 위치 — 열릴 때 남은 공간을 재서 아래가 모자라면 위로 연다(2026-10-01 제보: 화면 아래쪽 카드의 팝업이 잘림).
+// 위아래 모두 모자라면 넓은 쪽으로 열고 그 높이에 맞춰 스크롤한다.
+function placeTip(btn) {
+  const tip = btn.querySelector(".tip");
+  if (!tip) return;
+  tip.classList.remove("up", "right");
+  tip.style.maxHeight = "";
+  const gap = 8, b = btn.getBoundingClientRect(), t = tip.getBoundingClientRect();
+  const below = innerHeight - b.bottom - gap - 6, above = b.top - gap - 6;
+  if (t.height > below && above > below) {
+    tip.classList.add("up");
+    if (t.height > above) tip.style.maxHeight = `${Math.floor(above)}px`;
+  } else if (t.height > below) tip.style.maxHeight = `${Math.max(120, Math.floor(below))}px`;
+  if (t.right > innerWidth - gap) tip.classList.add("right");
+}
+for (const ev of ["mouseover", "focusin"])
+  document.addEventListener(ev, (e) => {
+    const btn = e.target.closest && e.target.closest(".qual");
+    if (btn && !btn.contains(e.relatedTarget)) requestAnimationFrame(() => placeTip(btn));
+  });
 function qualButton(label, cls, aria, body) {
   return `<button type="button" class="b qual ${cls}" aria-label="${esc(aria)}">${esc(label)}<span class="tip" role="tooltip">${body}</span></button>`;
 }
