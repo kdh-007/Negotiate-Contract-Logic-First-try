@@ -165,10 +165,11 @@ class Job:
     params: dict[str, Any] = field(default_factory=dict)
     log: list[str] = field(default_factory=list)
     error: str | None = None
+    run_id: int | None = None  # 저장된 결과 번호 — 수집을 누른 사람 화면만 이 결과로 바뀐다
 
     def snapshot(self) -> dict[str, Any]:
         return {"running": self.running, "started_at": self.started_at, "finished_at": self.finished_at,
-                "params": self.params, "log": self.log[-30:], "error": self.error}
+                "params": self.params, "log": self.log[-30:], "error": self.error, "run_id": self.run_id}
 
 
 class _JobLogHandler(logging.Handler):
@@ -275,7 +276,7 @@ class Collector:
                     "period_begin": _iso(stats.period_begin), "period_end": _iso(stats.period_end),
                 },
             }
-            self.store.save_run(job.started_at, job.params, payload)
+            job.run_id = self.store.save_run(job.started_at, job.params, payload)
             log.info("수집 완료: 후보 %d건 · 제외 %d건", len(payload["candidates"]), len(payload["rejected"]))
         except Exception as err:  # 화면에 사유를 그대로 보여준다 (서비스키는 가림)
             key = config.api.service_key if config else ""

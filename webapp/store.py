@@ -65,18 +65,19 @@ class Store:
             return self._db.execute(sql, args).fetchall()
 
     # ── 수집 결과 ─────────────────────────────────────────────
+    # 최근 KEEP_RUNS회분을 남긴다 — 내가 불러온 결과를 다른 팀원이 새로 불러오기 해도 내 화면에서 계속 보도록(2026-10-01 요청).
+    KEEP_RUNS = 30
+
     def save_run(self, started_at: str, params: dict[str, Any], payload: dict[str, Any]) -> int:
         cur = self._exec(
             "INSERT INTO runs(started_at, finished_at, params, payload) VALUES (?,?,?,?)",
             (started_at, _now(), json.dumps(params, ensure_ascii=False), json.dumps(payload, ensure_ascii=False)),
         )
-        return int(cur.lastrowid)
+        run_id = int(cur.lastrowid)
+        self._exec("DELETE FROM runs WHERE id <= ?", (run_id - self.KEEP_RUNS,))
+        return run_id
 
-    def latest_run(self) -> dict[str, Any] | None:
-        rows = self._query("SELECT * FROM runs WHERE payload IS NOT NULL ORDER BY id DESC LIMIT 1")
-        if not rows:
-            return None
-        row = rows[0]
+    def _run_row(self, row: sqlite3.Row) -> dict[str, Any]:
         return {
             "id": row["id"],
             "started_at": row["started_at"],
@@ -84,6 +85,14 @@ class Store:
             "params": json.loads(row["params"]),
             **json.loads(row["payload"]),
         }
+
+    def latest_run(self) -> dict[str, Any] | None:
+        rows = self._query("SELECT * FROM runs WHERE payload IS NOT NULL ORDER BY id DESC LIMIT 1")
+        return self._run_row(rows[0]) if rows else None
+
+    def run(self, run_id: int) -> dict[str, Any] | None:
+        rows = self._query("SELECT * FROM runs WHERE id=? AND payload IS NOT NULL", (run_id,))
+        return self._run_row(rows[0]) if rows else None
 
     # ── 참가여부·담당 ─────────────────────────────────────────
     def set_state(self, key: str, by: str, status: str | None = None, assignee: str | None = None,

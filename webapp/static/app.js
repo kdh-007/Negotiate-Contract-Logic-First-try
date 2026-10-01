@@ -428,9 +428,16 @@ function renderSearch() {
 $("#qText").addEventListener("input", renderSearch);
 
 // ── 서버 호출 ──
+// ── 보는 수집 결과 — 내가 불러오기 한 결과는 다른 팀원이 나중에 불러오기를 해도 내 화면에서 그대로 유지한다.
+// MY_RUN(브라우저에 기억): 내가 마지막으로 불러온 결과 번호. 없으면 가장 최근 결과.
+// SHOWN: 지금 화면에 띄운 결과 번호 — 보는 도중엔(진행 확인·새로 조회) 다른 결과로 바뀌지 않는다.
+let SHOWN = null;
 async function loadResults() {
-  const data = await api("/api/results");
+  const want = SHOWN || store.get("myRun", "");
+  let data = await api(want ? `/api/results?run=${encodeURIComponent(want)}` : "/api/results");
+  if (data.missing) { store.set("myRun", ""); SHOWN = null; }  // 오래돼 지워진 결과(최근 30회만 보관)면 최신으로
   RUN = data.run; STATES = data.states; COUNTS = data.comment_counts;
+  if (RUN && !data.missing) SHOWN = String(RUN.id);
   showJob(data.job);
   render();
 }
@@ -463,7 +470,14 @@ async function pollJob() {
   const job = await api("/api/job").catch(() => null);
   if (!job) return;
   showJob(job);
-  if (!job.running) loadResults();
+  if (job.running) return;
+  // 내가 누른 수집이 끝났을 때만 새 결과로 바꾼다 — 다른 팀원의 수집이 끝나도 내 화면은 그대로
+  if (job.run_id && job.started_at && job.started_at === store.get("myJob", "")) {
+    store.set("myRun", String(job.run_id));
+    store.set("myJob", "");
+    SHOWN = String(job.run_id);
+  }
+  loadResults();
 }
 $("#btnCollect").addEventListener("click", async () => {
   // 불러오기는 누가 돌렸는지 남기지 않으므로 이름 없이도 된다 (참가여부·담당·대화만 이름 필요)
@@ -475,6 +489,7 @@ $("#btnCollect").addEventListener("click", async () => {
       ...range, attachments: $("#optAttach").checked, ai: $("#optAi").checked,
       prespec: $("#optPrespec").checked,
     });
+    store.set("myJob", job.started_at);
     showJob(job);
   } catch (e) { alert(e.message); }
 });

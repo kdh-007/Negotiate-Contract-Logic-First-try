@@ -399,6 +399,39 @@ class TestServer(unittest.TestCase):
         self.assertIsNone(job["error"])
         self.assertEqual([(p[0].date().isoformat(), p[1].date().isoformat()) for p in RUN_PERIODS], [(begin, end)])
 
+    def _collect_and_wait(self, body):
+        status, job = self.call("/api/collect", body)
+        self.assertEqual(status, 202)
+        for _ in range(100):
+            job = self.call("/api/job")[1]
+            if not job["running"]:
+                break
+            time.sleep(0.05)
+        self.assertIsNone(job["error"])
+        return job
+
+    def test_viewer_keeps_own_run(self):
+        """내가 불러온 결과(?run=번호)는 다른 팀원이 나중에 불러오기를 해도 그대로 받을 수 있다. 지워진 번호면 최신."""
+        mine = self._collect_and_wait({"days": 7, "attachments": False})
+        other = self._collect_and_wait({"days": 1, "attachments": False})
+        self.assertNotEqual(mine["run_id"], other["run_id"])
+        self.assertEqual(self.call("/api/results")[1]["run"]["id"], other["run_id"], "번호 없으면 최신")
+        res = self.call(f"/api/results?run={mine['run_id']}")[1]
+        self.assertEqual((res["run"]["id"], res["run"]["params"]["days"], res["missing"]), (mine["run_id"], 7, False))
+        gone = self.call("/api/results?run=999999")[1]
+        self.assertEqual((gone["run"]["id"], gone["missing"]), (other["run_id"], True))
+
+    def test_old_runs_are_pruned(self):
+        from webapp.store import Store
+
+        with tempfile.TemporaryDirectory() as d:
+            st = Store(Path(d) / "s.sqlite3")
+            st.KEEP_RUNS = 3
+            ids = [st.save_run("2026-10-01T10:00:00", {"days": 1}, {"candidates": [], "rejected": [], "stats": {}})
+                   for _ in range(5)]
+            self.assertIsNone(st.run(ids[1]))
+            self.assertEqual([st.run(i)["id"] for i in ids[-3:]], ids[-3:])
+
     def test_bad_period_and_missing_key(self):
         self.assertEqual(self.call("/api/collect", {"days": 5})[0], 400)
         self.collector._config_loader = load_config  # 서비스키 없는 설정
