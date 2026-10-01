@@ -49,7 +49,6 @@ function needName() {
 // ── 상태 ──
 let META = null, RUN = null, STATES = {}, COUNTS = {}, PAST = null;
 const F = {
-  conf: store.get("f.conf", "전체"),
   kind: "본공고+사전규격",
   cat: new Set(JSON.parse(store.get("f.cat", "[]"))),
   part: new Set(),
@@ -81,7 +80,6 @@ function chipRow(label, key, options, multi, disabled = {}) {
     b.addEventListener("click", () => {
       if (multi) { F[key].has(opt) ? F[key].delete(opt) : F[key].add(opt); }
       else F[key] = opt;
-      if (key === "conf") store.set("f.conf", F.conf);
       if (key === "cat") store.set("f.cat", JSON.stringify([...F.cat]));
       render();
     });
@@ -92,7 +90,6 @@ function chipRow(label, key, options, multi, disabled = {}) {
 function renderFilters() {
   const box = $("#filters");
   box.replaceChildren(
-    chipRow("추천", "conf", ["전체", "강력추천", "참고용", "검토필요"], false),
     chipRow("공고", "kind", ["본공고+사전규격", "본공고", "사전규격"], false),
     chipRow("낙찰방법", "cat", META ? META.categories : ["협상", "규격가격동시입찰", "입찰"], true),
     chipRow("참가여부", "part", ["미지정", ...(META ? META.statuses : [])], true),
@@ -103,7 +100,6 @@ function renderFilters() {
 
 function stateOf(c) { return STATES[c.key] || {}; }
 function passes(c) {
-  if (F.conf !== "전체" && c.confidence !== F.conf) return false;
   if (F.kind !== "본공고+사전규격" && c.kind !== F.kind) return false;
   if (F.cat.size && !F.cat.has(c.category)) return false;
   if (F.part.size && !F.part.has(stateOf(c).status || "미지정")) return false;
@@ -195,6 +191,7 @@ function qualBadge(q) {
     // 부족 개수("최소 N개")는 여러 뜻으로 읽혀서 표시하지 않는다(2026-09-30 사용자 결정) — 요건 목록의 ✗로 본다
     if (p.status === "미달") cls = "bad";
     else if (p.status === "충족") cls = "good";
+    else cls = "muted";  // 제한 없음·미확인은 흐리게 — 눈에 띄어야 할 칩은 문제·확인 필요 칩(2026-10-01 배치 정리)
     // 요건 전체를 한 목록으로 — 미달 요건 먼저, 충족 요건 뒤. 보유 ✓ 초록, 미보유 ✗ 붉은색
     const ok = p.satisfied || [];
     const all = [...p.missing, ...ok];
@@ -224,22 +221,14 @@ function taskFit(c) {
 }
 // 검토 필요 카드의 "최다 유사" 줄 앞에 붙는 과업 유사 칩 (2026-10-01 요청 — 위쪽 배지 줄에서 옮김)
 function fitChip(c) {
-  // 싱크로율 숫자는 카드 오른쪽에 있으니 팝업엔 "공고 원문 중 지일 실적과 겹치는 과업" 발췌를 보여준다
-  const f = taskFit(c), best = (c.sync && c.sync.top || [])[0];
-  const ex = (best && best.excerpts) || [];
-  let body = `<div class="tip-title${f.cls ? " " + f.cls : ""}">${esc(f.label)}</div>`;
-  if (best) body += `<div class="tip-label">가장 비슷한 지일 실적 — (${esc(best.year)}) ${esc(best.title)}</div>`;
-  const scope = c.scope_items || [];
-  if (scope.length) {
-    // 공고문이 "사업 범위"로 정리한 과업 목록이 있으면 그걸 그대로 보여준다(2026-10-01 사용자 요청)
-    body += `<div class="tip-label">공고문 사업 범위</div>` + scope.map((x) => `<div class="tip-item quote">· ${esc(x)}</div>`).join("");
-  } else if (ex.length) {
-    body += `<div class="tip-label">공고 원문에서 겹치는 과업</div>`
-      + ex.map((e) => `<div class="tip-item quote"><span class="tag">${esc(e.tag)}</span>${esc(e.text)}</div>`).join("");
-  } else {
-    const note = !(c.sync && c.sync.basis === "과업 원문") ? "첨부 과업 내용을 읽지 못해 공고명으로만 비교했습니다."
-      : best && !("excerpts" in best) ? "이 수집 결과엔 원문 발췌가 없습니다 — 서버를 다시 켠 뒤 '나라장터에서 불러오기'를 다시 눌러 주세요."
-      : "겹치는 과업을 원문에서 찾지 못했습니다.";
+  // 팝업엔 공고문의 "사업 범위" 목록만 보여준다(2026-10-01 사용자 요청 — 실적명·태그 발췌는 뺌)
+  const f = taskFit(c), scope = c.scope_items || [];
+  let body = `<div class="tip-title${f.cls ? " " + f.cls : ""}">${esc(f.label)} — 공고문 사업 범위</div>`;
+  if (scope.length) body += scope.map((x) => `<div class="tip-item quote">· ${esc(x)}</div>`).join("");
+  else {
+    const note = !("scope_items" in c) ? "이 수집 결과엔 사업 범위 목록이 없습니다 — 서버를 다시 켠 뒤 '나라장터에서 불러오기'를 다시 눌러 주세요."
+      : !(c.sync && c.sync.basis === "과업 원문") ? "첨부 과업 내용을 읽지 못했습니다."
+      : "첨부 공고문에서 사업 범위 목록을 찾지 못했습니다.";
     body += `<div class="tip-note">${note}</div>`;
   }
   return qualButton(f.label, f.cls, f.label, body);
@@ -253,14 +242,13 @@ function badges(c) {
     out.push(chip(`제외 키워드 "${c.review_exclude}" · 관심 "${(c.matched_keywords || []).join(", ")}"`, "warn", "검토 필요",
       `공고명에 제외 키워드 「${esc(c.review_exclude)}」와 관심 키워드 「${esc((c.matched_keywords || []).join(", "))}」가 함께 있어 빼지 않고 남겼습니다. 참가여부를 남겨 주시면 판단 기준을 고치는 데 씁니다.`));
   }
-  else if (c.confidence === "강력추천") out.push(chip("강력추천", "star", "강력추천", "관심 키워드와 관심 품명·업종 코드가 모두 맞는 공고입니다."));
-  else if (c.confidence) out.push(chip(c.confidence, "", c.confidence, "관심 키워드나 관심 품명코드 중 하나만 맞는 공고입니다."));
-  out.push(chip(c.work_type, "", `업무 구분: ${c.work_type}`, "나라장터가 분류한 업무 종류(용역·물품·공사)입니다."));
+  // 강력추천/참고용 표시는 칩·추천 필터·요약줄·탭 건수 모두 뺐다(2026-10-01 사용자 요청)
   if (c.kind === "사전규격") {
     out.push(chip("사전규격", "prespec", "사전규격", "입찰공고 전 규격 공개 단계 — 의견등록 마감까지 규격 의견을 낼 수 있습니다."));
     if (c.linked_bid_notices && c.linked_bid_notices.length)
       out.push(chip("본공고 게시됨", "good", "본공고 게시됨", `이 사전규격으로 나온 본공고: ${esc(c.linked_bid_notices.join(", "))}`, "good"));
   } else if (c.category) out.push(chip(c.category, "info", `유형: ${c.category}`, c.award_method ? `낙찰 방법: ${esc(c.award_method)}` : ""));
+  out.push(chip(c.work_type, "", `업무 구분: ${c.work_type}`, "나라장터가 분류한 업무 종류(용역·물품·공사)입니다."));
   if (c.is_re_notice) out.push(chip("재공고", "warn", "재공고", "유찰 등으로 다시 낸 공고입니다."));
   if (c.ai) {
     const cls = c.ai.label === "적합" ? "good" : c.ai.label === "부적합" ? "bad" : "warn";
@@ -291,7 +279,7 @@ function regionBadge(c) {
     return pop(`지역제한 ${c.regions.slice(0, 2).join("·")}${c.regions.length > 2 ? " 외" : ""}`, "warn", "나라장터 참가가능지역",
       [esc(c.regions.join(", ")), company ? `<span class="why">지일 소재지</span>${esc(company)}` : ""],
       "시·도 이름을 알아볼 수 없어 충족 여부를 판정하지 못했습니다.");
-  return pop("지역제한 정보 없음", "", "지역제한 정보 없음", [],
+  return pop("지역제한 정보 없음", "muted", "지역제한 정보 없음", [],
     "나라장터 참가가능지역·첨부 공고문 모두 지역 요건을 찾지 못했습니다 (제한이 없거나 등록되지 않은 것).");
 }
 // 판정하지 않는 글로 된 요건 — 실적·현장설명회·기술인력. 커서를 대면 팝업으로 원문 문장(현장설명회는 일시도)
@@ -314,16 +302,18 @@ function jointBadge(c) {
       : "나라장터 공동수급 정보 기준입니다. 공고문에 따로 적힌 조건이 있는지 확인하세요."}</div>`;
   return qualButton(`공동수급 ${c.joint.label}`, allowed ? "info" : "", `공동수급 ${c.joint.label}`, body);
 }
-function badges2(c) {
-  const out = [qualBadge(c.qualification), ...flagBadges(c)];
+// 참가 조건 칩을 묶음별로 — 자격 / 지역·공동수급 / 확인 필요. 공고 기본 정보(맨 위 줄)와 섞이지 않게 아래 칸으로 뺐다
+// (2026-10-01 요청: "한 공고에 정보가 너무 많다 — 전부 필요하니 배치를 정리해 달라")
+function conditions(c) {
+  const groups = [["자격", qualBadge(c.qualification)]];
   // 사전규격엔 참가가능지역·공동수급 API 정보가 없다 — 첨부에서 지역 요건을 찾았을 때만 표시
   if (c.kind === "사전규격") {
-    if (c.region_check && c.region_check.status !== "미확인") out.push(regionBadge(c));
-    return out.join("");
-  }
-  out.push(regionBadge(c));
-  out.push(jointBadge(c));
-  return out.join("");
+    if (c.region_check && c.region_check.status !== "미확인") groups.push(["지역", regionBadge(c)]);
+  } else groups.push(["지역·공동수급", regionBadge(c) + jointBadge(c)]);
+  const flags = flagBadges(c);
+  if (flags.length) groups.push(["확인 필요", flags.join("")]);
+  return `<div class="conds">${groups.filter(([, h]) => h)
+    .map(([label, html]) => `<div class="cg"><span class="cl">${label}</span><span class="cc">${html}</span></div>`).join("")}</div>`;
 }
 
 function card(c, withActions = true) {
@@ -338,7 +328,7 @@ function card(c, withActions = true) {
   el.innerHTML = `
     <div class="card-body">
       <div class="card-main">
-        <div class="badges">${badges(c)}${badges2(c)}</div>
+        <div class="badges">${badges(c)}</div>
         <div class="title">${c.detail_url ? `<a href="${esc(c.detail_url)}" target="_blank" rel="noopener" title="나라장터에서 공고 열기">${esc(c.title)} <span class="ext" aria-hidden="true">↗</span></a>` : esc(c.title)}</div>
         <dl class="meta">
           <div><dt>${c.kind === "사전규격" ? "의견등록 마감" : "입찰 마감"}</dt><dd>${esc(fmtDt(c.deadline))}${dd} ${note}</dd></div>
@@ -346,6 +336,7 @@ function card(c, withActions = true) {
           <div><dt>사업금액</dt><dd>${esc(won(c.budget))}</dd></div>
           ${c.excluded_reason ? `<div class="wide"><dt>제외 사유</dt><dd>${esc(c.excluded_reason)}${(c.match_explain || []).length ? `<ul class="explain">${c.match_explain.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}</dd></div>` : ""}
         </dl>
+        ${conditions(c)}
         <div class="why simline">${c.review_exclude ? fitChip(c) + " " : ""}최다 유사: ${s.top[0] ? `(${esc(s.top[0].year)}) ${esc(s.top[0].title)}` : "없음"} · 근거: ${esc(s.basis)}</div>
       </div>
       <button type="button" class="card-side lv-${esc(s.level)}" title="눌러서 비슷한 과거 실적 보기">
@@ -406,7 +397,6 @@ function render() {
   const all = RUN ? RUN.candidates : [];
   const shown = all.filter(passes);
   const lv = (l) => shown.filter((c) => c.sync.level === l).length;
-  const strong = shown.filter((c) => c.confidence === "강력추천").length;
   // 예전 버전 코드로 수집한 결과면 판정·팝업이 최신 규칙과 다를 수 있다 — 다시 불러오라고 알린다
   const stale = RUN && META && META.result_format && (RUN.format || 0) < Math.max(META.result_format, APP_FORMAT);
   // 화면 파일은 git pull만으로 바로 새 버전이 되지만 서버(수집·판정 코드)는 다시 켜야 바뀐다 — 서버가 예전 코드면 알린다
@@ -414,7 +404,7 @@ function render() {
   $("#summary").innerHTML = RUN
     ? (oldServer ? `<span class="job err">⚠ 서버가 예전 코드로 실행 중입니다 — Git Bash에서 Ctrl+C 후 'bash webapp/start.sh'로 다시 켜고 '나라장터에서 불러오기'를 다시 눌러 주세요.</span><br>`
       : stale ? `<span class="job err">⚠ 이 결과는 이전 버전으로 수집됐습니다 — 자격 판정·표시가 최신 규칙과 다를 수 있으니 '나라장터에서 불러오기'를 다시 눌러 주세요.</span><br>` : "")
-      + `후보 <b>${all.length}</b>건 중 <b>${shown.length}</b>건 표시 · 강력추천 ${strong} · 싱크로율 높음 <b>${lv("높음")}</b> / 경계선 ${lv("경계선")} / 낮음 ${lv("낮음")}`
+      + `후보 <b>${all.length}</b>건 중 <b>${shown.length}</b>건 표시 · 싱크로율 높음 <b>${lv("높음")}</b> / 경계선 ${lv("경계선")} / 낮음 ${lv("낮음")}`
       + ` · 조회 ${esc(fmtDt(RUN.stats.period_begin))} ~ ${esc(fmtDt(RUN.stats.period_end))} · 수집 ${esc(fmtDt(RUN.finished_at))}`
       + (RUN.params.attachments ? "" : " · <span title='첨부 참가자격 미반영'>첨부 자격판정 안 함</span>")
       + (RUN.stats.license_error ? ` · <span class="job err">면허제한정보 조회 실패</span>` : "")
@@ -444,7 +434,7 @@ function render() {
       h.className = "section" + (note ? " review" : "");
       h.innerHTML = note
         ? `${kind} ${list.length}건<small>${esc(note)}</small>`
-        : `${kind} ${list.length}건<small>강력추천 ${list.filter((c) => c.confidence === "강력추천").length}건</small>`;
+        : `${kind} ${list.length}건`;
       parts.push(h, grid(list, true));
     }
     live.replaceChildren(...parts);
