@@ -201,8 +201,18 @@ function taskFit(c) {
 }
 // 검토 필요 카드의 "최다 유사" 줄 앞에 붙는 과업 유사 칩 (2026-10-01 요청 — 위쪽 배지 줄에서 옮김)
 function fitChip(c) {
-  const f = taskFit(c);
-  return chip(f.label, f.cls, f.label, esc(f.tip), f.cls);
+  // 싱크로율 숫자는 카드 오른쪽에 있으니 팝업엔 "공고 원문 중 지일 실적과 겹치는 과업" 발췌를 보여준다
+  const f = taskFit(c), best = (c.sync && c.sync.top || [])[0];
+  const ex = (best && best.excerpts) || [];
+  let body = `<div class="tip-title${f.cls ? " " + f.cls : ""}">${esc(f.label)}</div>`;
+  if (best) body += `<div class="tip-label">가장 비슷한 지일 실적 — (${esc(best.year)}) ${esc(best.title)}</div>`;
+  if (ex.length) {
+    body += `<div class="tip-label">공고 원문에서 겹치는 과업</div>`
+      + ex.map((e) => `<div class="tip-item quote"><span class="tag">${esc(e.tag)}</span>${esc(e.text)}</div>`).join("");
+  } else {
+    body += `<div class="tip-note">${c.sync && c.sync.basis === "과업 원문" ? "겹치는 과업을 원문에서 찾지 못했습니다." : "첨부 과업 내용을 읽지 못해 공고명으로만 비교했습니다."}</div>`;
+  }
+  return qualButton(f.label, f.cls, f.label, body);
 }
 function byTaskFit(list) {
   return [...list].sort((a, b) => (taskFit(b).rank - taskFit(a).rank) || ((b.sync?.score ?? -1) - (a.sync?.score ?? -1)));
