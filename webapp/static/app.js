@@ -153,6 +153,14 @@ const QUAL_EMPTY = {
 const KIND_TAG = { industry: "업종", product: "품명" };
 // 같은 이름이 한 요건 안에 두 번 나오면 한 번만 — 수집 쪽에서 막았어도, 예전에 저장된 결과까지 깨끗하게 보이도록 화면에서도 거른다
 const uniqBy = (list, key) => list.filter((x, i) => list.findIndex((y) => key(y) === key(x)) === i);
+// 이름 안의 "또는"(공고문이 "A 또는 B"로 적은 대신 인정 업종)은 판정 색(초록·붉은) 대신 일반 글자색으로 — 항목 사이 "또는"과 같은 모양
+const labelHtml = (label) => esc(label).replace(/ 또는 /g, ` <span class="or-word">또는</span> `);
+// 조합 안 면허를 잇는 조사 — 앞 이름의 마지막 글자 받침 있으면 "과", 없으면 "와"(맨 뒤 "(코드)"는 빼고 봄)
+function joinParticle(label) {
+  const ch = [...label.replace(/\s*\([^()]*\)\s*$/, "").replace(/[^가-힣]/g, "")].pop();
+  if (!ch) return "과(와)";
+  return (ch.charCodeAt(0) - 0xac00) % 28 ? "과" : "와";
+}
 function reqHtml(req, mixed) {
   if (req.combos) req = { ...req, combos: req.combos.map((c) => ({ ...c, rows: uniqBy(c.rows, (r) => r.label) })) };
   else if (req.items) req = { ...req, items: uniqBy(req.items, (i) => i.label) };
@@ -160,11 +168,13 @@ function reqHtml(req, mixed) {
   const done = req.combos ? req.combos.some((c) => c.held) : req.any_of && req.items.some((i) => i.held);
   const mark = (held) => held ? "✓" : done ? "–" : "✗";
   const cls = (held) => held ? "held" : done ? "moot" : "";
-  const item = (i) => `<div class="tip-sub ${cls(i.held)}">${mark(i.held)} ${mixed ? `<span class="kind">${KIND_TAG[i.kind]}</span> ` : ""}${esc(i.label)}${i.via ? ` <small>← ${esc(i.via)}</small>` : ""}</div>`;
+  const item = (i) => `<div class="tip-sub ${cls(i.held)}">${mark(i.held)} ${mixed ? `<span class="kind">${KIND_TAG[i.kind]}</span> ` : ""}${labelHtml(i.label)}${i.via ? ` <small>← ${esc(i.via)}</small>` : ""}</div>`;
   if (req.combos) {
     // 나라장터 원문 "[A]과 [B] 업종 또는 [C]과 [D] 업종"처럼 조합(세트)으로 — 조합 하나를 다 갖추면 충족
-    const row = (r, j) => `<div class="combo-row ${cls(r.held)}">`
-      + `<span class="plus">${j ? "+" : ""}</span>${mark(r.held)} ${esc(r.label)}${r.via ? ` <small>← ${esc(r.via)}</small>` : ""}</div>`;
+    // 면허 사이는 "+" 대신 "A과 / B"처럼 앞 줄 끝에 조사를 붙인다(2026-10-01 요청)
+    const row = (r, j, rows) => `<div class="combo-row ${cls(r.held)}">`
+      + `${mark(r.held)} ${labelHtml(r.label)}${j < rows.length - 1 ? `<span class="or-word">${joinParticle(r.label)}</span>` : ""}`
+      + `${r.via ? ` <small>← ${esc(r.via)}</small>` : ""}</div>`;
     const circled = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮";
     return `<div class="tip-item"><span class="why">아래 ${req.combos.length}개 조합 중 하나를 모두 갖추면 충족${done ? " — 보유로 충족" : ""}</span>`
       + req.combos.map((c, i) => `<div class="tip-sub combo"><span class="no">${circled[i] || `${i + 1}.`}</span><div>${c.rows.map(row).join("")}</div></div>`).join("") + `</div>`;
