@@ -104,6 +104,16 @@ class TestFlags(unittest.TestCase):
         items = ["8) 입찰공고일 기준으로 최근 3년 이내에 … 전시장의 제작·설치 실적이 단일 건으로 10억원 이상 준공실적이 있는 업체"]
         self.assertEqual([f["kind"] for f in flag_requirements(items)], ["실적"])
 
+    def test_track_record_not_restricted_or_scoring_is_ignored(self):
+        """실적 제한이 없다는 안내·적격심사 평가(배점) 설명은 실적 요건이 아니다(2026-10-01 제보: 부산 50+복합지원센터)."""
+        for s in ["1) 수행능력평가 중 시공경험평가는 시공실적으로 입찰참가자격을 제한하지 아니한 입찰이며, 평가대상 업종 및 "
+                  "평가비율은 실내건축공사 100%, 849,560,000원 (추정가격)입니다.",
+                  "최근 5년간 유사용역 수행실적 10억원 이상: 배점 5점"]:
+            self.assertEqual(flag_requirements([s]), [], s)
+        # "적격심사 세부기준에 따라" 단일실적을 요구하는 건 참가 요건 — 그대로 잡는다
+        keep = "1) 최근 5년 이내에 '조달청 일반용역 적격심사 세부기준'에 따라 단일실적 334백만원 이상 실물모형을 제작·설치한 실적을 보유한 업체"
+        self.assertEqual([f["kind"] for f in flag_requirements([keep])], ["실적"])
+
     def test_site_briefing_mandatory_with_date(self):
         items = ["5) 사업 현장 설명회에 참가한 업체(불참자는 입찰에 참여 할 수 없음)"]
         full = "나. 현장설명회 : 2026. 10. 7.(수) 14:00, 완도군청 소회의실"
