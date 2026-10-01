@@ -337,7 +337,7 @@ function card(c, withActions = true) {
           ${c.excluded_reason ? `<div class="wide"><dt>제외 사유</dt><dd>${esc(c.excluded_reason)}${(c.match_explain || []).length ? `<ul class="explain">${c.match_explain.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}</dd></div>` : ""}
         </dl>
         ${conditions(c)}
-        <div class="why simline">${c.review_exclude ? fitChip(c) + " " : ""}최다 유사: ${s.top[0] ? `(${esc(s.top[0].year)}) ${esc(s.top[0].title)}` : "없음"} · 근거: ${esc(s.basis)}</div>
+        ${c.review_exclude ? `<div class="simline">${fitChip(c)}</div>` : ""}
       </div>
       <button type="button" class="card-side lv-${esc(s.level)}" title="눌러서 비슷한 과거 실적 보기">
         <span class="pct">${pct(s.score)}</span>
