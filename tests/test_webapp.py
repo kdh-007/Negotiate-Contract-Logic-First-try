@@ -64,6 +64,16 @@ def config_with_key():
     return config
 
 
+class TestFormatInSync(unittest.TestCase):
+    def test_app_js_expects_current_result_format(self):
+        """화면(app.js APP_FORMAT)과 서버(RESULT_FORMAT)가 같은 형식 번호여야 "서버 재시작 필요" 경고가 맞게 뜬다."""
+        import re
+        from webapp.collect import RESULT_FORMAT
+
+        js = (Path(__file__).resolve().parent.parent / "webapp" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertEqual(int(re.search(r"const APP_FORMAT = (\d+);", js).group(1)), RESULT_FORMAT)
+
+
 class TestSyncLevel(unittest.TestCase):
     def test_levels(self):
         self.assertEqual(level(None), "판정 불가")
