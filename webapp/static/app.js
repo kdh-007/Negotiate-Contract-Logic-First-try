@@ -62,9 +62,10 @@ const F = {
 const FLAG_FILTER = { "실적 요건": "실적", "현장설명회": "현장설명회", "기술인력": "인력", "건축사사무소": "건축사사무소" };
 
 // ── 탭 ──
-document.querySelectorAll(".tabs [data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+document.querySelectorAll(".tabs button[data-tab]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 function showTab(name) {
-  document.querySelectorAll(".tabs [data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll(".tabs button[data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll(".tabsearch input").forEach((i) => { i.hidden = i.dataset.tab !== name; });
   document.querySelectorAll(".tab").forEach((s) => { s.hidden = s.id !== `tab-${name}`; });
   store.set("tab", name);
   if (name === "past") loadPast();
