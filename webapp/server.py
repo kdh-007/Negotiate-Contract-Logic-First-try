@@ -109,6 +109,16 @@ def make_handler(app: App):
             if url.path == "/api/results":
                 # ?run=번호 — 그 브라우저가 보고 있는(직접 불러온) 결과. 없거나 지워진 번호면 최신 결과(missing=True)
                 wanted = q.get("run", [""])[0]
+                # ?have=번호 — 브라우저가 이미 그 결과를 들고 있으면(1분마다 새로 조회) 결과 본문은 다시 보내지 않는다.
+                # 제외 공고가 수천 건이면 본문이 수 MB라 매번 보내고 다시 그리면 화면이 느려진다(2026-10-01 제보)
+                have = q.get("have", [""])[0]
+                if have.isdigit():
+                    current = app.store.run_id_if_exists(int(wanted) if wanted.isdigit() else None)
+                    if current is not None and current == int(have) and (not wanted.isdigit() or int(wanted) == current):
+                        return self._json({
+                            "run": None, "same": True, "missing": False, "states": app.store.states(),
+                            "comment_counts": app.store.comment_counts(), "job": app.collector.job.snapshot(),
+                        })
                 run = app.store.run(int(wanted)) if wanted.isdigit() else None
                 return self._json({
                     "run": run or app.store.latest_run(), "missing": bool(wanted) and run is None,

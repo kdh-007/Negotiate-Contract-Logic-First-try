@@ -430,6 +430,16 @@ class TestServer(unittest.TestCase):
         self.assertEqual((res["run"]["id"], res["run"]["params"]["days"], res["missing"]), (mine["run_id"], 7, False))
         gone = self.call("/api/results?run=999999")[1]
         self.assertEqual((gone["run"]["id"], gone["missing"]), (other["run_id"], True))
+        # 1분마다 하는 새로 조회 — 들고 있는 결과(have)와 같으면 본문을 안 보내고, 다르면 보낸다
+        same = self.call(f"/api/results?run={mine['run_id']}&have={mine['run_id']}")[1]
+        self.assertEqual((same["run"], same.get("same")), (None, True))
+        self.assertIn("states", same)
+        latest = self.call(f"/api/results?have={other['run_id']}")[1]
+        self.assertEqual((latest["run"], latest.get("same")), (None, True))
+        changed = self.call(f"/api/results?have={mine['run_id']}")[1]
+        self.assertEqual((changed["run"]["id"], changed.get("same")), (other["run_id"], None), "최신이 바뀌었으면 본문")
+        gone2 = self.call("/api/results?run=999999&have=999999")[1]
+        self.assertEqual((gone2["run"]["id"], gone2["missing"]), (other["run_id"], True))
 
     def test_old_runs_are_pruned(self):
         from webapp.store import Store

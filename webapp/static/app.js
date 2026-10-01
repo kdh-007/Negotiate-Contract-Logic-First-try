@@ -37,7 +37,8 @@ applyTheme(store.get("theme", "system"));
 // ── 내 이름 ──
 const nameInput = $("#myName");
 nameInput.value = store.get("myName", "");
-nameInput.addEventListener("input", () => { store.set("myName", nameInput.value.trim()); render(); });
+nameInput.addEventListener("input", () => store.set("myName", nameInput.value.trim()));
+nameInput.addEventListener("input", debounce(render, 300));
 const myName = () => nameInput.value.trim();
 function needName() {
   if (myName()) return false;
@@ -63,6 +64,15 @@ function showTab(name) {
   document.querySelectorAll(".tab").forEach((s) => { s.hidden = s.id !== `tab-${name}`; });
   store.set("tab", name);
   if (name === "past") loadPast();
+  // 제외·검색 탭은 보일 때만 그린다 — 안 보이는 탭까지 매번 다시 그리면 느려진다
+  if (name === "rejected") renderRejected();
+  if (name === "search") renderSearch();
+}
+const tabOn = (name) => !$(`#tab-${name}`).hidden;
+// 글자를 칠 때마다 다시 그리지 않고 입력이 멈추면 한 번만(0.2초)
+function debounce(fn, ms = 200) {
+  let t = null;
+  return () => { clearTimeout(t); t = setTimeout(fn, ms); };
 }
 
 // ── 필터 칩 ──
@@ -453,8 +463,8 @@ function render() {
   $("#rejSummary").textContent = RUN
     ? `수집 범위(수의계약 제외) ${RUN.stats.in_scope}건 중 필터에서 빠진 ${rej.length}건 — ` + Object.entries(reasons).map(([k, v]) => `${k} ${v}`).join(" · ")
     : "수집 결과가 없습니다.";
-  renderRejected();
-  renderSearch();
+  if (tabOn("rejected")) renderRejected();
+  if (tabOn("search")) renderSearch();
 }
 
 // ── 제외 공고 분류 (제외 사유 · 공고 · 낙찰방법 · 업무구분) ──
@@ -472,6 +482,9 @@ function countBy(list, fn) {
   list.forEach((c) => { const k = fn(c); if (k != null) out[k] = (out[k] || 0) + 1; });
   return Object.fromEntries(Object.entries(out).sort((a, b) => b[1] - a[1]));
 }
+// 제외 공고는 수천 건일 수 있어 한 번에 50건씩만 그린다(2026-10-01 제보: 4천 건이면 요소 30만 개, 다시 그릴 때마다 1초 넘게 멈춤)
+const REJ_PAGE = 50;
+let rejLimit = REJ_PAGE;
 function renderRejected() {
   const q = $("#rejQ").value;
   const rej = (RUN ? RUN.rejected : []).filter((c) => textHit(c, q));
@@ -484,13 +497,25 @@ function renderRejected() {
     return `<div class="rej-row"><span class="rej-key">${k.label}</span>${chip("", "전체", total)}${Object.entries(counts).map(([v, n]) => chip(v, v, n)).join("")}</div>`;
   }).join("") : "";
   const shown = rej.filter((c) => matches(c));
-  $("#rejList").replaceChildren(shown.length ? grid(shown, false)
-    : emptyBox(rej.length ? "고른 분류에 해당하는 공고가 없습니다." : q.trim() ? "검색어와 일치하는 제외 공고가 없습니다." : "제외된 공고가 없습니다."));
+  if (!shown.length) {
+    $("#rejList").replaceChildren(emptyBox(rej.length ? "고른 분류에 해당하는 공고가 없습니다." : q.trim() ? "검색어와 일치하는 제외 공고가 없습니다." : "제외된 공고가 없습니다."));
+    return;
+  }
+  const parts = [grid(shown.slice(0, rejLimit), false)];
+  if (shown.length > rejLimit) {
+    const more = document.createElement("button");
+    more.className = "more";
+    more.textContent = `더 보기 (${rejLimit}건 표시 · ${shown.length - rejLimit}건 남음)`;
+    more.addEventListener("click", () => { rejLimit += REJ_PAGE * 2; renderRejected(); });
+    parts.push(more);
+  }
+  $("#rejList").replaceChildren(...parts);
 }
 $("#rejFilters").addEventListener("click", (e) => {
   const b = e.target.closest(".rej-chip");
   if (!b) return;
   REJ_FILTER[b.dataset.k] = REJ_FILTER[b.dataset.k] === b.dataset.v ? "" : b.dataset.v;
+  rejLimit = REJ_PAGE;
   renderRejected();
 });
 
@@ -502,20 +527,26 @@ function renderSearch() {
   const hit = pool.filter((c) => [c.title, c.demand_institution, c.notice_institution, c.notice_no].some((v) => (v || "").toLowerCase().includes(q)));
   box.replaceChildren(hit.length ? grid(hit.slice(0, 60), true) : emptyBox("수집된 공고 중 일치하는 공고가 없습니다."));
 }
-$("#qText").addEventListener("input", renderSearch);
-$("#liveQ").addEventListener("input", render);
-$("#rejQ").addEventListener("input", renderRejected);
+$("#qText").addEventListener("input", debounce(renderSearch));
+$("#liveQ").addEventListener("input", debounce(render));
+$("#rejQ").addEventListener("input", debounce(() => { rejLimit = REJ_PAGE; renderRejected(); }));
 
 // ── 서버 호출 ──
 // ── 보는 수집 결과 — 내가 불러오기 한 결과는 다른 팀원이 나중에 불러오기를 해도 내 화면에서 그대로 유지한다.
 // MY_RUN(브라우저에 기억): 내가 마지막으로 불러온 결과 번호. 없으면 가장 최근 결과.
 // SHOWN: 지금 화면에 띄운 결과 번호 — 보는 도중엔(진행 확인·새로 조회) 다른 결과로 바뀌지 않는다.
 let SHOWN = null;
-async function loadResults() {
+async function loadResults(quiet = false) {
   const want = SHOWN || store.get("myRun", "");
-  let data = await api(want ? `/api/results?run=${encodeURIComponent(want)}` : "/api/results");
+  // 1분마다 하는 새로 조회(quiet)는 들고 있는 결과 번호를 알려 같으면 본문(수 MB)을 안 받는다 — 참가여부·대화 건수만 갱신
+  const params = new URLSearchParams();
+  if (want) params.set("run", want);
+  if (quiet && RUN) params.set("have", String(RUN.id));
+  const qs = params.toString();
+  let data = await api(`/api/results${qs ? "?" + qs : ""}`);
   if (data.missing) { store.set("myRun", ""); SHOWN = null; }  // 오래돼 지워진 결과(최근 30회만 보관)면 최신으로
-  RUN = data.run; STATES = data.states; COUNTS = data.comment_counts;
+  if (!data.same) { RUN = data.run; rejLimit = REJ_PAGE; }
+  STATES = data.states; COUNTS = data.comment_counts;
   if (RUN && !data.missing) SHOWN = String(RUN.id);
   showJob(data.job);
   render();
@@ -691,5 +722,5 @@ $("#pastYear").addEventListener("change", renderPast);
   if (!META.has_service_key) $("#jobStatus").textContent = "서버에 NARA_SERVICE_KEY가 없어 불러오기가 실패합니다";
   showTab(store.get("tab", "live"));
   await loadResults();
-  setInterval(() => { if (!pollTimer && !document.hidden && !$("#thread").open) loadResults().catch(() => {}); }, 60000);
+  setInterval(() => { if (!pollTimer && !document.hidden && !$("#thread").open) loadResults(true).catch(() => {}); }, 60000);
 })();
