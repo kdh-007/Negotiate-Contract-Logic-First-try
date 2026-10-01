@@ -40,7 +40,10 @@ h1 { font-size: 20px; margin: 0; }
 .tabs { display: flex; gap: 4px; padding: 0 24px; border-bottom: 1px solid var(--line); overflow-x: auto; }
 .tabs button { border: 0; background: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 10px 14px; color: var(--muted); white-space: nowrap; }
 .tabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 700; }
-main { padding: 16px 24px 48px; max-width: 1400px; }
+/* 넓은 화면에서 공고 목록을 가운데로 — 머리말·탭 내용도 같은 폭(1400px) 안에 맞춘다 */
+main { padding: 16px 24px 48px; max-width: 1400px; margin: 0 auto; }
+.top, .tabs { padding-left: max(24px, calc((100% - 1400px) / 2 + 24px)); padding-right: max(24px, calc((100% - 1400px) / 2 + 24px)); }
+.hint { margin-left: max(24px, calc((100% - 1400px) / 2 + 24px)); margin-right: max(24px, calc((100% - 1400px) / 2 + 24px)); }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 .toolbar .range { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
 .toolbar .range[hidden] { display: none; }

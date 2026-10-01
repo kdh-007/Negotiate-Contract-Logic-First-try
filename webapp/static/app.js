@@ -466,7 +466,7 @@ async function pollJob() {
   if (!job.running) loadResults();
 }
 $("#btnCollect").addEventListener("click", async () => {
-  if (needName()) return;
+  // 불러오기는 누가 돌렸는지 남기지 않으므로 이름 없이도 된다 (참가여부·담당·대화만 이름 필요)
   try {
     const custom = $("#period").value === "custom";
     const range = custom ? { begin: $("#rangeBegin").value, end: $("#rangeEnd").value } : { days: Number($("#period").value) };
