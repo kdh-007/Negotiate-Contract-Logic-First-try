@@ -34,7 +34,8 @@ log = logging.getLogger(__name__)
 SUPPORTED_EXTENSIONS = {"hwp", "hwpx", "pdf", "zip"}
 
 # ZIP 안전장치 — 발주기관이 올린 압축 파일이라도 압축 폭탄·거대 파일로 수집이 멈추면 안 된다.
-ZIP_MAX_MEMBERS = 60  # 압축 안에서 읽을 최대 파일 수
+ZIP_MAX_MEMBERS = 60  # 압축 안에서 읽을 최대 문서 수 (HWP/HWPX/PDF/zip — 도면·사진 등은 세지 않는다)
+_ZIP_PRIORITY_RE = re.compile(r"공고|제안\s*요청|과업\s*지시|과업\s*내용|규격|시방|입찰\s*안내|참가\s*자격")
 ZIP_MAX_MEMBER_BYTES = 80 * 1024 * 1024  # 파일 하나 최대(풀었을 때)
 ZIP_MAX_TOTAL_BYTES = 300 * 1024 * 1024  # 압축 하나에서 푸는 총량
 ZIP_MAX_DEPTH = 1  # zip 안의 zip은 한 겹까지만
@@ -195,8 +196,13 @@ def _extract_zip_text(data: bytes, depth: int = 0) -> str:
     unsupported: list[str] = []  # 애초에 읽을 대상이 아닌 형식 (xlsx 등)
     total = 0
     with zf:
-        members = [i for i in zf.infolist() if not i.is_dir()]
-        for info in members[:ZIP_MAX_MEMBERS]:
+        # 파일 수 제한은 **읽을 문서**(HWP/HWPX/PDF/zip, 확장자 없는 파일)에만 건다. 예전엔 전체 파일 앞 60개만 봐서,
+        # 도면·사진 수백 개가 든 압축(2026-10-01 실측: R26BD00270194, 파일 511개)에선 문서를 하나도 못 만났다.
+        # 공고문·제안요청서·과업지시서·규격서 이름을 먼저 읽는다.
+        docs = []
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
             name = _zip_member_name(info)
             base = name.rsplit("/", 1)[-1]
             if not base or base.startswith(("._", "~$")) or "__MACOSX" in name:
@@ -205,6 +211,9 @@ def _extract_zip_text(data: bytes, depth: int = 0) -> str:
             if ext and ext not in SUPPORTED_EXTENSIONS:
                 unsupported.append(f"{base}(.{ext})")
                 continue
+            docs.append((info, name, base, ext))
+        docs.sort(key=lambda d: not _ZIP_PRIORITY_RE.search(d[2]))  # 안정 정렬 — 같은 순위끼리는 압축 안 순서 그대로
+        for info, name, base, ext in docs[:ZIP_MAX_MEMBERS]:
             if info.file_size > ZIP_MAX_MEMBER_BYTES or total + info.file_size > ZIP_MAX_TOTAL_BYTES:
                 skipped.append(f"{base}(너무 큼)")
                 continue
@@ -223,8 +232,8 @@ def _extract_zip_text(data: bytes, depth: int = 0) -> str:
                 continue
             if text.strip():
                 parts.append(f"=== [압축 안] {name} ===\n{text}")
-        if len(members) > ZIP_MAX_MEMBERS:
-            skipped.append(f"그 밖 {len(members) - ZIP_MAX_MEMBERS}개(파일 수 제한)")
+        if len(docs) > ZIP_MAX_MEMBERS:
+            skipped.append(f"그 밖 문서 {len(docs) - ZIP_MAX_MEMBERS}개(파일 수 제한)")
 
     if skipped:
         log.info("압축 파일에서 읽지 않은 파일: %s", ", ".join(skipped[:10]) + (" 외" if len(skipped) > 10 else ""))
