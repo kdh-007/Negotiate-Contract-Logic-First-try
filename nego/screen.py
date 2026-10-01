@@ -159,8 +159,12 @@ def screen(notice: Notice, config: ScreenConfig) -> ScreenResult:
     if hard_word:
         return ScreenResult(matched=False, confidence=None, excluded_by="제외키워드", excluded_reason=hard_word)
     excluded_word = _match_exclude(notice, config.exclude_keywords)
-    if excluded_word and config.review_conflicts and _match_keywords(notice, config.keywords):
-        # 관심 키워드도 있다 — 제외하지 않고 아래 예산·해외 조건만 거친 뒤 "검토 필요"로 둔다
+    if excluded_word and config.review_conflicts and (
+        _match_keywords(notice, config.keywords) or _match_codes(notice, config)[0]
+    ):
+        # 관심 키워드나 관심 품명코드도 맞는다 — 제외하지 않고 아래 예산·해외 조건만 거친 뒤 "검토 필요"로 둔다.
+        # 품명코드는 2026-10-01 추가: "○○ 전시시설 구매 설치"(세부품명 실물모형및전시물)처럼 공고명엔 관심 키워드가
+        # 없어도 품명이 맞는 공고를 첨부 과업 내용으로 다시 볼 수 있게.
         result = screen(notice, replace(config, exclude_keywords=[], review_conflicts=False))
         if result.matched:
             result.confidence = "검토필요"
