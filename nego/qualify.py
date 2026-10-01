@@ -687,6 +687,9 @@ def evaluate_attachment_text(
     parsed_labels: dict[str, str] = {}
 
     name_held: list[str] = []  # 이름으로 대조해 보유 확인된 요건 (충족 표시용)
+    # 보유로 채운 "A 또는 B" 묶음 — 팝업에 "아래 N개 중 1개 이상"으로 보이게 따로 남긴다(2026-10-01 요청:
+    # "환경디자인(4442) 또는 종합디자인(4444)"을 둘 다 보유하면 "보유 확인" 두 줄로만 나와 "또는"인지 몰랐음)
+    or_ok: list[LicenseGroup] = []
     for idx, item in enumerate(items):
         or_groups = [[(code, _label(code, label)) for code, label in bundle] for bundle in _or_groups(item)]
         if not or_groups:
@@ -702,6 +705,8 @@ def evaluate_attachment_text(
             for b in bundles:
                 if not any(r.held for r in b):
                     missing.append(LicenseGroup(group_no=group_no, allowed_names=[r.label for r in b]))
+                elif len(b) > 1:
+                    or_ok.append(LicenseGroup(group_no="또는", allowed_names=[r.label for r in b]))
             name_held.extend(r.label for b in bundles for r in b if r.held)
             continue
 
@@ -722,6 +727,8 @@ def evaluate_attachment_text(
                 for b in bundles:
                     if not any(r.held for r in b):
                         missing.append(LicenseGroup(group_no=sub_no, allowed_names=[r.label for r in b]))
+                    elif len(b) > 1:
+                        or_ok.append(LicenseGroup(group_no="또는", allowed_names=[r.label for r in b]))
                 name_held.extend(r.label for b in bundles for r in b if r.held)
 
         group_no = str(idx)
@@ -737,6 +744,8 @@ def evaluate_attachment_text(
         for bundle in or_groups:
             if not any(code in held_codes for code, _ in bundle):
                 missing.append(LicenseGroup(group_no=group_no, allowed_names=[label for _, label in bundle]))
+            elif len(bundle) > 1:
+                or_ok.append(LicenseGroup(group_no="또는", allowed_names=[label for _, label in bundle]))
 
     if not groups:
         return QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False)
@@ -752,7 +761,7 @@ def evaluate_attachment_text(
         if code in held_codes
     ]
     satisfied_names += [n for n in dict.fromkeys(name_held) if n not in satisfied_names]
-    satisfied_groups = [LicenseGroup(group_no="held", allowed_names=satisfied_names)] if satisfied_names else []
+    satisfied_groups = or_ok + ([LicenseGroup(group_no="held", allowed_names=satisfied_names)] if satisfied_names else [])
 
     return QualificationResult(
         total_groups=len(groups),
