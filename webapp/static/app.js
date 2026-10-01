@@ -199,8 +199,7 @@ function byTaskFit(list) {
 function badges(c) {
   const out = [dday(c)];
   if (c.review_exclude) {
-    const why = (c.matched_keywords || []).length ? `관심 "${(c.matched_keywords).join(", ")}"` : `품명 "${(c.matched_product_codes || []).join(", ")}"`;
-    out.push(`<span class="b warn" title="관심 키워드·품명코드가 맞아 빼지 않고 검토 필요로 남겼습니다">제외 키워드 "${esc(c.review_exclude)}" · ${esc(why)}</span>`);
+    out.push(`<span class="b warn" title="관심 키워드가 있어 빼지 않고 검토 필요로 남겼습니다">제외 키워드 "${esc(c.review_exclude)}" · 관심 "${esc((c.matched_keywords || []).join(", "))}"</span>`);
     const f = taskFit(c);
     out.push(`<span class="b ${f.cls}" title="${esc(f.tip)}">${esc(f.label)}</span>`);
   }
@@ -376,7 +375,7 @@ function render() {
       ["본공고", shown.filter((c) => c.kind === "본공고" && !c.review_exclude), ""],
       ["사전규격", shown.filter((c) => c.kind === "사전규격" && !c.review_exclude), ""],
       ["검토 필요", byTaskFit(shown.filter((c) => c.review_exclude)),
-       "제외 키워드가 있지만 관심 키워드·품명코드가 맞는 공고 — 첨부 과업 내용이 지일 실적과 비슷한 순서. 참가여부를 남겨 주시면 판단 기준을 고치는 데 씁니다"],
+       "관심 키워드와 제외 키워드가 공고명에 함께 있는 공고 — 첨부 과업 내용이 지일 실적과 비슷한 순서. 참가여부를 남겨 주시면 판단 기준을 고치는 데 씁니다"],
     ];
     for (const [kind, list, note] of sections) {
       if (!list.length) continue;
