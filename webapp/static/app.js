@@ -766,14 +766,12 @@ $("#pastYear").addEventListener("change", renderPast);
   const rb = $("#rangeBegin"), re_ = $("#rangeEnd"), ymd = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   const today = ymd(new Date());
   rb.max = re_.max = today;
-  rb.value = store.get("rangeBegin", ymd(new Date(Date.now() - 6 * 864e5)));
-  re_.value = store.get("rangeEnd", today);
+  // 페이지를 열 때마다 시작일·종료일 모두 오늘로(2026-10-01 요청 — 예전엔 마지막에 고른 날짜를 기억했음)
+  rb.value = re_.value = today;
   rb.title = re_.title = `최대 ${META.max_custom_days}일`;
   const syncRange = () => { $("#rangeWrap").hidden = period.value !== "custom"; };
   syncRange();
   period.addEventListener("change", () => { store.set("period", period.value); syncRange(); });
-  rb.addEventListener("change", () => store.set("rangeBegin", rb.value));
-  re_.addEventListener("change", () => store.set("rangeEnd", re_.value));
   if (!META.has_ai_key) { $("#optAi").disabled = true; $("#optAiWrap").title = "서버에 ANTHROPIC_API_KEY가 없어 AI 판단을 쓸 수 없습니다"; }
   if (!META.has_service_key) $("#jobStatus").textContent = "서버에 NARA_SERVICE_KEY가 없어 불러오기가 실패합니다";
   showTab(store.get("tab", "live"));
