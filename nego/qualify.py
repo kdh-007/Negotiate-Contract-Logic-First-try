@@ -731,7 +731,7 @@ def evaluate_attachment_text(
             for code, label in bundle:
                 parsed_labels.setdefault(code, label)
 
-        # 미달 개수는 예전처럼 항목당 1건으로 센다(MAX_ALLOWED_MISSING_QUALIFICATIONS 기준 유지).
+        # 묶음 안에서는 하나만 보유해도 충족, 묶음끼리는 전부 충족해야 항목 충족.
         # "[업종코드 4440, 4442, 4444]"처럼 "또는" 없이 나열한 코드는 모두 필요(2026-10-01 사용자 확정) — 빠진 묶음마다
         # 요건 1건으로 둔다. 한 덩어리로 합치면 화면에 "아래 2개 중 1개 이상"(또는)으로 잘못 보였다.
         for bundle in or_groups:
