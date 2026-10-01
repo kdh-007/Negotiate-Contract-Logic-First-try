@@ -758,6 +758,10 @@ $("#pastYear").addEventListener("change", renderPast);
   period.value = store.get("period", "7");
   if (!period.value) period.value = "7";
   // 직접 지정: 시작일·종료일 (오늘까지, 최대 N일). 기본값은 최근 7일
+  // 달력 버튼·날짜 칸을 누르면 달력을 연다(showPicker가 없는 브라우저는 칸에 커서만)
+  const openPicker = (input) => { try { input.showPicker(); } catch { input.focus(); } };
+  document.querySelectorAll(".datebox .cal").forEach((b) => b.addEventListener("click", () => openPicker($("#" + b.dataset.for))));
+  document.querySelectorAll(".datebox input").forEach((i) => i.addEventListener("click", () => openPicker(i)));
   const rb = $("#rangeBegin"), re_ = $("#rangeEnd"), ymd = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   const today = ymd(new Date());
   rb.max = re_.max = today;

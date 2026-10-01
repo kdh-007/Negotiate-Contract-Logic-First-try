@@ -37,7 +37,8 @@
     <div class="toolbar">
       <select id="period" aria-label="조회 기간"></select>
       <span class="range" id="rangeWrap" hidden>
-        <input type="date" id="rangeBegin" aria-label="시작일"> ~ <input type="date" id="rangeEnd" aria-label="종료일">
+        <span class="datebox"><input type="date" id="rangeBegin" aria-label="시작일"><button type="button" class="cal" data-for="rangeBegin" aria-label="시작일 달력 열기">📅</button></span>
+        ~ <span class="datebox"><input type="date" id="rangeEnd" aria-label="종료일"><button type="button" class="cal" data-for="rangeEnd" aria-label="종료일 달력 열기">📅</button></span>
       </span>
       <label class="chk" title="조달청 사전규격정보서비스 — 공공데이터포털 활용신청 필요"><input type="checkbox" id="optPrespec" checked> 사전규격 포함</label>
       <label class="chk"><input type="checkbox" id="optAttach" checked> 첨부 자격판정</label>
