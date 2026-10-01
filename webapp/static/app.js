@@ -161,6 +161,24 @@ function joinParticle(label) {
   if (!ch) return "과(와)";
   return (ch.charCodeAt(0) - 0xac00) % 28 ? "과" : "와";
 }
+// 필수 보유 요건(하나만 있는 요건)은 한 칸에 모아 보여준다(2026-10-01 요청) — 미보유가 있으면 그 칸이 맨 앞
+function reqBlocks(all, mixed) {
+  const isMust = (r) => !r.any_of && !r.combos && !r.why;
+  const must = all.filter(isMust);
+  if (must.length < 2) return all.map((r) => reqHtml(r, mixed)).join("");
+  const items = uniqBy(must.map((r) => r.items[0]), (i) => i.label)
+    .sort((a, b) => Number(a.held) - Number(b.held));
+  const line = (i) => `<div class="tip-sub ${i.held ? "held" : ""}">${i.held ? "✓" : "✗"} ${mixed ? `<span class="kind">${KIND_TAG[i.kind]}</span> ` : ""}${labelHtml(i.label)}${i.via ? ` <small>← ${esc(i.via)}</small>` : ""}</div>`;
+  const block = `<div class="tip-item"><span class="why">필수 보유 — ${items.length}개 모두 필요</span>${items.map(line).join("")}</div>`;
+  // 필수 칸은 첫 필수 요건 자리에 — 요건 목록이 미달 먼저라, 필수 중 미보유가 있으면 미달 쪽에 온다
+  let placed = false;
+  return all.map((r) => {
+    if (!isMust(r)) return reqHtml(r, mixed);
+    if (placed) return "";
+    placed = true;
+    return block;
+  }).join("");
+}
 function reqHtml(req, mixed) {
   if (req.combos) req = { ...req, combos: req.combos.map((c) => ({ ...c, rows: uniqBy(c.rows, (r) => r.label) })) };
   else if (req.items) req = { ...req, items: uniqBy(req.items, (i) => i.label) };
@@ -226,7 +244,7 @@ function qualBadge(q) {
     if (all.length) {
       const mixed = all.some((r) => new Set((r.items || []).map((i) => i.kind)).size > 1);
       body += `<div class="tip-title">${esc(p.name)} ${all.length}건 — <span class="good">충족 ${ok.length}</span> · <span class="${p.missing.length ? "bad" : ""}">미달 ${p.missing.length}</span></div>`
-        + all.map((r) => reqHtml(r, mixed)).join("");
+        + reqBlocks(all, mixed);
     } else if (p.held.length)
       body += `<div class="tip-title good">보유로 충족한 자격 ${p.held.length}건</div>` + p.held.map((n) => `<div class="tip-item">✓ ${esc(n)}</div>`).join("");
     if (!body) body = `<div class="tip-title">${esc(p.name)} ${esc(p.status)}</div><div class="tip-note">${esc(QUAL_EMPTY[p.key][p.status] || "")}</div>`;
