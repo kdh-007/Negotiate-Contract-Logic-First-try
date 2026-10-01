@@ -106,7 +106,7 @@ class PastIndex:
                           key=lambda k: -weight.get(k.split("/", 1)[0], 0))
             excerpts, seen = [], set()
             for k in keys:
-                line = (profile.evidence.get(k) or "").strip()
+                line = (getattr(profile, "evidence", {}).get(k) or "").strip()
                 if not line or line.startswith("(사업명)") or line in seen or _NOT_TASK_LINE.search(line):
                     continue
                 seen.add(line)

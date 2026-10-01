@@ -3,6 +3,8 @@
 
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// 이 화면이 기대하는 수집 결과 형식 — webapp/collect.py RESULT_FORMAT과 같이 올린다
+const APP_FORMAT = 12;
 const store = {
   get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* 저장 불가여도 동작 */ } },
@@ -210,7 +212,10 @@ function fitChip(c) {
     body += `<div class="tip-label">공고 원문에서 겹치는 과업</div>`
       + ex.map((e) => `<div class="tip-item quote"><span class="tag">${esc(e.tag)}</span>${esc(e.text)}</div>`).join("");
   } else {
-    body += `<div class="tip-note">${c.sync && c.sync.basis === "과업 원문" ? "겹치는 과업을 원문에서 찾지 못했습니다." : "첨부 과업 내용을 읽지 못해 공고명으로만 비교했습니다."}</div>`;
+    const note = !(c.sync && c.sync.basis === "과업 원문") ? "첨부 과업 내용을 읽지 못해 공고명으로만 비교했습니다."
+      : best && !("excerpts" in best) ? "이 수집 결과엔 원문 발췌가 없습니다 — 서버를 다시 켠 뒤 '나라장터에서 불러오기'를 다시 눌러 주세요."
+      : "겹치는 과업을 원문에서 찾지 못했습니다.";
+    body += `<div class="tip-note">${note}</div>`;
   }
   return qualButton(f.label, f.cls, f.label, body);
 }
@@ -378,9 +383,12 @@ function render() {
   const lv = (l) => shown.filter((c) => c.sync.level === l).length;
   const strong = shown.filter((c) => c.confidence === "강력추천").length;
   // 예전 버전 코드로 수집한 결과면 판정·팝업이 최신 규칙과 다를 수 있다 — 다시 불러오라고 알린다
-  const stale = RUN && META && META.result_format && (RUN.format || 0) < META.result_format;
+  const stale = RUN && META && META.result_format && (RUN.format || 0) < Math.max(META.result_format, APP_FORMAT);
+  // 화면 파일은 git pull만으로 바로 새 버전이 되지만 서버(수집·판정 코드)는 다시 켜야 바뀐다 — 서버가 예전 코드면 알린다
+  const oldServer = META && (META.result_format || 0) < APP_FORMAT;
   $("#summary").innerHTML = RUN
-    ? (stale ? `<span class="job err">⚠ 이 결과는 이전 버전으로 수집됐습니다 — 자격 판정·표시가 최신 규칙과 다를 수 있으니 '나라장터에서 불러오기'를 다시 눌러 주세요.</span><br>` : "")
+    ? (oldServer ? `<span class="job err">⚠ 서버가 예전 코드로 실행 중입니다 — Git Bash에서 Ctrl+C 후 'bash webapp/start.sh'로 다시 켜고 '나라장터에서 불러오기'를 다시 눌러 주세요.</span><br>`
+      : stale ? `<span class="job err">⚠ 이 결과는 이전 버전으로 수집됐습니다 — 자격 판정·표시가 최신 규칙과 다를 수 있으니 '나라장터에서 불러오기'를 다시 눌러 주세요.</span><br>` : "")
       + `후보 <b>${all.length}</b>건 중 <b>${shown.length}</b>건 표시 · 강력추천 ${strong} · 싱크로율 높음 <b>${lv("높음")}</b> / 경계선 ${lv("경계선")} / 낮음 ${lv("낮음")}`
       + ` · 조회 ${esc(fmtDt(RUN.stats.period_begin))} ~ ${esc(fmtDt(RUN.stats.period_end))} · 수집 ${esc(fmtDt(RUN.finished_at))}`
       + (RUN.params.attachments ? "" : " · <span title='첨부 참가자격 미반영'>첨부 자격판정 안 함</span>")
