@@ -57,7 +57,8 @@ const F = {
   sync: new Set(),
   flag: new Set(),
 };
-// "확인 필요" 칩 분류(2026-10-01 요청) — 버튼 이름 → text_flags의 kind. 여러 개 고르면 그중 하나라도 있는 공고
+// "확인 필요" 칩 분류(2026-10-01 요청) — 버튼 이름 → text_flags의 kind. 여러 개 고르면 **모두 있는** 공고(좁혀 가며 보기,
+// 2026-10-01 제보: 실적+현장설명회를 눌렀는데 실적만 있는 공고가 남아 오류로 보임)
 const FLAG_FILTER = { "실적 요건": "실적", "현장설명회": "현장설명회", "기술인력": "인력", "건축사사무소": "건축사사무소" };
 
 // ── 탭 ──
@@ -93,6 +94,11 @@ function chipRow(label, key, options, multi, disabled = {}) {
     b.addEventListener("click", () => {
       if (multi) { F[key].has(opt) ? F[key].delete(opt) : F[key].add(opt); }
       else F[key] = opt;
+      // "확인 필요"의 "없음"은 다른 버튼과 함께 고를 수 없다(요건이 있는 공고 + 없는 공고는 0건)
+      if (key === "flag" && F.flag.has(opt)) {
+        if (opt === "없음") F.flag = new Set(["없음"]);
+        else F.flag.delete("없음");
+      }
       if (key === "cat") store.set("f.cat", JSON.stringify([...F.cat]));
       render();
     });
@@ -129,7 +135,7 @@ function passes(c) {
   if (F.sync.size && !F.sync.has(c.sync.level)) return false;
   if (F.flag.size) {
     const kinds = new Set((c.text_flags || []).map((f) => f.kind));
-    const hit = [...F.flag].some((opt) => opt === "없음" ? !kinds.size : kinds.has(FLAG_FILTER[opt]));
+    const hit = F.flag.has("없음") ? !kinds.size : [...F.flag].every((opt) => kinds.has(FLAG_FILTER[opt]));
     if (!hit) return false;
   }
   return true;
