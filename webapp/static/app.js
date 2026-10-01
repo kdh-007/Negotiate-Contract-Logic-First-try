@@ -566,7 +566,9 @@ function showJob(job) {
   btn.disabled = job.running;
   st.classList.toggle("err", !!job.error);
   const span = job.params.begin ? `${job.params.begin} ~ ${job.params.end}` : `최근 ${job.params.days}일`;
-  if (job.running) st.textContent = `수집 중… (${fmtDt(job.started_at)} 시작, ${span})`;
+  // 수집은 서버에서 한 번에 하나 — 다른 팀원이 누른 수집도 모든 화면에 보인다. 내 결과는 그대로라는 걸 같이 알린다
+  const mine = job.started_at && job.started_at === store.get("myJob", "");
+  if (job.running) st.textContent = `수집 중… (${fmtDt(job.started_at)} 시작, ${span})${mine ? "" : " — 다른 팀원이 시작한 수집입니다. 지금 보는 결과는 바뀌지 않습니다"}`;
   else if (job.error) st.textContent = `실패: ${job.error}`;
   else if (job.finished_at) st.textContent = `완료 ${fmtDt(job.finished_at)}`;
   else st.textContent = "";
@@ -586,8 +588,10 @@ async function pollJob() {
     store.set("myRun", String(job.run_id));
     store.set("myJob", "");
     SHOWN = String(job.run_id);
+    return loadResults();
   }
-  loadResults();
+  // 남이 누른 수집이 끝난 경우 — 내 결과는 그대로이니 본문을 다시 받지 않는다(제외 공고가 많으면 수십 MB)
+  loadResults(true);
 }
 $("#btnCollect").addEventListener("click", async () => {
   // 불러오기는 누가 돌렸는지 남기지 않으므로 이름 없이도 된다 (참가여부·담당·대화만 이름 필요)
