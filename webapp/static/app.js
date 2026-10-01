@@ -180,10 +180,30 @@ function qualBadge(q) {
     return qualButton(label, cls, `${p.name} ${p.status}`, body);
   }).join("");
 }
+// "검토 필요" 공고를 첨부 과업 내용으로 가늠한다 — 첨부 원문 기준 싱크로율(지일 과거 실적과의 유사도).
+// 표시·정렬에만 쓰고 후보에서 빼거나 올리지는 않는다(기준값 0.65/0.45가 실제 공고로 검증되기 전, 2026-10-01 A안).
+function taskFit(c) {
+  const s = c.sync || {}, best = (s.top || [])[0];
+  const near = best ? ` · 가장 비슷한 실적: (${best.year}) ${best.title}` : "";
+  if (s.basis !== "과업 원문")
+    return { rank: 0, cls: "", label: "첨부 미확인", tip: "첨부 과업 내용을 읽지 못해 공고명으로만 비교했습니다" };
+  const score = s.score == null ? "" : ` ${Math.round(s.score * 100)}%`;
+  if (s.level === "높음") return { rank: 3, cls: "good", label: "과업 유사", tip: `첨부 과업 내용 기준 싱크로율${score}${near}` };
+  if (s.level === "경계선") return { rank: 2, cls: "info", label: "과업 일부 유사", tip: `첨부 과업 내용 기준 싱크로율${score}${near}` };
+  if (s.level === "낮음") return { rank: 1, cls: "bad", label: "과업 무관 가능성", tip: `첨부 과업 내용 기준 싱크로율${score}${near}` };
+  return { rank: 0, cls: "", label: "판정 불가", tip: "과거 실적과 비교할 수 없습니다" };
+}
+function byTaskFit(list) {
+  return [...list].sort((a, b) => (taskFit(b).rank - taskFit(a).rank) || ((b.sync?.score ?? -1) - (a.sync?.score ?? -1)));
+}
 function badges(c) {
   const out = [dday(c)];
-  if (c.review_exclude)
-    out.push(`<span class="b warn" title="관심 키워드가 있어 빼지 않고 검토 필요로 남겼습니다">제외 키워드 "${esc(c.review_exclude)}" · 관심 "${esc((c.matched_keywords || []).join(", "))}"</span>`);
+  if (c.review_exclude) {
+    const why = (c.matched_keywords || []).length ? `관심 "${(c.matched_keywords).join(", ")}"` : `품명 "${(c.matched_product_codes || []).join(", ")}"`;
+    out.push(`<span class="b warn" title="관심 키워드·품명코드가 맞아 빼지 않고 검토 필요로 남겼습니다">제외 키워드 "${esc(c.review_exclude)}" · ${esc(why)}</span>`);
+    const f = taskFit(c);
+    out.push(`<span class="b ${f.cls}" title="${esc(f.tip)}">${esc(f.label)}</span>`);
+  }
   else if (c.confidence === "강력추천") out.push(`<span class="b star">강력추천</span>`);
   else if (c.confidence) out.push(`<span class="b">${esc(c.confidence)}</span>`);
   out.push(`<span class="b">${esc(c.work_type)}</span>`);
@@ -355,8 +375,8 @@ function render() {
     const sections = [
       ["본공고", shown.filter((c) => c.kind === "본공고" && !c.review_exclude), ""],
       ["사전규격", shown.filter((c) => c.kind === "사전규격" && !c.review_exclude), ""],
-      ["검토 필요", shown.filter((c) => c.review_exclude),
-       "관심 키워드와 제외 키워드가 공고명에 함께 있는 공고 — 참가여부를 남겨 주시면 제외 키워드를 고치는 데 씁니다"],
+      ["검토 필요", byTaskFit(shown.filter((c) => c.review_exclude)),
+       "제외 키워드가 있지만 관심 키워드·품명코드가 맞는 공고 — 첨부 과업 내용이 지일 실적과 비슷한 순서. 참가여부를 남겨 주시면 판단 기준을 고치는 데 씁니다"],
     ];
     for (const [kind, list, note] of sections) {
       if (!list.length) continue;
