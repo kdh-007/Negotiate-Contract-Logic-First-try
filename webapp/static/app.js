@@ -195,6 +195,7 @@ function qualBadge(q) {
     // 부족 개수("최소 N개")는 여러 뜻으로 읽혀서 표시하지 않는다(2026-09-30 사용자 결정) — 요건 목록의 ✗로 본다
     if (p.status === "미달") cls = "bad";
     else if (p.status === "충족") cls = "good";
+    else cls = "muted";  // 제한 없음·미확인은 흐리게 — 눈에 띄어야 할 칩은 문제·확인 필요 칩(2026-10-01 배치 정리)
     // 요건 전체를 한 목록으로 — 미달 요건 먼저, 충족 요건 뒤. 보유 ✓ 초록, 미보유 ✗ 붉은색
     const ok = p.satisfied || [];
     const all = [...p.missing, ...ok];
@@ -255,12 +256,12 @@ function badges(c) {
   }
   else if (c.confidence === "강력추천") out.push(chip("강력추천", "star", "강력추천", "관심 키워드와 관심 품명·업종 코드가 모두 맞는 공고입니다."));
   else if (c.confidence) out.push(chip(c.confidence, "", c.confidence, "관심 키워드나 관심 품명코드 중 하나만 맞는 공고입니다."));
-  out.push(chip(c.work_type, "", `업무 구분: ${c.work_type}`, "나라장터가 분류한 업무 종류(용역·물품·공사)입니다."));
   if (c.kind === "사전규격") {
     out.push(chip("사전규격", "prespec", "사전규격", "입찰공고 전 규격 공개 단계 — 의견등록 마감까지 규격 의견을 낼 수 있습니다."));
     if (c.linked_bid_notices && c.linked_bid_notices.length)
       out.push(chip("본공고 게시됨", "good", "본공고 게시됨", `이 사전규격으로 나온 본공고: ${esc(c.linked_bid_notices.join(", "))}`, "good"));
   } else if (c.category) out.push(chip(c.category, "info", `유형: ${c.category}`, c.award_method ? `낙찰 방법: ${esc(c.award_method)}` : ""));
+  out.push(chip(c.work_type, "", `업무 구분: ${c.work_type}`, "나라장터가 분류한 업무 종류(용역·물품·공사)입니다."));
   if (c.is_re_notice) out.push(chip("재공고", "warn", "재공고", "유찰 등으로 다시 낸 공고입니다."));
   if (c.ai) {
     const cls = c.ai.label === "적합" ? "good" : c.ai.label === "부적합" ? "bad" : "warn";
@@ -291,7 +292,7 @@ function regionBadge(c) {
     return pop(`지역제한 ${c.regions.slice(0, 2).join("·")}${c.regions.length > 2 ? " 외" : ""}`, "warn", "나라장터 참가가능지역",
       [esc(c.regions.join(", ")), company ? `<span class="why">지일 소재지</span>${esc(company)}` : ""],
       "시·도 이름을 알아볼 수 없어 충족 여부를 판정하지 못했습니다.");
-  return pop("지역제한 정보 없음", "", "지역제한 정보 없음", [],
+  return pop("지역제한 정보 없음", "muted", "지역제한 정보 없음", [],
     "나라장터 참가가능지역·첨부 공고문 모두 지역 요건을 찾지 못했습니다 (제한이 없거나 등록되지 않은 것).");
 }
 // 판정하지 않는 글로 된 요건 — 실적·현장설명회·기술인력. 커서를 대면 팝업으로 원문 문장(현장설명회는 일시도)
@@ -314,16 +315,18 @@ function jointBadge(c) {
       : "나라장터 공동수급 정보 기준입니다. 공고문에 따로 적힌 조건이 있는지 확인하세요."}</div>`;
   return qualButton(`공동수급 ${c.joint.label}`, allowed ? "info" : "", `공동수급 ${c.joint.label}`, body);
 }
-function badges2(c) {
-  const out = [qualBadge(c.qualification), ...flagBadges(c)];
+// 참가 조건 칩을 묶음별로 — 자격 / 지역·공동수급 / 확인 필요. 공고 기본 정보(맨 위 줄)와 섞이지 않게 아래 칸으로 뺐다
+// (2026-10-01 요청: "한 공고에 정보가 너무 많다 — 전부 필요하니 배치를 정리해 달라")
+function conditions(c) {
+  const groups = [["자격", qualBadge(c.qualification)]];
   // 사전규격엔 참가가능지역·공동수급 API 정보가 없다 — 첨부에서 지역 요건을 찾았을 때만 표시
   if (c.kind === "사전규격") {
-    if (c.region_check && c.region_check.status !== "미확인") out.push(regionBadge(c));
-    return out.join("");
-  }
-  out.push(regionBadge(c));
-  out.push(jointBadge(c));
-  return out.join("");
+    if (c.region_check && c.region_check.status !== "미확인") groups.push(["지역", regionBadge(c)]);
+  } else groups.push(["지역·공동수급", regionBadge(c) + jointBadge(c)]);
+  const flags = flagBadges(c);
+  if (flags.length) groups.push(["확인 필요", flags.join("")]);
+  return `<div class="conds">${groups.filter(([, h]) => h)
+    .map(([label, html]) => `<div class="cg"><span class="cl">${label}</span><span class="cc">${html}</span></div>`).join("")}</div>`;
 }
 
 function card(c, withActions = true) {
@@ -338,7 +341,7 @@ function card(c, withActions = true) {
   el.innerHTML = `
     <div class="card-body">
       <div class="card-main">
-        <div class="badges">${badges(c)}${badges2(c)}</div>
+        <div class="badges">${badges(c)}</div>
         <div class="title">${c.detail_url ? `<a href="${esc(c.detail_url)}" target="_blank" rel="noopener" title="나라장터에서 공고 열기">${esc(c.title)} <span class="ext" aria-hidden="true">↗</span></a>` : esc(c.title)}</div>
         <dl class="meta">
           <div><dt>${c.kind === "사전규격" ? "의견등록 마감" : "입찰 마감"}</dt><dd>${esc(fmtDt(c.deadline))}${dd} ${note}</dd></div>
@@ -346,6 +349,7 @@ function card(c, withActions = true) {
           <div><dt>사업금액</dt><dd>${esc(won(c.budget))}</dd></div>
           ${c.excluded_reason ? `<div class="wide"><dt>제외 사유</dt><dd>${esc(c.excluded_reason)}${(c.match_explain || []).length ? `<ul class="explain">${c.match_explain.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}</dd></div>` : ""}
         </dl>
+        ${conditions(c)}
         <div class="why simline">${c.review_exclude ? fitChip(c) + " " : ""}최다 유사: ${s.top[0] ? `(${esc(s.top[0].year)}) ${esc(s.top[0].title)}` : "없음"} · 근거: ${esc(s.basis)}</div>
       </div>
       <button type="button" class="card-side lv-${esc(s.level)}" title="눌러서 비슷한 과거 실적 보기">
