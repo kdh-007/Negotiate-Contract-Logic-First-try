@@ -90,6 +90,14 @@ class Store:
         rows = self._query("SELECT * FROM runs WHERE payload IS NOT NULL ORDER BY id DESC LIMIT 1")
         return self._run_row(rows[0]) if rows else None
 
+    def run_id_if_exists(self, run_id: int | None = None) -> int | None:
+        """결과 내용을 읽지 않고 번호만 확인 — run_id가 없으면 최신 결과 번호."""
+        if run_id is None:
+            rows = self._query("SELECT id FROM runs WHERE payload IS NOT NULL ORDER BY id DESC LIMIT 1")
+        else:
+            rows = self._query("SELECT id FROM runs WHERE id=? AND payload IS NOT NULL", (run_id,))
+        return rows[0]["id"] if rows else None
+
     def run(self, run_id: int) -> dict[str, Any] | None:
         rows = self._query("SELECT * FROM runs WHERE id=? AND payload IS NOT NULL", (run_id,))
         return self._run_row(rows[0]) if rows else None
