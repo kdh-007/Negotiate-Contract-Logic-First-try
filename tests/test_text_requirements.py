@@ -54,6 +54,7 @@ class TestNameJudgement(unittest.TestCase):
     def test_unknown_or_non_requirement_text_is_not_judged(self):
         self.assertEqual(judged("건축사사무소를 개설한 자"), [], "사전에 없는 이름은 판정하지 않음")
         self.assertEqual(judged("공동수급체 대표사는 산업디자인전문회사(환경디자인분야)로 한다"), [])
+        self.assertEqual(judged("사. 적격심사 평가대상 업종 및 평가비율\n종합 건축공사업 680,362,000 100%"), [])
 
     def test_attachment_evaluation_uses_names(self):
         items = ["산업디자인 전문회사(시각디자인 분야)로 신고를 필한 업체", "실내건축공사업(업종코드 4990)을 등록한 업체"]

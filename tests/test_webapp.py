@@ -204,6 +204,28 @@ class TestQualificationView(unittest.TestCase):
         self.assertEqual([r["items"][0]["label"] for r in part["missing"]], ["건축공사업(0002)"])
         self.assertNotIn("alts", part["missing"][0])
 
+    def test_attachment_duplicate_of_api_license_shown_once(self):
+        """2026-10-01 고이분교: 공고문 "건축공사업(또는 토목·건축공사업)을 등록한 자"를 첨부 판정이 또 잡아
+        건축공사업이 두 번 나왔고, 가운뎃점 때문에 토목건축공사업이 안 보였다."""
+        from nego import qualify
+        from webapp import qualview
+        rows = [{"bidNtceNo": "B", "lmtGrpNo": "1", "lmtSno": "1", "lcnsLmtNm": "건축공사업/0002",
+                 "permsnIndstrytyList": "[토목건축공사업/0003]"}]
+        api = qualify.evaluate(qualify.group_license_rows(rows)["B"], [])
+        items = ["가. 종합건설업종 중 건축공사업(또는 토목·건축공사업)을 등록한 자",
+                 "사. 적격심사 평가대상 업종 및 평가비율\n종합 건축공사업 680,362,000 100%"]
+        att = qualify.evaluate_attachment_text(items, set(), {}, {"0002": "건축공사업", "0003": "토목건축공사업"})
+        self.assertTrue(att.checked)
+        merged = qualify.merge_results(api, att)
+        part = qualview.build(merged, (set(), set()), {"industry": True}, doc_text="\n".join(items))[0]
+        self.assertEqual([[i["label"] for i in r["items"]] for r in part["missing"]],
+                         [["건축공사업(0002)", "토목건축공사업"]])
+        # API가 허용업종을 안 줘도 건축공사업은 한 번만
+        rows[0]["permsnIndstrytyList"] = ""
+        api = qualify.evaluate(qualify.group_license_rows(rows)["B"], [])
+        part = qualview.build(qualify.merge_results(api, att), (set(), set()), {"industry": True})[0]
+        self.assertEqual([[i["label"] for i in r["items"]] for r in part["missing"]], [["건축공사업(0002)"]])
+
     HELD = ({"1469", "4440", "4442", "4444", "4990", "6010989901"}, set())
 
     def _q(self, missing=(), satisfied=()):
