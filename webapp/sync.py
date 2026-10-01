@@ -80,7 +80,9 @@ class PastIndex:
         if not self.available:
             return {"score": None, "level": "판정 불가", "basis": "과거 실적 없음", "tags": {}, "top": []}
         tp = self._tp
-        profile = tp.build_profile([text or "", title], title=title)
+        # 첨부 구분 줄("=== 파일명 ===")과 "나라장터"(과업 사전이 '장터'를 전통시장으로 잡는다)는 과업 내용이 아니다
+        text = re.sub(r"^\s*===.*===\s*$", "", text or "", flags=re.M).replace("나라장터", "나라 조달시스템")
+        profile = tp.build_profile([text, title], title=title)
         basis = "과업 원문" if text.strip() else "공고명만"
         if not profile.tag_set():
             return {"score": None, "level": "판정 불가", "basis": basis, "tags": {}, "top": []}

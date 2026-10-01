@@ -4,7 +4,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // 이 화면이 기대하는 수집 결과 형식 — webapp/collect.py RESULT_FORMAT과 같이 올린다
-const APP_FORMAT = 13;
+const APP_FORMAT = 14;
 const store = {
   get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* 저장 불가여도 동작 */ } },
@@ -229,7 +229,11 @@ function fitChip(c) {
   const ex = (best && best.excerpts) || [];
   let body = `<div class="tip-title${f.cls ? " " + f.cls : ""}">${esc(f.label)}</div>`;
   if (best) body += `<div class="tip-label">가장 비슷한 지일 실적 — (${esc(best.year)}) ${esc(best.title)}</div>`;
-  if (ex.length) {
+  const scope = c.scope_items || [];
+  if (scope.length) {
+    // 공고문이 "사업 범위"로 정리한 과업 목록이 있으면 그걸 그대로 보여준다(2026-10-01 사용자 요청)
+    body += `<div class="tip-label">공고문 사업 범위</div>` + scope.map((x) => `<div class="tip-item quote">· ${esc(x)}</div>`).join("");
+  } else if (ex.length) {
     body += `<div class="tip-label">공고 원문에서 겹치는 과업</div>`
       + ex.map((e) => `<div class="tip-item quote"><span class="tag">${esc(e.tag)}</span>${esc(e.text)}</div>`).join("");
   } else {
