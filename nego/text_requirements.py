@@ -175,6 +175,14 @@ def _sentences(item: str) -> list[str]:
     return out
 
 
+# 실적 칩에서 뺄 문장 — "시공실적으로 입찰참가자격을 제한하지 아니한 입찰"(2026-10-01 제보: 부산 50+복합지원센터 인테리어)처럼
+# 실적 제한이 없다는 안내, 수행능력평가·시공경험평가·평가대상 업종·평가비율·배점 설명(점수 산정이지 참가 요건이 아님)
+_NOT_TRACK_REQUIREMENT = re.compile(
+    r"제한\s*하지\s*(?:아니|않)|제한\s*(?:이\s*)?없|수행\s*능력\s*평가|시공\s*경험\s*평가|경영\s*상태\s*평가"
+    r"|평가\s*대상\s*업종|평가\s*비율|배\s*점|평\s*점|가\s*점"
+)
+
+
 def flag_requirements(items: list[str], full_text: str = "") -> list[dict]:
     """실적·현장설명회 참가·기술인력 요건을 찾아 [{kind, text, date?}]로. 판정은 하지 않는다."""
     out: dict[str, dict] = {}
@@ -190,6 +198,8 @@ def flag_requirements(items: list[str], full_text: str = "") -> list[dict]:
                 break  # 건축사사무소 요건 문장의 "건축사 면허"를 인력 요건으로 또 세지 않는다
             if kind == "건축사사무소" and re.search(r"업종\s*코드|\[\d{4}\]|\(\d{4}\)", s):
                 continue  # 코드 있는 업종과 "또는"으로 나열된 대안일 뿐 — 코드 판정이 이미 본다
+            if kind == "실적" and _NOT_TRACK_REQUIREMENT.search(s):
+                continue  # 실적으로 참가를 "제한하지 않는다"·적격심사 평가(배점) 설명은 참가 요건이 아니다
             if subject.search(s) and detail.search(s) and not (kind == "현장설명회" and _NOT_MANDATORY.search(s)):
                 entry = {"kind": kind, "text": re.sub(r"\s+", " ", s).strip()[:220]}
                 if kind == "현장설명회":
