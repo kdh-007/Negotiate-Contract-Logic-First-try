@@ -171,10 +171,10 @@ function reqHtml(req, mixed) {
   const item = (i) => `<div class="tip-sub ${cls(i.held)}">${mark(i.held)} ${mixed ? `<span class="kind">${KIND_TAG[i.kind]}</span> ` : ""}${labelHtml(i.label)}${i.via ? ` <small>← ${esc(i.via)}</small>` : ""}</div>`;
   if (req.combos) {
     // 나라장터 원문 "[A]과 [B] 업종 또는 [C]과 [D] 업종"처럼 조합(세트)으로 — 조합 하나를 다 갖추면 충족
-    // 면허 사이는 "+" 대신 조사 "과/와"를 "또는"처럼 한 줄 따로(2026-10-01 요청)
+    // 면허 사이는 "+" 대신 앞 줄 끝에 조사 "과/와"를 조금 띄어서(2026-10-01 요청)
     const row = (r, j, rows) => `<div class="combo-row ${cls(r.held)}">`
-      + `${mark(r.held)} ${labelHtml(r.label)}${r.via ? ` <small>← ${esc(r.via)}</small>` : ""}</div>`
-      + (j < rows.length - 1 ? `<div class="or-sep combo-sep">${joinParticle(r.label)}</div>` : "");
+      + `${mark(r.held)} ${labelHtml(r.label)}${r.via ? ` <small>← ${esc(r.via)}</small>` : ""}`
+      + `${j < rows.length - 1 ? `<span class="or-word join">${joinParticle(r.label)}</span>` : ""}</div>`;
     const circled = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮";
     return `<div class="tip-item"><span class="why">아래 ${req.combos.length}개 조합 중 하나를 모두 갖추면 충족${done ? " — 보유로 충족" : ""}</span>`
       + req.combos.map((c, i) => `<div class="tip-sub combo"><span class="no">${circled[i] || `${i + 1}.`}</span><div>${c.rows.map(row).join("")}</div></div>`).join("") + `</div>`;
