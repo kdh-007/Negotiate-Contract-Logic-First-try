@@ -254,8 +254,7 @@ function badges(c) {
     out.push(chip(`제외 키워드 "${c.review_exclude}" · 관심 "${(c.matched_keywords || []).join(", ")}"`, "warn", "검토 필요",
       `공고명에 제외 키워드 「${esc(c.review_exclude)}」와 관심 키워드 「${esc((c.matched_keywords || []).join(", "))}」가 함께 있어 빼지 않고 남겼습니다. 참가여부를 남겨 주시면 판단 기준을 고치는 데 씁니다.`));
   }
-  else if (c.confidence === "강력추천") out.push(chip("강력추천", "star", "강력추천", "관심 키워드와 관심 품명·업종 코드가 모두 맞는 공고입니다."));
-  else if (c.confidence) out.push(chip(c.confidence, "", c.confidence, "관심 키워드나 관심 품명코드 중 하나만 맞는 공고입니다."));
+  // 강력추천/참고용 칩은 뺐다(2026-10-01 사용자 요청) — 추천 필터·요약줄 건수는 그대로
   if (c.kind === "사전규격") {
     out.push(chip("사전규격", "prespec", "사전규격", "입찰공고 전 규격 공개 단계 — 의견등록 마감까지 규격 의견을 낼 수 있습니다."));
     if (c.linked_bid_notices && c.linked_bid_notices.length)
