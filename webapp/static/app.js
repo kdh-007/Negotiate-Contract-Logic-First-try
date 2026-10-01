@@ -114,11 +114,17 @@ function passes(c) {
 const won = (v) => v == null ? "금액 정보 없음" : (v >= 1e8 ? `${(v / 1e8).toFixed(v >= 1e9 ? 1 : 2).replace(/\.?0+$/, "")}억원` : `${Math.round(v / 1e4).toLocaleString()}만원`);
 const fmtDt = (s) => s ? s.replace("T", " ").slice(0, 16) : "일정 미상";
 const pct = (s) => s == null ? "–" : `${Math.round(s * 100)}%`;
+// 칩 팝업 — 커서를 대면 브라우저 기본 말풍선 대신 다른 칩과 같은 팝업(2026-10-01 요청)
+function chip(label, cls, head, note, headCls = "") {
+  const body = `<div class="tip-title${headCls ? " " + headCls : ""}">${esc(head)}</div>` + (note ? `<div class="tip-note">${note}</div>` : "");
+  return qualButton(label, cls, `${label} — ${head}`, body);
+}
 function dday(c) {
-  if (c.days_left == null) return `<span class="b" title="마감 정보 없음">일정 미상</span>`;
+  if (c.days_left == null) return chip("일정 미상", "", "마감 정보 없음", "나라장터 공고와 첨부파일 어디에서도 마감 일시를 찾지 못했습니다.");
   // 지난 공고는 "마감 마감"이 되지 않게 "마감됨" 한 번만
   const text = c.days_left < 0 ? "마감됨" : c.days_left === 0 ? "마감 D-day" : `마감 D-${c.days_left}`;
-  return `<span class="b dday${c.days_left > 7 ? " far" : ""}" title="${esc(c.deadline_label)} ${esc(fmtDt(c.deadline))}">${text}</span>`;
+  return chip(text, `dday${c.days_left > 7 ? " far" : ""}`, `${c.deadline_label || "마감"} ${fmtDt(c.deadline)}`,
+    "가장 이른 마감(입찰·자격등록·제안서 제출 등) 기준, 오늘부터 남은 날수입니다.");
 }
 const QUAL_NOTES = {
   industry: "자격요건 = 업종·면허(업종코드 4자리). ✓ 보유 · ✗ 미보유 · – 이미 충족해서 없어도 됨.",
@@ -199,20 +205,24 @@ function byTaskFit(list) {
 function badges(c) {
   const out = [dday(c)];
   if (c.review_exclude) {
-    out.push(`<span class="b warn" title="관심 키워드가 있어 빼지 않고 검토 필요로 남겼습니다">제외 키워드 "${esc(c.review_exclude)}" · 관심 "${esc((c.matched_keywords || []).join(", "))}"</span>`);
+    out.push(chip(`제외 키워드 "${c.review_exclude}" · 관심 "${(c.matched_keywords || []).join(", ")}"`, "warn", "검토 필요",
+      `공고명에 제외 키워드 「${esc(c.review_exclude)}」와 관심 키워드 「${esc((c.matched_keywords || []).join(", "))}」가 함께 있어 빼지 않고 남겼습니다. 참가여부를 남겨 주시면 판단 기준을 고치는 데 씁니다.`));
     const f = taskFit(c);
-    out.push(`<span class="b ${f.cls}" title="${esc(f.tip)}">${esc(f.label)}</span>`);
+    out.push(chip(f.label, f.cls, f.label, esc(f.tip), f.cls));
   }
-  else if (c.confidence === "강력추천") out.push(`<span class="b star">강력추천</span>`);
-  else if (c.confidence) out.push(`<span class="b">${esc(c.confidence)}</span>`);
-  out.push(`<span class="b">${esc(c.work_type)}</span>`);
+  else if (c.confidence === "강력추천") out.push(chip("강력추천", "star", "강력추천", "관심 키워드와 관심 품명·업종 코드가 모두 맞는 공고입니다."));
+  else if (c.confidence) out.push(chip(c.confidence, "", c.confidence, "관심 키워드나 관심 품명코드 중 하나만 맞는 공고입니다."));
+  out.push(chip(c.work_type, "", `업무 구분: ${c.work_type}`, "나라장터가 분류한 업무 종류(용역·물품·공사)입니다."));
   if (c.kind === "사전규격") {
-    out.push(`<span class="b prespec" title="입찰공고 전 규격 공개 단계 — 의견등록 마감까지 규격 의견을 낼 수 있습니다">사전규격</span>`);
+    out.push(chip("사전규격", "prespec", "사전규격", "입찰공고 전 규격 공개 단계 — 의견등록 마감까지 규격 의견을 낼 수 있습니다."));
     if (c.linked_bid_notices && c.linked_bid_notices.length)
-      out.push(`<span class="b good" title="${esc(c.linked_bid_notices.join(", "))}">본공고 게시됨</span>`);
-  } else if (c.category) out.push(`<span class="b info" title="${esc(c.award_method || "")}">${esc(c.category)}</span>`);
-  if (c.is_re_notice) out.push(`<span class="b warn">재공고</span>`);
-  if (c.ai) out.push(`<span class="b ${c.ai.label === "적합" ? "good" : c.ai.label === "부적합" ? "bad" : "warn"}" title="${esc(c.ai.reason)}">AI ${esc(c.ai.label)}</span>`);
+      out.push(chip("본공고 게시됨", "good", "본공고 게시됨", `이 사전규격으로 나온 본공고: ${esc(c.linked_bid_notices.join(", "))}`, "good"));
+  } else if (c.category) out.push(chip(c.category, "info", `유형: ${c.category}`, c.award_method ? `낙찰 방법: ${esc(c.award_method)}` : ""));
+  if (c.is_re_notice) out.push(chip("재공고", "warn", "재공고", "유찰 등으로 다시 낸 공고입니다."));
+  if (c.ai) {
+    const cls = c.ai.label === "적합" ? "good" : c.ai.label === "부적합" ? "bad" : "warn";
+    out.push(chip(`AI ${c.ai.label}`, cls, `AI 판단: ${c.ai.label}`, esc(c.ai.reason || ""), cls));
+  }
   return out.join("");
 }
 const SIDO_FULL = { 서울: "서울특별시", 부산: "부산광역시", 대구: "대구광역시", 인천: "인천광역시", 광주: "광주광역시",
