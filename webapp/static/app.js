@@ -99,7 +99,15 @@ function renderFilters() {
 }
 
 function stateOf(c) { return STATES[c.key] || {}; }
+// 탭 안 검색(2026-10-01 요청) — 공고명·수요기관·공고기관·공고번호에 검색어가 들어 있으면 통과. 띄어쓰기로 나누면 모두 들어 있어야 함
+function textHit(c, q) {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = [c.title, c.demand_institution, c.notice_institution, c.notice_no].map((v) => (v || "").toLowerCase()).join(" ");
+  return words.every((w) => hay.includes(w));
+}
 function passes(c) {
+  if (!textHit(c, $("#liveQ").value)) return false;
   if (F.kind !== "본공고+사전규격" && c.kind !== F.kind) return false;
   if (F.cat.size && !F.cat.has(c.category)) return false;
   if (F.part.size && !F.part.has(stateOf(c).status || "미지정")) return false;
@@ -449,21 +457,24 @@ function render() {
   renderSearch();
 }
 
-// ── 제외 공고 분류 (제외 사유 · 업무구분 · 유형) ──
+// ── 제외 공고 분류 (제외 사유 · 공고 · 낙찰방법 · 업무구분) ──
+// 공고(본공고/사전규격)·낙찰방법은 실제 공고 탭과 같은 구분(2026-10-01 요청). 사전규격엔 낙찰방법이 없어 그 줄에선 안 셈
 const REJ_KEYS = [
   { key: "reason", label: "제외 사유", get: (c) => rejReason(c) },
+  { key: "kind", label: "공고", get: (c) => c.kind === "사전규격" ? "사전규격" : "본공고" },
+  { key: "category", label: "낙찰방법", get: (c) => c.kind === "사전규격" ? null : c.category || "미상" },
   { key: "work", label: "업무", get: (c) => c.work_type || "미상" },
-  { key: "category", label: "유형", get: (c) => c.category || "미상" },
 ];
-const REJ_FILTER = { reason: "", work: "", category: "" };
+const REJ_FILTER = { reason: "", kind: "", category: "", work: "" };
 function rejReason(c) { return (c.excluded_reason || "기타").split(" (")[0]; }
 function countBy(list, fn) {
   const out = {};
-  list.forEach((c) => { const k = fn(c); out[k] = (out[k] || 0) + 1; });
+  list.forEach((c) => { const k = fn(c); if (k != null) out[k] = (out[k] || 0) + 1; });
   return Object.fromEntries(Object.entries(out).sort((a, b) => b[1] - a[1]));
 }
 function renderRejected() {
-  const rej = RUN ? RUN.rejected : [];
+  const q = $("#rejQ").value;
+  const rej = (RUN ? RUN.rejected : []).filter((c) => textHit(c, q));
   const matches = (c, skip) => REJ_KEYS.every((k) => k.key === skip || !REJ_FILTER[k.key] || k.get(c) === REJ_FILTER[k.key]);
   // 각 줄의 건수는 "다른 줄에서 고른 조건" 안에서 센다 — 고르면 몇 건이 남는지 바로 보이게
   $("#rejFilters").innerHTML = rej.length ? REJ_KEYS.map((k) => {
@@ -473,7 +484,8 @@ function renderRejected() {
     return `<div class="rej-row"><span class="rej-key">${k.label}</span>${chip("", "전체", total)}${Object.entries(counts).map(([v, n]) => chip(v, v, n)).join("")}</div>`;
   }).join("") : "";
   const shown = rej.filter((c) => matches(c));
-  $("#rejList").replaceChildren(shown.length ? grid(shown, false) : emptyBox(rej.length ? "고른 분류에 해당하는 공고가 없습니다." : "제외된 공고가 없습니다."));
+  $("#rejList").replaceChildren(shown.length ? grid(shown, false)
+    : emptyBox(rej.length ? "고른 분류에 해당하는 공고가 없습니다." : q.trim() ? "검색어와 일치하는 제외 공고가 없습니다." : "제외된 공고가 없습니다."));
 }
 $("#rejFilters").addEventListener("click", (e) => {
   const b = e.target.closest(".rej-chip");
@@ -491,6 +503,8 @@ function renderSearch() {
   box.replaceChildren(hit.length ? grid(hit.slice(0, 60), true) : emptyBox("수집된 공고 중 일치하는 공고가 없습니다."));
 }
 $("#qText").addEventListener("input", renderSearch);
+$("#liveQ").addEventListener("input", render);
+$("#rejQ").addEventListener("input", renderRejected);
 
 // ── 서버 호출 ──
 // ── 보는 수집 결과 — 내가 불러오기 한 결과는 다른 팀원이 나중에 불러오기를 해도 내 화면에서 그대로 유지한다.
