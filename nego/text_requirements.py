@@ -136,15 +136,37 @@ _NOT_MANDATORY = re.compile(r"설명회[^.]{0,15}(?:없|미실시|생략|갈음|
 _DATE_RE = re.compile(r"(20\d{2})\s*[.년-]\s*(\d{1,2})\s*[.월-]\s*(\d{1,2})\s*일?\.?\s*(?:\([월화수목금토일]\))?\s*(\d{1,2}\s*:\s*\d{2})?")
 
 
+# 줄머리 표시(나./1)/①/-/※/❍ …)로 시작하는 줄은 새 문장이다
+_LINE_HEAD = re.compile(r"\n\s*(?=[-※*·•□■○●◎❍◦▪▶►【]|\d{1,2}\s*[).]|[①-⑳]|[가-하]\s*[.)])")
+_MAX_JOINED = 200
+_FORM_RE = re.compile(r"서식\s*(?:제\s*)?\d")  # 이어 붙인 문장이 이보다 길면(공백 제외) 표·서식이 섞인 것 — 줄 단위로 되돌린다
+
+
+def _sentences(item: str) -> list[str]:
+    """항목을 문장으로 나눈다. PDF는 문장 중간에서 줄을 바꿔 "…단일공사 5억원 이상\n준공실적을 보유한 업체"가
+    두 줄로 갈라진다(2026-10-01 제보: 영주 과수거점산지유통센터 — 실적 칩 누락). 줄바꿈은 줄머리 표시가 있을 때만
+    문장 경계로 보고, 나머지는 이어 붙인 뒤 마침표로 나눈다. 너무 길어지면(표·서식 칸이 이어진 것) 줄 단위로 본다."""
+    out = []
+    for block in _LINE_HEAD.split(item):
+        for sent in re.split(r"(?<=[.。])\s+(?=\S)", block):
+            if len(re.sub(r"\s+", "", sent)) > _MAX_JOINED:
+                out.extend(line for line in sent.split("\n") if line.strip())
+            elif sent.strip():
+                out.append(re.sub(r"\s*\n\s*", " ", sent))
+    return out
+
+
 def flag_requirements(items: list[str], full_text: str = "") -> list[dict]:
     """실적·현장설명회 참가·기술인력 요건을 찾아 [{kind, text, date?}]로. 판정은 하지 않는다."""
     out: dict[str, dict] = {}
-    sentences = [s for item in items for s in re.split(r"(?<=[.。])\s+|\n", item) if s.strip()]
+    sentences = [s for item in items for s in _sentences(item)]
     # 현장설명회는 참가자격 절 밖("입찰 일정")에 "참석 필수"로만 적히기도 해서 원문 전체도 본다
     extra = [m.group(0) for m in re.finditer(r"[^\n]{0,60}현장\s*설명회[^\n]{0,100}", full_text or "")]
     for kind, subject, detail in _FLAGS:
         pool = sentences + (extra if kind == "현장설명회" else [])
         for s in pool:
+            if _FORM_RE.search(s):
+                continue  # 제출 서식(참여인력 경력사항 표 등)의 칸 이름은 요건이 아니다
             if kind == "인력" and "건축사사무소" in out:
                 break  # 건축사사무소 요건 문장의 "건축사 면허"를 인력 요건으로 또 세지 않는다
             if kind == "건축사사무소" and re.search(r"업종\s*코드|\[\d{4}\]|\(\d{4}\)", s):
