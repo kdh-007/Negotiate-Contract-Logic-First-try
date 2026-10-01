@@ -602,6 +602,20 @@ class TestScreen(unittest.TestCase):
         self.assertEqual(screen.screen(notice_from_raw(cheap, "용역"),
                                        replace(self.config, review_conflicts=True)).excluded_by, "최소예산", "예산 조건은 그대로")
 
+    def test_hard_exclude_ignores_interest_keyword(self):
+        """특별전·순회전은 무조건 제외 — 관심 키워드(박물관)가 있어도 웹앱 "검토 필요"로 올리지 않는다(2026-10-01)."""
+        from dataclasses import replace
+
+        from nego.config import load_config
+
+        real = load_config().screen
+        self.assertEqual(sorted(set(real.hard_exclude_keywords) & {"특별전", "순회전"}), ["순회전", "특별전"])
+        self.assertFalse({"특별전", "순회전"} & set(real.exclude_keywords))
+        config = replace(self.config, hard_exclude_keywords=["특별전", "순회전"], review_conflicts=True)
+        for title in ("국립○○박물관 특별전 전시 연출 및 제작설치", "○○박물관 순회전 전시물 제작"):
+            res = screen.screen(notice_from_raw(fixtures.notice("H", title=title), "용역"), config)
+            self.assertEqual((res.matched, res.excluded_by), (False, "제외키워드"), title)
+
     def test_budget_below_minimum_blocks(self):
         result = self._screen(fixtures.notice("X", title="○○과학관 전시", presmptPrce="50000000"))
         self.assertFalse(result.matched)
