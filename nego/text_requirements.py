@@ -42,13 +42,27 @@ class NameReq:
 
 
 def _industry_dictionary(held_code_names: dict[str, str], lookup: dict[str, str]) -> dict[str, tuple[str, str | None]]:
-    """정규화 이름 → (표시 이름, 코드). 업종(4자리)만. 보유 목록이 사전보다 우선."""
-    out: dict[str, tuple[str, str | None]] = {}
+    """정규화 이름 → (표시 이름, 코드). 업종(4자리)만. 보유 목록이 사전보다 우선.
+
+    같은 이름이 여러 코드에 붙어 있으면(코드 사전의 "소프트웨어사업자" = 1426·1468·1469·1470, 분야별 등록) 코드를
+    하나로 정할 수 없어 None으로 둔다 — 아무 코드나 붙이면 엉뚱한 분야를 요구하는 것처럼 보인다."""
+    codes: dict[str, set[str]] = {}
+    names: dict[str, str] = {}
     for source in (lookup, held_code_names):
         for code, name in source.items():
             if len(code) == 4 and name:
-                out[_norm(name)] = (name, code)
-    return out
+                codes.setdefault(_norm(name), set()).add(code)
+                names[_norm(name)] = name
+    # 보유 목록에 그 이름이 있으면 보유 코드로 ("실내건축공사업" = 사전 0006 · 등록증 4990 — 등록증 쪽)
+    held_code = {_norm(name): code for code, name in held_code_names.items() if len(code) == 4 and name}
+    return {k: (names[k], held_code.get(k) or (next(iter(c)) if len(c) == 1 else None)) for k, c in codes.items()}
+
+
+def _is_held_name(name: str, held_names: set[str]) -> bool:
+    """보유 이름과 완전히 같거나, 분야 없이 적은 통칭("소프트웨어사업자")이고 그 분야 중 하나를 보유
+    ("소프트웨어사업자(컴퓨터관련서비스사업)")하면 보유."""
+    key = _norm(name)
+    return key in held_names or any(h.startswith(key + "(") for h in held_names)
 
 
 def _design_names(item: str) -> list[str]:
@@ -65,6 +79,11 @@ def _design_names(item: str) -> list[str]:
 _SUBITEM_RE = re.compile(r"(?:(?<=\s)|^)(?=(?:\d{1,2}\)|[①-⑳])\s*)")
 
 
+def sub_items(item: str) -> list[str]:
+    """하위 번호 1)·2)·①로 나눈 조각들 (하위 번호가 없으면 항목 그대로 1개)."""
+    return [p for p in _SUBITEM_RE.split(item) if p.strip()]
+
+
 def name_bundles(
     item: str, held_code_names: dict[str, str], lookup: dict[str, str]
 ) -> list[list[NameReq]]:
@@ -73,7 +92,7 @@ def name_bundles(
     한 항목 안에 "다음 각 조건을 모두 갖춘 업체 1) … 2) …"처럼 하위 번호가 있으면 하위 항목마다 따로
     본다(하위 항목끼리는 모두 필요). 찾은 게 없으면 빈 목록 — 판정하지 않는다.
     """
-    parts = [p for p in _SUBITEM_RE.split(item) if p.strip()]
+    parts = sub_items(item)
     if len(parts) > 1:
         return [b for p in parts for b in name_bundles(p, held_code_names, lookup)]
     if _NOT_REQUIREMENT.search(item):
@@ -96,7 +115,7 @@ def name_bundles(
             if any(s < m.end() and m.start() < e for s, e in taken):
                 continue
             taken.append((m.start(), m.end()))
-            found.append(NameReq(f"{name}({code})" if code else name, _norm(name) in held_names, code))
+            found.append(NameReq(f"{name}({code})" if code else name, _is_held_name(name, held_names), code))
             break
 
     # ③ 직접생산증명 품목 — 괄호 속 품명, 또는 8자리 물품분류번호(보유 10자리 세부품명번호의 앞자리)

@@ -56,6 +56,21 @@ class TestNameJudgement(unittest.TestCase):
         self.assertEqual(judged("공동수급체 대표사는 산업디자인전문회사(환경디자인분야)로 한다"), [])
         self.assertEqual(judged("사. 적격심사 평가대상 업종 및 평가비율\n종합 건축공사업 680,362,000 100%"), [])
 
+    def test_name_only_subitem_inside_coded_item(self):
+        """2026-10-01 하남역사박물관: 코드 있는 하위 항목 옆 "4) …에 따른 소프트웨어사업자"가 빠졌었다.
+        분야 없는 통칭은 분야 중 하나를 보유하면 충족."""
+        held = {**HELD, "1469": "소프트웨어사업자(디지털콘텐츠개발서비스사업)"}
+        lookup = {**LOOKUP, "1426": "소프트웨어사업자", "1469": "소프트웨어사업자"}
+        item = ("나. 나라장터(G2B)에 아래 자격을 모두 갖춘 업체\n"
+                "   1) 직접생산확인증명서[실물모형및전시물, 세부품명번호: 6010989901]를 소지한 업체\n"
+                "   2) 산업디자인전문회사[업종코드 4442] 로 등록되어 있는 업체\n"
+                "   3) ｢소프트웨어산업 진흥법｣ 제24조(소프트웨어사업자의 신고)에 따른 소프트웨어사업자")
+        ok = qualify.evaluate_attachment_text([item], set(held), held, lookup)
+        self.assertEqual(ok.missing_groups, [])
+        self.assertIn("소프트웨어사업자", [n for g in ok.satisfied_groups for n in g.allowed_names])
+        miss = qualify.evaluate_attachment_text([item], set(HELD), HELD, lookup)
+        self.assertEqual([g.allowed_names for g in miss.missing_groups], [["소프트웨어사업자"]])
+
     def test_attachment_evaluation_uses_names(self):
         items = ["산업디자인 전문회사(시각디자인 분야)로 신고를 필한 업체", "실내건축공사업(업종코드 4990)을 등록한 업체"]
         result = qualify.evaluate_attachment_text(items, set(HELD), HELD, LOOKUP)

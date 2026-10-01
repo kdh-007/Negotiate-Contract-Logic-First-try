@@ -43,6 +43,9 @@ def held_lookup(held_raw: dict) -> tuple[set[str], set[str]]:
                 codes.add(str(entry["code"]).strip())
             if entry.get("name"):
                 names.add(_NORM.sub("", str(entry["name"])))
+                # 분야 없이 적은 통칭("소프트웨어사업자")도 보유로 — 보유 이름이 "소프트웨어사업자(컴퓨터관련서비스사업)"
+                if "(" in str(entry["name"]):
+                    names.add(_NORM.sub("", str(entry["name"]).split("(")[0]))
     return codes, names
 
 
