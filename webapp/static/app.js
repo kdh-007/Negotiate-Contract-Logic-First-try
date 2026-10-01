@@ -419,6 +419,10 @@ function emptyBox(text) {
 }
 
 // ── 렌더 ──
+// 마감된 공고(오늘 기준 D-N이 지남)는 각 구역 맨 뒤로 — 나머지 순서는 그대로(2026-10-01 요청)
+const isClosed = (c) => c.days_left != null && c.days_left < 0;
+const closed = (list) => list.filter(isClosed).length;
+const openFirst = (list) => [...list.filter((c) => !isClosed(c)), ...list.filter(isClosed)];
 function render() {
   if (!META) return;
   renderFilters();
@@ -432,7 +436,7 @@ function render() {
   $("#summary").innerHTML = RUN
     ? (oldServer ? `<span class="job err">⚠ 서버가 예전 코드로 실행 중입니다 — Git Bash에서 Ctrl+C 후 'bash webapp/start.sh'로 다시 켜고 '나라장터에서 불러오기'를 다시 눌러 주세요.</span><br>`
       : stale ? `<span class="job err">⚠ 이 결과는 이전 버전으로 수집됐습니다 — 자격 판정·표시가 최신 규칙과 다를 수 있으니 '나라장터에서 불러오기'를 다시 눌러 주세요.</span><br>` : "")
-      + `후보 <b>${all.length}</b>건 중 <b>${shown.length}</b>건 표시 · 싱크로율 높음 <b>${lv("높음")}</b> / 경계선 ${lv("경계선")} / 낮음 ${lv("낮음")}`
+      + `후보 <b>${all.length}</b>건${closed(all) ? ` <span class="why">(마감 ${closed(all)}건)</span>` : ""} 중 <b>${shown.length}</b>건 표시 · 싱크로율 높음 <b>${lv("높음")}</b> / 경계선 ${lv("경계선")} / 낮음 ${lv("낮음")}`
       + ` · 조회 ${esc(fmtDt(RUN.stats.period_begin))} ~ ${esc(fmtDt(RUN.stats.period_end))} · 수집 ${esc(fmtDt(RUN.finished_at))}`
       + (RUN.params.attachments ? "" : " · <span title='첨부 참가자격 미반영'>첨부 자격판정 안 함</span>")
       + (RUN.stats.license_error ? ` · <span class="job err">면허제한정보 조회 실패</span>` : "")
@@ -446,9 +450,9 @@ function render() {
     const parts = [];
     // "검토 필요"(관심·제외 키워드 공존)는 본공고·사전규격과 섞지 않고 맨 아래 따로 모은다
     const sections = [
-      ["본공고", shown.filter((c) => c.kind === "본공고" && !c.review_exclude), ""],
-      ["사전규격", shown.filter((c) => c.kind === "사전규격" && !c.review_exclude), ""],
-      ["검토 필요", byTaskFit(shown.filter((c) => c.review_exclude)),
+      ["본공고", openFirst(shown.filter((c) => c.kind === "본공고" && !c.review_exclude)), ""],
+      ["사전규격", openFirst(shown.filter((c) => c.kind === "사전규격" && !c.review_exclude)), ""],
+      ["검토 필요", openFirst(byTaskFit(shown.filter((c) => c.review_exclude))),
        "관심 키워드와 제외 키워드가 공고명에 함께 있는 공고 — 첨부 과업 내용이 지일 실적과 비슷한 순서. 참가여부를 남겨 주시면 판단 기준을 고치는 데 씁니다"],
     ];
     for (const [kind, list, note] of sections) {
