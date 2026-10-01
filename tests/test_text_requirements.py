@@ -71,6 +71,14 @@ class TestNameJudgement(unittest.TestCase):
         miss = qualify.evaluate_attachment_text([item], set(HELD), HELD, lookup)
         self.assertEqual([g.allowed_names for g in miss.missing_groups], [["소프트웨어사업자"]])
 
+    def test_satisfied_or_bundle_is_kept(self):
+        """'환경디자인(4442) 또는 종합디자인(4444)'을 둘 다 보유해도 충족 요건에 "또는" 묶음으로 남는다(2026-10-01)."""
+        item = "다. 산업디자인전문회사로 환경디자인(업종코드: 4442) 또는 종합디자인(업종코드: 4444)으로 업종을 등록한 업체"
+        held = {**HELD, "4444": "산업디자인전문회사(종합디자인분야)"}
+        result = qualify.evaluate_attachment_text([item], set(held), held, LOOKUP)
+        ors = [g.allowed_names for g in result.satisfied_groups if g.group_no == "또는"]
+        self.assertEqual(ors, [["산업디자인전문회사(환경디자인분야)(4442)", "산업디자인전문회사(종합디자인분야)(4444)"]])
+
     def test_attachment_evaluation_uses_names(self):
         items = ["산업디자인 전문회사(시각디자인 분야)로 신고를 필한 업체", "실내건축공사업(업종코드 4990)을 등록한 업체"]
         result = qualify.evaluate_attachment_text(items, set(HELD), HELD, LOOKUP)

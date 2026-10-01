@@ -4,7 +4,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // 이 화면이 기대하는 수집 결과 형식 — webapp/collect.py RESULT_FORMAT과 같이 올린다
-const APP_FORMAT = 12;
+const APP_FORMAT = 13;
 const store = {
   get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* 저장 불가여도 동작 */ } },
@@ -161,7 +161,8 @@ function reqHtml(req, mixed) {
   const n = req.items.length;
   const none = req.items.every((i) => !i.held);
   const why = `아래 ${n}개 중 1개 이상 보유하면 충족${none ? ` — ${n === 2 ? "둘 다" : "모두"} 미보유` : " — 보유로 충족"}`;
-  return `<div class="tip-item"><span class="why">${why}</span>${req.items.map(item).join("")}</div>`;
+  // 항목 사이에 "또는"을 끼워 공고문 "A 또는 B" 모양이 보이게 한다(2026-10-01 요청)
+  return `<div class="tip-item"><span class="why">${why}</span>${req.items.map(item).join(`<div class="or-sep">또는</div>`)}</div>`;
 }
 function qualButton(label, cls, aria, body) {
   return `<button type="button" class="b qual ${cls}" aria-label="${esc(aria)}">${esc(label)}<span class="tip" role="tooltip">${body}</span></button>`;
