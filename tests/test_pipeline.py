@@ -616,6 +616,18 @@ class TestScreen(unittest.TestCase):
             res = screen.screen(notice_from_raw(fixtures.notice("H", title=title), "용역"), config)
             self.assertEqual((res.matched, res.excluded_by), (False, "제외키워드"), title)
 
+    def test_godohwa_is_conditional_exclude(self):
+        """'고도화' 단독은 조건부 제외(2026-10-01) — 관심 키워드가 있으면 웹앱 "검토 필요", IT 표현은 그대로 제외."""
+        from dataclasses import replace
+        from nego.config import load_config
+
+        config = replace(load_config().screen, review_conflicts=True)
+        museum = screen.screen(notice_from_raw(fixtures.notice(
+            "G", title="[경기북부어린이박물관 전시고도화사업] 상설전시 개편 설계 및 체험전시물 제작·설치"), "용역"), config)
+        self.assertEqual((museum.confidence, museum.review_exclude), ("검토필요", "고도화"))
+        homepage = screen.screen(notice_from_raw(fixtures.notice("H", title="○○군청 홈페이지 고도화 용역"), "용역"), config)
+        self.assertEqual((homepage.excluded_by, homepage.excluded_reason), ("제외키워드", "홈페이지 고도화"))
+
     def test_budget_below_minimum_blocks(self):
         result = self._screen(fixtures.notice("X", title="○○과학관 전시", presmptPrce="50000000"))
         self.assertFalse(result.matched)
