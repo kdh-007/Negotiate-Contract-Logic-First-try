@@ -698,9 +698,10 @@ def evaluate_attachment_text(
                 continue
             group_no = f"이름{idx}"
             groups.append(LicenseGroup(group_no=group_no, allowed_names=[r.label for b in bundles for r in b]))
-            missing_labels = [r.label for b in bundles if not any(r.held for r in b) for r in b]
-            if missing_labels:
-                missing.append(LicenseGroup(group_no=group_no, allowed_names=missing_labels))
+            # 묶음(OR)끼리는 모두 필요 — 빠진 묶음마다 요건 1건 (한 덩어리로 합치면 화면에 "N개 중 1개"로 보인다)
+            for b in bundles:
+                if not any(r.held for r in b):
+                    missing.append(LicenseGroup(group_no=group_no, allowed_names=[r.label for r in b]))
             name_held.extend(r.label for b in bundles for r in b if r.held)
             continue
 
@@ -718,9 +719,9 @@ def evaluate_attachment_text(
                     continue
                 sub_no = f"이름{idx}-{j}"
                 groups.append(LicenseGroup(group_no=sub_no, allowed_names=[r.label for b in bundles for r in b]))
-                missing_labels = [r.label for b in bundles if not any(r.held for r in b) for r in b]
-                if missing_labels:
-                    missing.append(LicenseGroup(group_no=sub_no, allowed_names=missing_labels))
+                for b in bundles:
+                    if not any(r.held for r in b):
+                        missing.append(LicenseGroup(group_no=sub_no, allowed_names=[r.label for r in b]))
                 name_held.extend(r.label for b in bundles for r in b if r.held)
 
         group_no = str(idx)
@@ -730,16 +731,12 @@ def evaluate_attachment_text(
             for code, label in bundle:
                 parsed_labels.setdefault(code, label)
 
-        # 묶음 안에서는 하나만 보유해도 충족, 묶음끼리는 전부 충족해야 항목 충족.
         # 미달 개수는 예전처럼 항목당 1건으로 센다(MAX_ALLOWED_MISSING_QUALIFICATIONS 기준 유지).
-        missing_labels = [
-            label
-            for bundle in or_groups
-            if not any(code in held_codes for code, _ in bundle)
-            for _, label in bundle
-        ]
-        if missing_labels:
-            missing.append(LicenseGroup(group_no=group_no, allowed_names=missing_labels))
+        # "[업종코드 4440, 4442, 4444]"처럼 "또는" 없이 나열한 코드는 모두 필요(2026-10-01 사용자 확정) — 빠진 묶음마다
+        # 요건 1건으로 둔다. 한 덩어리로 합치면 화면에 "아래 2개 중 1개 이상"(또는)으로 잘못 보였다.
+        for bundle in or_groups:
+            if not any(code in held_codes for code, _ in bundle):
+                missing.append(LicenseGroup(group_no=group_no, allowed_names=[label for _, label in bundle]))
 
     if not groups:
         return QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False)
