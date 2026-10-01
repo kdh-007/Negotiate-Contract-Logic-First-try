@@ -165,7 +165,7 @@ class Job:
     params: dict[str, Any] = field(default_factory=dict)
     log: list[str] = field(default_factory=list)
     error: str | None = None
-    run_id: int | None = None  # 저장된 결과 번호 — 수집을 누른 사람 화면이 이 결과로 고정된다
+    run_id: int | None = None  # 저장된 결과 번호 — 수집을 누른 사람 화면만 이 결과로 바뀐다
 
     def snapshot(self) -> dict[str, Any]:
         return {"running": self.running, "started_at": self.started_at, "finished_at": self.finished_at,
@@ -195,7 +195,7 @@ class Collector:
         self._config_loader = config_loader
 
     def start(self, days: int | None, attachments: bool, ai: bool, categories: list[str] | None,
-              prespec: bool = True, begin: str | None = None, end: str | None = None, by: str | None = None) -> Job:
+              prespec: bool = True, begin: str | None = None, end: str | None = None) -> Job:
         """`begin`·`end`("YYYY-MM-DD")를 주면 그 구간, 아니면 최근 `days`일."""
         period = None
         if begin or end:
@@ -209,7 +209,6 @@ class Collector:
                 raise RuntimeError("이미 수집 중입니다")
             self.job = Job(running=True, started_at=datetime.now().isoformat(timespec="seconds"),
                            params={"days": days, "begin": begin if period else None, "end": end if period else None,
-                                   "by": (by or "").strip()[:30] or None,
                                    "attachments": attachments, "ai": ai, "prespec": prespec,
                                    "categories": sorted(cats) if cats else None})
         threading.Thread(target=self._work, args=(self.job, days, attachments, ai, cats, prespec, period),

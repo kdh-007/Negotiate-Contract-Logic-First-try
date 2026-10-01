@@ -341,8 +341,6 @@ function render() {
     ? (stale ? `<span class="job err">⚠ 이 결과는 이전 버전으로 수집됐습니다 — 자격 판정·표시가 최신 규칙과 다를 수 있으니 '나라장터에서 불러오기'를 다시 눌러 주세요.</span><br>` : "")
       + `후보 <b>${all.length}</b>건 중 <b>${shown.length}</b>건 표시 · 강력추천 ${strong} · 싱크로율 높음 <b>${lv("높음")}</b> / 경계선 ${lv("경계선")} / 낮음 ${lv("낮음")}`
       + ` · 조회 ${esc(fmtDt(RUN.stats.period_begin))} ~ ${esc(fmtDt(RUN.stats.period_end))} · 수집 ${esc(fmtDt(RUN.finished_at))}`
-      + (RUN.params.by ? ` (${esc(RUN.params.by)})` : "")
-      + (RUNS.length && RUNS[0].id !== RUN.id ? ` · <span class="newer">더 최근 수집 결과가 있습니다 — '보는 결과'에서 고르세요</span>` : "")
       + (RUN.params.attachments ? "" : " · <span title='첨부 참가자격 미반영'>첨부 자격판정 안 함</span>")
       + (RUN.stats.license_error ? ` · <span class="job err">면허제한정보 조회 실패</span>` : "")
       + (RUN.stats.prespec_requested ? ` · 사전규격 ${RUN.stats.prespec_fetched}건 수집` : " · 사전규격 미수집")
@@ -430,29 +428,19 @@ function renderSearch() {
 $("#qText").addEventListener("input", renderSearch);
 
 // ── 서버 호출 ──
-// ── 보는 수집 결과 — 사람(브라우저)마다 따로 고른다. "latest"면 누가 수집하든 가장 최근 결과를 따라간다 ──
-let VIEW = store.get("viewRun", "latest") || "latest", RUNS = [];
-function setView(v) { VIEW = String(v); store.set("viewRun", VIEW); }
-function runLabel(r) {
-  const span = r.begin ? `${r.begin.slice(5)}~${r.end.slice(5)}` : r.days ? `최근 ${r.days}일`
-    : `${fmtDt(r.period_begin).slice(5, 10)}~${fmtDt(r.period_end).slice(5, 10)}`;
-  return `${fmtDt(r.finished_at).slice(5)} · ${span} · ${r.by || "이름 없음"} · 후보 ${r.candidates ?? "?"}`;
-}
-function renderRunSel() {
-  const sel = $("#runSel");
-  sel.replaceChildren(new Option("가장 최근 결과 (자동)", "latest"), ...RUNS.map((r) => new Option(runLabel(r), String(r.id))));
-  sel.value = RUNS.some((r) => String(r.id) === VIEW) ? VIEW : "latest";
-  sel.disabled = !RUNS.length;
-}
+// ── 보는 수집 결과 — 내가 불러오기 한 결과는 다른 팀원이 나중에 불러오기를 해도 내 화면에서 그대로 유지한다.
+// MY_RUN(브라우저에 기억): 내가 마지막으로 불러온 결과 번호. 없으면 가장 최근 결과.
+// SHOWN: 지금 화면에 띄운 결과 번호 — 보는 도중엔(진행 확인·새로 조회) 다른 결과로 바뀌지 않는다.
+let SHOWN = null;
 async function loadResults() {
-  const data = await api(VIEW === "latest" ? "/api/results" : `/api/results?run=${encodeURIComponent(VIEW)}`);
-  if (data.missing) setView("latest");  // 고른 결과가 오래돼 지워졌으면 최신으로
-  RUN = data.run; RUNS = data.runs || []; STATES = data.states; COUNTS = data.comment_counts;
-  renderRunSel();
+  const want = SHOWN || store.get("myRun", "");
+  let data = await api(want ? `/api/results?run=${encodeURIComponent(want)}` : "/api/results");
+  if (data.missing) { store.set("myRun", ""); SHOWN = null; }  // 오래돼 지워진 결과(최근 30회만 보관)면 최신으로
+  RUN = data.run; STATES = data.states; COUNTS = data.comment_counts;
+  if (RUN && !data.missing) SHOWN = String(RUN.id);
   showJob(data.job);
   render();
 }
-$("#runSel").addEventListener("change", (e) => { setView(e.target.value); loadResults().catch((err) => alert(err.message)); });
 async function setState(key, patch) {
   if (needName()) return;
   try {
@@ -483,10 +471,11 @@ async function pollJob() {
   if (!job) return;
   showJob(job);
   if (job.running) return;
-  // 내가 누른 수집이 끝났으면 내 화면은 그 결과로 고정 — 다른 사람이 나중에 수집해도 바뀌지 않는다
+  // 내가 누른 수집이 끝났을 때만 새 결과로 바꾼다 — 다른 팀원의 수집이 끝나도 내 화면은 그대로
   if (job.run_id && job.started_at && job.started_at === store.get("myJob", "")) {
-    setView(job.run_id);
+    store.set("myRun", String(job.run_id));
     store.set("myJob", "");
+    SHOWN = String(job.run_id);
   }
   loadResults();
 }
@@ -498,7 +487,7 @@ $("#btnCollect").addEventListener("click", async () => {
     if (custom && (!range.begin || !range.end)) return alert("시작일과 종료일을 모두 고르세요");
     const job = await api("/api/collect", {
       ...range, attachments: $("#optAttach").checked, ai: $("#optAi").checked,
-      prespec: $("#optPrespec").checked, name: myName(),
+      prespec: $("#optPrespec").checked,
     });
     store.set("myJob", job.started_at);
     showJob(job);

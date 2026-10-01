@@ -410,24 +410,16 @@ class TestServer(unittest.TestCase):
         self.assertIsNone(job["error"])
         return job
 
-    def test_each_viewer_picks_a_run(self):
-        """사람마다 다른 수집 결과를 골라 본다 — ?run=번호, 목록, 누른 사람 이름, 지워진 번호는 최신으로."""
-        first = self._collect_and_wait({"days": 7, "attachments": False, "name": "김지일"})
-        second = self._collect_and_wait({"days": 1, "attachments": False})
-        self.assertNotEqual(first["run_id"], second["run_id"])
-
-        res = self.call("/api/results")[1]
-        self.assertEqual(res["run"]["id"], second["run_id"], "기본은 최신")
-        self.assertEqual([r["id"] for r in res["runs"]][:2], [second["run_id"], first["run_id"]])
-        listed = {r["id"]: r for r in res["runs"]}
-        self.assertEqual((listed[first["run_id"]]["by"], listed[first["run_id"]]["days"]), ("김지일", 7))
-        self.assertIsNone(listed[second["run_id"]]["by"])
-        self.assertGreater(listed[first["run_id"]]["candidates"], 0)
-
-        mine = self.call(f"/api/results?run={first['run_id']}")[1]
-        self.assertEqual((mine["run"]["id"], mine["missing"]), (first["run_id"], False))
+    def test_viewer_keeps_own_run(self):
+        """내가 불러온 결과(?run=번호)는 다른 팀원이 나중에 불러오기를 해도 그대로 받을 수 있다. 지워진 번호면 최신."""
+        mine = self._collect_and_wait({"days": 7, "attachments": False})
+        other = self._collect_and_wait({"days": 1, "attachments": False})
+        self.assertNotEqual(mine["run_id"], other["run_id"])
+        self.assertEqual(self.call("/api/results")[1]["run"]["id"], other["run_id"], "번호 없으면 최신")
+        res = self.call(f"/api/results?run={mine['run_id']}")[1]
+        self.assertEqual((res["run"]["id"], res["run"]["params"]["days"], res["missing"]), (mine["run_id"], 7, False))
         gone = self.call("/api/results?run=999999")[1]
-        self.assertEqual((gone["run"]["id"], gone["missing"]), (second["run_id"], True))
+        self.assertEqual((gone["run"]["id"], gone["missing"]), (other["run_id"], True))
 
     def test_old_runs_are_pruned(self):
         from webapp.store import Store
@@ -437,8 +429,8 @@ class TestServer(unittest.TestCase):
             st.KEEP_RUNS = 3
             ids = [st.save_run("2026-10-01T10:00:00", {"days": 1}, {"candidates": [], "rejected": [], "stats": {}})
                    for _ in range(5)]
-            self.assertEqual([r["id"] for r in st.list_runs()], ids[-3:][::-1])
-            self.assertIsNone(st.run(ids[0]))
+            self.assertIsNone(st.run(ids[1]))
+            self.assertEqual([st.run(i)["id"] for i in ids[-3:]], ids[-3:])
 
     def test_bad_period_and_missing_key(self):
         self.assertEqual(self.call("/api/collect", {"days": 5})[0], 400)

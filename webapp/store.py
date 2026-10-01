@@ -65,7 +65,7 @@ class Store:
             return self._db.execute(sql, args).fetchall()
 
     # ── 수집 결과 ─────────────────────────────────────────────
-    # 최근 KEEP_RUNS회분을 남긴다 — 사람마다 다른 기간으로 수집해 각자 원하는 결과를 골라 보도록(2026-10-01 요청).
+    # 최근 KEEP_RUNS회분을 남긴다 — 내가 불러온 결과를 다른 팀원이 새로 불러오기 해도 내 화면에서 계속 보도록(2026-10-01 요청).
     KEEP_RUNS = 30
 
     def save_run(self, started_at: str, params: dict[str, Any], payload: dict[str, Any]) -> int:
@@ -93,27 +93,6 @@ class Store:
     def run(self, run_id: int) -> dict[str, Any] | None:
         rows = self._query("SELECT * FROM runs WHERE id=? AND payload IS NOT NULL", (run_id,))
         return self._run_row(rows[0]) if rows else None
-
-    def list_runs(self) -> list[dict[str, Any]]:
-        """고르기 목록용 요약 — 결과 본문(payload)은 SQLite JSON 함수로 필요한 값만 꺼낸다."""
-        rows = self._query(
-            "SELECT id, started_at, finished_at, params,"
-            " json_array_length(payload, '$.candidates') AS n_candidates,"
-            " json_array_length(payload, '$.rejected') AS n_rejected,"
-            " json_extract(payload, '$.stats.period_begin') AS period_begin,"
-            " json_extract(payload, '$.stats.period_end') AS period_end"
-            " FROM runs WHERE payload IS NOT NULL ORDER BY id DESC"
-        )
-        out = []
-        for r in rows:
-            params = json.loads(r["params"])
-            out.append({
-                "id": r["id"], "started_at": r["started_at"], "finished_at": r["finished_at"],
-                "by": params.get("by"), "days": params.get("days"), "begin": params.get("begin"), "end": params.get("end"),
-                "period_begin": r["period_begin"], "period_end": r["period_end"],
-                "candidates": r["n_candidates"], "rejected": r["n_rejected"],
-            })
-        return out
 
     # ── 참가여부·담당 ─────────────────────────────────────────
     def set_state(self, key: str, by: str, status: str | None = None, assignee: str | None = None,
