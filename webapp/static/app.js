@@ -49,7 +49,6 @@ function needName() {
 // ── 상태 ──
 let META = null, RUN = null, STATES = {}, COUNTS = {}, PAST = null;
 const F = {
-  conf: store.get("f.conf", "전체"),
   kind: "본공고+사전규격",
   cat: new Set(JSON.parse(store.get("f.cat", "[]"))),
   part: new Set(),
@@ -81,7 +80,6 @@ function chipRow(label, key, options, multi, disabled = {}) {
     b.addEventListener("click", () => {
       if (multi) { F[key].has(opt) ? F[key].delete(opt) : F[key].add(opt); }
       else F[key] = opt;
-      if (key === "conf") store.set("f.conf", F.conf);
       if (key === "cat") store.set("f.cat", JSON.stringify([...F.cat]));
       render();
     });
@@ -92,7 +90,6 @@ function chipRow(label, key, options, multi, disabled = {}) {
 function renderFilters() {
   const box = $("#filters");
   box.replaceChildren(
-    chipRow("추천", "conf", ["전체", "강력추천", "참고용", "검토필요"], false),
     chipRow("공고", "kind", ["본공고+사전규격", "본공고", "사전규격"], false),
     chipRow("낙찰방법", "cat", META ? META.categories : ["협상", "규격가격동시입찰", "입찰"], true),
     chipRow("참가여부", "part", ["미지정", ...(META ? META.statuses : [])], true),
@@ -103,7 +100,6 @@ function renderFilters() {
 
 function stateOf(c) { return STATES[c.key] || {}; }
 function passes(c) {
-  if (F.conf !== "전체" && c.confidence !== F.conf) return false;
   if (F.kind !== "본공고+사전규격" && c.kind !== F.kind) return false;
   if (F.cat.size && !F.cat.has(c.category)) return false;
   if (F.part.size && !F.part.has(stateOf(c).status || "미지정")) return false;
@@ -225,22 +221,14 @@ function taskFit(c) {
 }
 // 검토 필요 카드의 "최다 유사" 줄 앞에 붙는 과업 유사 칩 (2026-10-01 요청 — 위쪽 배지 줄에서 옮김)
 function fitChip(c) {
-  // 싱크로율 숫자는 카드 오른쪽에 있으니 팝업엔 "공고 원문 중 지일 실적과 겹치는 과업" 발췌를 보여준다
-  const f = taskFit(c), best = (c.sync && c.sync.top || [])[0];
-  const ex = (best && best.excerpts) || [];
-  let body = `<div class="tip-title${f.cls ? " " + f.cls : ""}">${esc(f.label)}</div>`;
-  if (best) body += `<div class="tip-label">가장 비슷한 지일 실적 — (${esc(best.year)}) ${esc(best.title)}</div>`;
-  const scope = c.scope_items || [];
-  if (scope.length) {
-    // 공고문이 "사업 범위"로 정리한 과업 목록이 있으면 그걸 그대로 보여준다(2026-10-01 사용자 요청)
-    body += `<div class="tip-label">공고문 사업 범위</div>` + scope.map((x) => `<div class="tip-item quote">· ${esc(x)}</div>`).join("");
-  } else if (ex.length) {
-    body += `<div class="tip-label">공고 원문에서 겹치는 과업</div>`
-      + ex.map((e) => `<div class="tip-item quote"><span class="tag">${esc(e.tag)}</span>${esc(e.text)}</div>`).join("");
-  } else {
-    const note = !(c.sync && c.sync.basis === "과업 원문") ? "첨부 과업 내용을 읽지 못해 공고명으로만 비교했습니다."
-      : best && !("excerpts" in best) ? "이 수집 결과엔 원문 발췌가 없습니다 — 서버를 다시 켠 뒤 '나라장터에서 불러오기'를 다시 눌러 주세요."
-      : "겹치는 과업을 원문에서 찾지 못했습니다.";
+  // 팝업엔 공고문의 "사업 범위" 목록만 보여준다(2026-10-01 사용자 요청 — 실적명·태그 발췌는 뺌)
+  const f = taskFit(c), scope = c.scope_items || [];
+  let body = `<div class="tip-title${f.cls ? " " + f.cls : ""}">${esc(f.label)} — 공고문 사업 범위</div>`;
+  if (scope.length) body += scope.map((x) => `<div class="tip-item quote">· ${esc(x)}</div>`).join("");
+  else {
+    const note = !("scope_items" in c) ? "이 수집 결과엔 사업 범위 목록이 없습니다 — 서버를 다시 켠 뒤 '나라장터에서 불러오기'를 다시 눌러 주세요."
+      : !(c.sync && c.sync.basis === "과업 원문") ? "첨부 과업 내용을 읽지 못했습니다."
+      : "첨부 공고문에서 사업 범위 목록을 찾지 못했습니다.";
     body += `<div class="tip-note">${note}</div>`;
   }
   return qualButton(f.label, f.cls, f.label, body);
@@ -254,7 +242,7 @@ function badges(c) {
     out.push(chip(`제외 키워드 "${c.review_exclude}" · 관심 "${(c.matched_keywords || []).join(", ")}"`, "warn", "검토 필요",
       `공고명에 제외 키워드 「${esc(c.review_exclude)}」와 관심 키워드 「${esc((c.matched_keywords || []).join(", "))}」가 함께 있어 빼지 않고 남겼습니다. 참가여부를 남겨 주시면 판단 기준을 고치는 데 씁니다.`));
   }
-  // 강력추천/참고용 칩은 뺐다(2026-10-01 사용자 요청) — 추천 필터·요약줄 건수는 그대로
+  // 강력추천/참고용 표시는 칩·추천 필터·요약줄·탭 건수 모두 뺐다(2026-10-01 사용자 요청)
   if (c.kind === "사전규격") {
     out.push(chip("사전규격", "prespec", "사전규격", "입찰공고 전 규격 공개 단계 — 의견등록 마감까지 규격 의견을 낼 수 있습니다."));
     if (c.linked_bid_notices && c.linked_bid_notices.length)
@@ -409,7 +397,6 @@ function render() {
   const all = RUN ? RUN.candidates : [];
   const shown = all.filter(passes);
   const lv = (l) => shown.filter((c) => c.sync.level === l).length;
-  const strong = shown.filter((c) => c.confidence === "강력추천").length;
   // 예전 버전 코드로 수집한 결과면 판정·팝업이 최신 규칙과 다를 수 있다 — 다시 불러오라고 알린다
   const stale = RUN && META && META.result_format && (RUN.format || 0) < Math.max(META.result_format, APP_FORMAT);
   // 화면 파일은 git pull만으로 바로 새 버전이 되지만 서버(수집·판정 코드)는 다시 켜야 바뀐다 — 서버가 예전 코드면 알린다
@@ -417,7 +404,7 @@ function render() {
   $("#summary").innerHTML = RUN
     ? (oldServer ? `<span class="job err">⚠ 서버가 예전 코드로 실행 중입니다 — Git Bash에서 Ctrl+C 후 'bash webapp/start.sh'로 다시 켜고 '나라장터에서 불러오기'를 다시 눌러 주세요.</span><br>`
       : stale ? `<span class="job err">⚠ 이 결과는 이전 버전으로 수집됐습니다 — 자격 판정·표시가 최신 규칙과 다를 수 있으니 '나라장터에서 불러오기'를 다시 눌러 주세요.</span><br>` : "")
-      + `후보 <b>${all.length}</b>건 중 <b>${shown.length}</b>건 표시 · 강력추천 ${strong} · 싱크로율 높음 <b>${lv("높음")}</b> / 경계선 ${lv("경계선")} / 낮음 ${lv("낮음")}`
+      + `후보 <b>${all.length}</b>건 중 <b>${shown.length}</b>건 표시 · 싱크로율 높음 <b>${lv("높음")}</b> / 경계선 ${lv("경계선")} / 낮음 ${lv("낮음")}`
       + ` · 조회 ${esc(fmtDt(RUN.stats.period_begin))} ~ ${esc(fmtDt(RUN.stats.period_end))} · 수집 ${esc(fmtDt(RUN.finished_at))}`
       + (RUN.params.attachments ? "" : " · <span title='첨부 참가자격 미반영'>첨부 자격판정 안 함</span>")
       + (RUN.stats.license_error ? ` · <span class="job err">면허제한정보 조회 실패</span>` : "")
@@ -447,7 +434,7 @@ function render() {
       h.className = "section" + (note ? " review" : "");
       h.innerHTML = note
         ? `${kind} ${list.length}건<small>${esc(note)}</small>`
-        : `${kind} ${list.length}건<small>강력추천 ${list.filter((c) => c.confidence === "강력추천").length}건</small>`;
+        : `${kind} ${list.length}건`;
       parts.push(h, grid(list, true));
     }
     live.replaceChildren(...parts);
