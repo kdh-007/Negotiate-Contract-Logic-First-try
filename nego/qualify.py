@@ -334,6 +334,7 @@ _BARE_GROUP_ENTRY_CODE_RE = re.compile(r"[0-9]{10}")
 _GROUP_ENTRY_STRIP_CHARS = " ,·/;、"
 # "다음 중 어느 하나"는 항목 전체를 OR로 만든다.
 _OR_MARKER_RE = re.compile(r"어느\s*하나")
+_CODE_HINT_RE = re.compile(r"업종\s*코드|세부\s*품명\s*번호|분류\s*번호|(?<!\d)\d{10}(?!\d)")
 # 코드 바로 뒤(닫는 괄호 다음)에 "또는/혹은"이 오면 그 앞뒤 두 코드만 OR로 묶는다
 # (실측: 2026 대한민국 지방시대 엑스포 R26BK01739064 — "전시부스설치및디자인서비스
 # (세부품명번호 : 7215409901) 또는 전시홍보관설치및디자인서비스(세부품명번호 :
@@ -692,16 +693,36 @@ def evaluate_attachment_text(
             # 코드 없이 이름만 적힌 업종·직접생산 품목 — 보유 목록·코드 사전에 있는 이름으로만 판정한다
             from .text_requirements import name_bundles
 
-            bundles = name_bundles(item, held_code_names, lookup)
+            bundles = name_bundles(item, held_code_names, code_names or {})
             if not bundles:
                 continue
             group_no = f"이름{idx}"
             groups.append(LicenseGroup(group_no=group_no, allowed_names=[r.label for b in bundles for r in b]))
-            missing_labels = [r.label for b in bundles if not any(r.held for r in b) for r in b]
-            if missing_labels:
-                missing.append(LicenseGroup(group_no=group_no, allowed_names=missing_labels))
+            # 묶음(OR)끼리는 모두 필요 — 빠진 묶음마다 요건 1건 (한 덩어리로 합치면 화면에 "N개 중 1개"로 보인다)
+            for b in bundles:
+                if not any(r.held for r in b):
+                    missing.append(LicenseGroup(group_no=group_no, allowed_names=[r.label for r in b]))
             name_held.extend(r.label for b in bundles for r in b if r.held)
             continue
+
+        # 코드가 적힌 항목 안에 코드 없이 이름만 적힌 하위 항목이 섞여 있으면("1) 직접생산[세부품명번호 …] 2) 산업디자인
+        # [업종코드 …] 3) 소프트웨어산업 진흥법에 따른 소프트웨어사업자") 그 하위 항목은 이름으로 따로 본다
+        # (2026-10-01 제보: 하남역사박물관 — 소프트웨어사업자 요건이 빠졌음). "어느 하나"면 코드 쪽과 OR라 건너뜀.
+        if not _OR_MARKER_RE.search(item):
+            from .text_requirements import name_bundles, sub_items
+
+            # 하위 항목에 코드 표기 흔적이 있으면(정규식이 못 읽은 "세부품명번호-6012100201" 등) 이름 판정하지 않는다
+            plain = [p for p in sub_items(item) if not _or_groups(p) and not _CODE_HINT_RE.search(p)]
+            for j, part in enumerate(plain):
+                bundles = name_bundles(part, held_code_names, code_names or {})
+                if not bundles:
+                    continue
+                sub_no = f"이름{idx}-{j}"
+                groups.append(LicenseGroup(group_no=sub_no, allowed_names=[r.label for b in bundles for r in b]))
+                for b in bundles:
+                    if not any(r.held for r in b):
+                        missing.append(LicenseGroup(group_no=sub_no, allowed_names=[r.label for r in b]))
+                name_held.extend(r.label for b in bundles for r in b if r.held)
 
         group_no = str(idx)
         all_labels = [label for bundle in or_groups for _, label in bundle]
@@ -711,15 +732,11 @@ def evaluate_attachment_text(
                 parsed_labels.setdefault(code, label)
 
         # 묶음 안에서는 하나만 보유해도 충족, 묶음끼리는 전부 충족해야 항목 충족.
-        # 미달 개수는 예전처럼 항목당 1건으로 센다(MAX_ALLOWED_MISSING_QUALIFICATIONS 기준 유지).
-        missing_labels = [
-            label
-            for bundle in or_groups
-            if not any(code in held_codes for code, _ in bundle)
-            for _, label in bundle
-        ]
-        if missing_labels:
-            missing.append(LicenseGroup(group_no=group_no, allowed_names=missing_labels))
+        # "[업종코드 4440, 4442, 4444]"처럼 "또는" 없이 나열한 코드는 모두 필요(2026-10-01 사용자 확정) — 빠진 묶음마다
+        # 요건 1건으로 둔다. 한 덩어리로 합치면 화면에 "아래 2개 중 1개 이상"(또는)으로 잘못 보였다.
+        for bundle in or_groups:
+            if not any(code in held_codes for code, _ in bundle):
+                missing.append(LicenseGroup(group_no=group_no, allowed_names=[label for _, label in bundle]))
 
     if not groups:
         return QualificationResult(total_groups=0, missing_groups=[], passes=True, checked=False)

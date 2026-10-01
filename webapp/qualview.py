@@ -43,6 +43,9 @@ def held_lookup(held_raw: dict) -> tuple[set[str], set[str]]:
                 codes.add(str(entry["code"]).strip())
             if entry.get("name"):
                 names.add(_NORM.sub("", str(entry["name"])))
+                # 분야 없이 적은 통칭("소프트웨어사업자")도 보유로 — 보유 이름이 "소프트웨어사업자(컴퓨터관련서비스사업)"
+                if "(" in str(entry["name"]):
+                    names.add(_NORM.sub("", str(entry["name"]).split("(")[0]))
     return codes, names
 
 
@@ -82,7 +85,7 @@ def _items(group, held: tuple[set[str], set[str]]) -> list[dict[str, Any]]:
 
 
 def _plain(label: str) -> str:
-    return re.sub(r"\s+", "", _TRAILING_CODE.sub("", label))
+    return re.sub(r"[\s·ㆍ]+", "", _TRAILING_CODE.sub("", label))
 
 
 def _named_alternatives(items: list[dict[str, Any]], doc_text: str) -> list[dict[str, Any]]:
@@ -97,7 +100,8 @@ def _named_alternatives(items: list[dict[str, Any]], doc_text: str) -> list[dict
     """
     if not doc_text or len(items) < 2:
         return []
-    text = re.sub(r"\s+", "", doc_text)
+    # "토목·건축공사업"처럼 가운뎃점을 넣어 적기도 한다(2026-10-01 제보: 고이분교 리모델링) — 공백과 함께 지운다
+    text = re.sub(r"[\s·ㆍ]+", "", doc_text)
     first = re.escape(_plain(items[0]["label"]))
     out = []
     for alt in items[1:]:
@@ -158,6 +162,13 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
     # (6010999901)"와 "육훈련장비(6010999901)"처럼 표기만 다른 같은 요건이 두 번 나온다(2026-09-30 제보).
     by_sig: dict[tuple, list] = {}
     order: list[tuple[str, tuple]] = []
+    # 면허제한 API의 "반드시" 요건(대표 면허 코드). 첨부 참가자격 판정이 같은 면허를 또 잡으면("건축공사업(또는
+    # 토목·건축공사업)을 등록한 자") 같은 요건이 두 번 나온다(2026-10-01 제보: 건축공사업 ×2) — API 쪽만 남긴다.
+    api_primary = {
+        _code(_clean_label(_display_name(g.rows[0][0])))
+        for g in list(qualification.missing_groups) + list(qualification.satisfied_groups)
+        if len(g.rows or []) == 1 and g.rows[0]
+    } - {None}
     for state, source in (("missing", qualification.missing_groups), ("satisfied", qualification.satisfied_groups)):
         for g in source:
             if getattr(g, "combos", None):
@@ -206,6 +217,8 @@ def build(qualification, held: tuple[set[str], set[str]], had_source: dict[str, 
                 continue
             items = _items(g, held)
             if not items:
+                continue
+            if not g.rows and g.group_no != "held" and any(i["code"] in api_primary for i in items):
                 continue
             sig = tuple(sorted(i["code"] or i["label"] for i in items))
             if sig in by_sig:

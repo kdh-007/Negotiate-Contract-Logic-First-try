@@ -22,7 +22,8 @@ from dataclasses import dataclass
 # 한 항목 안 이름들을 "또는"으로 볼 신호. 없으면 이름마다 모두 필요.
 _OR_HINT = re.compile(r"또는|혹은|중\s*(?:하나|1\s*개|한\s*가지)|어느\s*하나|이상\s*(?:을|를)?\s*(?:보유|등록|신고|소지)")
 # 요건이 아닌 항목 — 공동수급 방법·실적·결격사유 설명 속 업종명은 판정하지 않는다
-_NOT_REQUIREMENT = re.compile(r"공동수급|공동도급|공동이행|분담이행|대표사|구성원|실적|제재|부정당|하도급")
+# "적격심사 평가대상 업종 및 평가비율" 표는 자격요건이 아니다(2026-10-01 고이분교: "종합 건축공사업 … 100%")
+_NOT_REQUIREMENT = re.compile(r"공동수급|공동도급|공동이행|분담이행|대표사|구성원|실적|제재|부정당|하도급|평가\s*대상\s*업종|평가\s*비율")
 _DESIGN_FIELDS = ("시각", "제품", "포장", "환경", "멀티미디어", "서비스", "종합")
 _DESIGN_RE = re.compile(r"산업\s*디자인\s*전문\s*회사\s*[(\[]([^)\]]{1,80})[)\]]")
 _DIRECT_RE = re.compile(r"직접\s*생산\s*(?:확인)?\s*증명(?:서)?")
@@ -41,13 +42,27 @@ class NameReq:
 
 
 def _industry_dictionary(held_code_names: dict[str, str], lookup: dict[str, str]) -> dict[str, tuple[str, str | None]]:
-    """정규화 이름 → (표시 이름, 코드). 업종(4자리)만. 보유 목록이 사전보다 우선."""
-    out: dict[str, tuple[str, str | None]] = {}
+    """정규화 이름 → (표시 이름, 코드). 업종(4자리)만. 보유 목록이 사전보다 우선.
+
+    같은 이름이 여러 코드에 붙어 있으면(코드 사전의 "소프트웨어사업자" = 1426·1468·1469·1470, 분야별 등록) 코드를
+    하나로 정할 수 없어 None으로 둔다 — 아무 코드나 붙이면 엉뚱한 분야를 요구하는 것처럼 보인다."""
+    codes: dict[str, set[str]] = {}
+    names: dict[str, str] = {}
     for source in (lookup, held_code_names):
         for code, name in source.items():
             if len(code) == 4 and name:
-                out[_norm(name)] = (name, code)
-    return out
+                codes.setdefault(_norm(name), set()).add(code)
+                names[_norm(name)] = name
+    # 보유 목록에 그 이름이 있으면 보유 코드로 ("실내건축공사업" = 사전 0006 · 등록증 4990 — 등록증 쪽)
+    held_code = {_norm(name): code for code, name in held_code_names.items() if len(code) == 4 and name}
+    return {k: (names[k], held_code.get(k) or (next(iter(c)) if len(c) == 1 else None)) for k, c in codes.items()}
+
+
+def _is_held_name(name: str, held_names: set[str]) -> bool:
+    """보유 이름과 완전히 같거나, 분야 없이 적은 통칭("소프트웨어사업자")이고 그 분야 중 하나를 보유
+    ("소프트웨어사업자(컴퓨터관련서비스사업)")하면 보유."""
+    key = _norm(name)
+    return key in held_names or any(h.startswith(key + "(") for h in held_names)
 
 
 def _design_names(item: str) -> list[str]:
@@ -64,6 +79,11 @@ def _design_names(item: str) -> list[str]:
 _SUBITEM_RE = re.compile(r"(?:(?<=\s)|^)(?=(?:\d{1,2}\)|[①-⑳])\s*)")
 
 
+def sub_items(item: str) -> list[str]:
+    """하위 번호 1)·2)·①로 나눈 조각들 (하위 번호가 없으면 항목 그대로 1개)."""
+    return [p for p in _SUBITEM_RE.split(item) if p.strip()]
+
+
 def name_bundles(
     item: str, held_code_names: dict[str, str], lookup: dict[str, str]
 ) -> list[list[NameReq]]:
@@ -72,7 +92,7 @@ def name_bundles(
     한 항목 안에 "다음 각 조건을 모두 갖춘 업체 1) … 2) …"처럼 하위 번호가 있으면 하위 항목마다 따로
     본다(하위 항목끼리는 모두 필요). 찾은 게 없으면 빈 목록 — 판정하지 않는다.
     """
-    parts = [p for p in _SUBITEM_RE.split(item) if p.strip()]
+    parts = sub_items(item)
     if len(parts) > 1:
         return [b for p in parts for b in name_bundles(p, held_code_names, lookup)]
     if _NOT_REQUIREMENT.search(item):
@@ -95,7 +115,7 @@ def name_bundles(
             if any(s < m.end() and m.start() < e for s, e in taken):
                 continue
             taken.append((m.start(), m.end()))
-            found.append(NameReq(f"{name}({code})" if code else name, _norm(name) in held_names, code))
+            found.append(NameReq(f"{name}({code})" if code else name, _is_held_name(name, held_names), code))
             break
 
     # ③ 직접생산증명 품목 — 괄호 속 품명, 또는 8자리 물품분류번호(보유 10자리 세부품명번호의 앞자리)
@@ -135,15 +155,37 @@ _NOT_MANDATORY = re.compile(r"설명회[^.]{0,15}(?:없|미실시|생략|갈음|
 _DATE_RE = re.compile(r"(20\d{2})\s*[.년-]\s*(\d{1,2})\s*[.월-]\s*(\d{1,2})\s*일?\.?\s*(?:\([월화수목금토일]\))?\s*(\d{1,2}\s*:\s*\d{2})?")
 
 
+# 줄머리 표시(나./1)/①/-/※/❍ …)로 시작하는 줄은 새 문장이다
+_LINE_HEAD = re.compile(r"\n\s*(?=[-※*·•□■○●◎❍◦▪▶►【]|\d{1,2}\s*[).]|[①-⑳]|[가-하]\s*[.)])")
+_MAX_JOINED = 200
+_FORM_RE = re.compile(r"서식\s*(?:제\s*)?\d")  # 이어 붙인 문장이 이보다 길면(공백 제외) 표·서식이 섞인 것 — 줄 단위로 되돌린다
+
+
+def _sentences(item: str) -> list[str]:
+    """항목을 문장으로 나눈다. PDF는 문장 중간에서 줄을 바꿔 "…단일공사 5억원 이상\n준공실적을 보유한 업체"가
+    두 줄로 갈라진다(2026-10-01 제보: 영주 과수거점산지유통센터 — 실적 칩 누락). 줄바꿈은 줄머리 표시가 있을 때만
+    문장 경계로 보고, 나머지는 이어 붙인 뒤 마침표로 나눈다. 너무 길어지면(표·서식 칸이 이어진 것) 줄 단위로 본다."""
+    out = []
+    for block in _LINE_HEAD.split(item):
+        for sent in re.split(r"(?<=[.。])\s+(?=\S)", block):
+            if len(re.sub(r"\s+", "", sent)) > _MAX_JOINED:
+                out.extend(line for line in sent.split("\n") if line.strip())
+            elif sent.strip():
+                out.append(re.sub(r"\s*\n\s*", " ", sent))
+    return out
+
+
 def flag_requirements(items: list[str], full_text: str = "") -> list[dict]:
     """실적·현장설명회 참가·기술인력 요건을 찾아 [{kind, text, date?}]로. 판정은 하지 않는다."""
     out: dict[str, dict] = {}
-    sentences = [s for item in items for s in re.split(r"(?<=[.。])\s+|\n", item) if s.strip()]
+    sentences = [s for item in items for s in _sentences(item)]
     # 현장설명회는 참가자격 절 밖("입찰 일정")에 "참석 필수"로만 적히기도 해서 원문 전체도 본다
     extra = [m.group(0) for m in re.finditer(r"[^\n]{0,60}현장\s*설명회[^\n]{0,100}", full_text or "")]
     for kind, subject, detail in _FLAGS:
         pool = sentences + (extra if kind == "현장설명회" else [])
         for s in pool:
+            if _FORM_RE.search(s):
+                continue  # 제출 서식(참여인력 경력사항 표 등)의 칸 이름은 요건이 아니다
             if kind == "인력" and "건축사사무소" in out:
                 break  # 건축사사무소 요건 문장의 "건축사 면허"를 인력 요건으로 또 세지 않는다
             if kind == "건축사사무소" and re.search(r"업종\s*코드|\[\d{4}\]|\(\d{4}\)", s):

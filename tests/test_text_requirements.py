@@ -54,6 +54,22 @@ class TestNameJudgement(unittest.TestCase):
     def test_unknown_or_non_requirement_text_is_not_judged(self):
         self.assertEqual(judged("건축사사무소를 개설한 자"), [], "사전에 없는 이름은 판정하지 않음")
         self.assertEqual(judged("공동수급체 대표사는 산업디자인전문회사(환경디자인분야)로 한다"), [])
+        self.assertEqual(judged("사. 적격심사 평가대상 업종 및 평가비율\n종합 건축공사업 680,362,000 100%"), [])
+
+    def test_name_only_subitem_inside_coded_item(self):
+        """2026-10-01 하남역사박물관: 코드 있는 하위 항목 옆 "4) …에 따른 소프트웨어사업자"가 빠졌었다.
+        분야 없는 통칭은 분야 중 하나를 보유하면 충족."""
+        held = {**HELD, "1469": "소프트웨어사업자(디지털콘텐츠개발서비스사업)"}
+        lookup = {**LOOKUP, "1426": "소프트웨어사업자", "1469": "소프트웨어사업자"}
+        item = ("나. 나라장터(G2B)에 아래 자격을 모두 갖춘 업체\n"
+                "   1) 직접생산확인증명서[실물모형및전시물, 세부품명번호: 6010989901]를 소지한 업체\n"
+                "   2) 산업디자인전문회사[업종코드 4442] 로 등록되어 있는 업체\n"
+                "   3) ｢소프트웨어산업 진흥법｣ 제24조(소프트웨어사업자의 신고)에 따른 소프트웨어사업자")
+        ok = qualify.evaluate_attachment_text([item], set(held), held, lookup)
+        self.assertEqual(ok.missing_groups, [])
+        self.assertIn("소프트웨어사업자", [n for g in ok.satisfied_groups for n in g.allowed_names])
+        miss = qualify.evaluate_attachment_text([item], set(HELD), HELD, lookup)
+        self.assertEqual([g.allowed_names for g in miss.missing_groups], [["소프트웨어사업자"]])
 
     def test_attachment_evaluation_uses_names(self):
         items = ["산업디자인 전문회사(시각디자인 분야)로 신고를 필한 업체", "실내건축공사업(업종코드 4990)을 등록한 업체"]
@@ -62,6 +78,20 @@ class TestNameJudgement(unittest.TestCase):
 
 
 class TestFlags(unittest.TestCase):
+    def test_track_record_split_across_pdf_lines(self):
+        """2026-10-01 영주 과수거점산지유통센터: PDF가 금액과 "실적"을 다른 줄로 갈라 칩이 빠졌었다."""
+        item = ("나 . 입찰공고일 기준 최근 3 년 이내 정부 및 지방자치단체 , 공공기관 , 농 · 축협 ( 농협중앙회 \n"
+                "     및 계열사 포함 ) 에서 발주한 실내건축공사로서 단일공사 5 억원 ( 부가세 포함 ) 이상 \n"
+                "     준공실적을 보유한 업체 이어야  하며 , 하도급으로 \n     이행한 실적은 인정하지 않습니다 .")
+        flags = flag_requirements([item])
+        self.assertEqual([f["kind"] for f in flags], ["실적"])
+        self.assertIn("5 억원", flags[0]["text"])
+        self.assertIn("준공실적", flags[0]["text"])
+
+    def test_submission_form_is_not_a_requirement(self):
+        form = "서식 17-2 참여인력 경력사항\n성명 소속 자격증 분야 종류 기술자등급 취득일"
+        self.assertEqual(flag_requirements([form]), [])
+
     def test_track_record(self):
         items = ["8) 입찰공고일 기준으로 최근 3년 이내에 … 전시장의 제작·설치 실적이 단일 건으로 10억원 이상 준공실적이 있는 업체"]
         self.assertEqual([f["kind"] for f in flag_requirements(items)], ["실적"])
