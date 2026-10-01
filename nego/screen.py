@@ -40,6 +40,8 @@ def _squash(text: str | None) -> str:
 class ScreenConfig:
     keywords: list[str] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)
+    # 무조건 제외 — 관심 키워드가 함께 있어도 "검토 필요"로 올리지 않고 바로 뺀다(2026-10-01 사용자 결정, 특별전·순회전)
+    hard_exclude_keywords: list[str] = field(default_factory=list)
     min_budget_amount: float | None = None
     product_codes: list[dict[str, str]] = field(default_factory=list)
     industry_codes: list[dict[str, str]] = field(default_factory=list)
@@ -153,6 +155,9 @@ def _explain_no_match(notice: Notice, config: ScreenConfig, industry_hits: list[
 
 
 def screen(notice: Notice, config: ScreenConfig) -> ScreenResult:
+    hard_word = _match_exclude(notice, config.hard_exclude_keywords)
+    if hard_word:
+        return ScreenResult(matched=False, confidence=None, excluded_by="제외키워드", excluded_reason=hard_word)
     excluded_word = _match_exclude(notice, config.exclude_keywords)
     if excluded_word and config.review_conflicts and _match_keywords(notice, config.keywords):
         # 관심 키워드도 있다 — 제외하지 않고 아래 예산·해외 조건만 거친 뒤 "검토 필요"로 둔다
