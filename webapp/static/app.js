@@ -199,6 +199,21 @@ function taskFit(c) {
   if (s.level === "낮음") return { rank: 1, cls: "bad", label: "과업 무관 가능성", tip: `첨부 과업 내용 기준 싱크로율${score}${near}` };
   return { rank: 0, cls: "", label: "판정 불가", tip: "과거 실적과 비교할 수 없습니다" };
 }
+// 검토 필요 카드의 "최다 유사" 줄 앞에 붙는 과업 유사 칩 (2026-10-01 요청 — 위쪽 배지 줄에서 옮김)
+function fitChip(c) {
+  // 싱크로율 숫자는 카드 오른쪽에 있으니 팝업엔 "공고 원문 중 지일 실적과 겹치는 과업" 발췌를 보여준다
+  const f = taskFit(c), best = (c.sync && c.sync.top || [])[0];
+  const ex = (best && best.excerpts) || [];
+  let body = `<div class="tip-title${f.cls ? " " + f.cls : ""}">${esc(f.label)}</div>`;
+  if (best) body += `<div class="tip-label">가장 비슷한 지일 실적 — (${esc(best.year)}) ${esc(best.title)}</div>`;
+  if (ex.length) {
+    body += `<div class="tip-label">공고 원문에서 겹치는 과업</div>`
+      + ex.map((e) => `<div class="tip-item quote"><span class="tag">${esc(e.tag)}</span>${esc(e.text)}</div>`).join("");
+  } else {
+    body += `<div class="tip-note">${c.sync && c.sync.basis === "과업 원문" ? "겹치는 과업을 원문에서 찾지 못했습니다." : "첨부 과업 내용을 읽지 못해 공고명으로만 비교했습니다."}</div>`;
+  }
+  return qualButton(f.label, f.cls, f.label, body);
+}
 function byTaskFit(list) {
   return [...list].sort((a, b) => (taskFit(b).rank - taskFit(a).rank) || ((b.sync?.score ?? -1) - (a.sync?.score ?? -1)));
 }
@@ -207,8 +222,6 @@ function badges(c) {
   if (c.review_exclude) {
     out.push(chip(`제외 키워드 "${c.review_exclude}" · 관심 "${(c.matched_keywords || []).join(", ")}"`, "warn", "검토 필요",
       `공고명에 제외 키워드 「${esc(c.review_exclude)}」와 관심 키워드 「${esc((c.matched_keywords || []).join(", "))}」가 함께 있어 빼지 않고 남겼습니다. 참가여부를 남겨 주시면 판단 기준을 고치는 데 씁니다.`));
-    const f = taskFit(c);
-    out.push(chip(f.label, f.cls, f.label, esc(f.tip), f.cls));
   }
   else if (c.confidence === "강력추천") out.push(chip("강력추천", "star", "강력추천", "관심 키워드와 관심 품명·업종 코드가 모두 맞는 공고입니다."));
   else if (c.confidence) out.push(chip(c.confidence, "", c.confidence, "관심 키워드나 관심 품명코드 중 하나만 맞는 공고입니다."));
@@ -303,7 +316,7 @@ function card(c, withActions = true) {
           <div><dt>사업금액</dt><dd>${esc(won(c.budget))}</dd></div>
           ${c.excluded_reason ? `<div class="wide"><dt>제외 사유</dt><dd>${esc(c.excluded_reason)}${(c.match_explain || []).length ? `<ul class="explain">${c.match_explain.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}</dd></div>` : ""}
         </dl>
-        <div class="why simline">최다 유사: ${s.top[0] ? `(${esc(s.top[0].year)}) ${esc(s.top[0].title)}` : "없음"} · 근거: ${esc(s.basis)}</div>
+        <div class="why simline">${c.review_exclude ? fitChip(c) + " " : ""}최다 유사: ${s.top[0] ? `(${esc(s.top[0].year)}) ${esc(s.top[0].title)}` : "없음"} · 근거: ${esc(s.basis)}</div>
       </div>
       <button type="button" class="card-side lv-${esc(s.level)}" title="눌러서 비슷한 과거 실적 보기">
         <span class="pct">${pct(s.score)}</span>

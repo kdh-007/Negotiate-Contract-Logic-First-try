@@ -185,3 +185,7 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 .tip-title .good { color: var(--good); } .tip-title .bad { color: var(--bad); }
 /* 이미 충족한 "또는" 요건의 나머지 항목 — 없어도 되므로 흐리게 */
 .tip-sub.moot, .combo-row.moot { color: var(--muted); }
+/* 검토 필요 "과업 유사" 팝업 — 공고 원문 발췌 */
+.tip-label { font-size: 11.5px; color: var(--muted); padding: 6px 0 2px; }
+.tip-item.quote { line-height: 1.45; }
+.tip-item.quote .tag { display: inline-block; font-size: 10.5px; padding: 0 5px; margin-right: 6px; border-radius: 4px; background: var(--chip); color: var(--chip-ink); }

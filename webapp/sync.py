@@ -7,6 +7,7 @@ jiil-past-contracts에 있다. 경로는 환경변수 `JIIL_REPO`(기본: 이 �
 from __future__ import annotations
 
 import json
+import re
 import os
 import sys
 from dataclasses import dataclass, field
@@ -33,6 +34,10 @@ def level(score: float | None) -> str:
 
 def default_jiil_repo() -> Path:
     return Path(os.environ.get("JIIL_REPO") or ROOT.parent / "jiil-past-contracts")
+
+
+# 과업 설명이 아닌 줄 — 인력 학력·경력 기준표 등(실측: "고등학교 졸 : 15년이상"이 '교육청·학교' 근거로 잡힘)
+_NOT_TASK_LINE = re.compile(r"(?:고등학교|대학교?|학사|석사|박사)\s*졸|\d+\s*년\s*이상|경력\s*\d|학력|자격증")
 
 
 @dataclass
@@ -93,6 +98,22 @@ class PastIndex:
                 "score": round(s, 3),
                 "shared": [t.split("/", 1)[1] for t in shared][:10],
             })
+        # 가장 비슷한 실적과 겹치는 과업 항목마다 공고 원문에서 그 항목을 잡은 줄(근거)을 발췌한다 — 무게가 큰 칸
+        # (시설·주제·콘텐츠·설비 …)부터, 같은 줄은 한 번만. 검토 필요 카드의 "과업 유사" 팝업에 쓴다(2026-10-01 요청).
+        if top_rows and text.strip():
+            weight = getattr(tp, "FACET_WEIGHT", {})
+            keys = sorted(mine & self._profiles[ranked[0][1]].tag_set(),
+                          key=lambda k: -weight.get(k.split("/", 1)[0], 0))
+            excerpts, seen = [], set()
+            for k in keys:
+                line = (profile.evidence.get(k) or "").strip()
+                if not line or line.startswith("(사업명)") or line in seen or _NOT_TASK_LINE.search(line):
+                    continue
+                seen.add(line)
+                excerpts.append({"tag": k.split("/", 1)[1], "text": line})
+                if len(excerpts) >= 4:
+                    break
+            top_rows[0]["excerpts"] = excerpts
         best = ranked[0][0] if ranked else 0.0
         return {
             "score": round(best, 3),
