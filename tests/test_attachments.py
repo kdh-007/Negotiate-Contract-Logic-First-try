@@ -973,6 +973,20 @@ class TestZipAttachment(unittest.TestCase):
         with self.assertRaises(AttachmentError):
             extract_text(too_deep, "zip")
 
+    def test_many_drawings_do_not_hide_documents(self):
+        """2026-10-01 R26BD00270194: 파일 511개 든 압축에서 앞쪽 60개(도면)만 보고 '읽을 문서 없음'으로 실패했다.
+        파일 수 제한은 문서에만 걸고, 공고문·과업지시서 이름을 먼저 읽는다."""
+        from nego import attachments
+        from nego.attachments import extract_text
+
+        files = {f"도면/A-{i:03d}.dwg": b"x" for i in range(200)}
+        files.update({f"참고/사진{i:03d}.pdf": _build_pdf(f"Photo {i}") for i in range(70)})
+        files["입찰서류/과업지시서.pdf"] = _build_pdf("Task order body")
+        text = extract_text(_zip_bytes(files), "zip")
+        self.assertIn("Task order body", text)
+        self.assertLess(text.count("[압축 안]"), attachments.ZIP_MAX_MEMBERS + 1)
+        self.assertTrue(text.startswith("=== [압축 안] 입찰서류/과업지시서.pdf"))
+
     def test_zip_without_documents_is_skipped_not_failed(self):
         """내역서·도면만 든 zip은 읽을 대상이 없는 것 — 실패로 세지 않는다."""
         from nego.attachments import AttachmentUnsupported, extract_text
