@@ -270,9 +270,56 @@ def license_requirements(
     if all(len(res) == 1 for res in residuals):
         out.append(LicenseGroup(group_no="택1", allowed_names=_dedupe_names([n for res in residuals for n in res[0]])))
         return out
+    slots = _factor_slots(residuals, key)
+    if slots:
+        # 조합이 "(A 또는 B) 그리고 (C 또는 D)"로 풀리면 요건 여러 건으로 — 경우의 수를 다 나열하지 않는다(2026-10-01 요청)
+        for i, slot in enumerate(slots):
+            if len(slot) == 1:
+                out.append(must(f"필수{len(out) + 1}", slot[0]))
+            else:
+                out.append(LicenseGroup(group_no=f"택1-{i + 1}", allowed_names=_dedupe_names([n for r in slot for n in r])))
+        return out
     labels = [" + ".join(_row_label(r) for r in res) for res in residuals]
     out.append(LicenseGroup(group_no="조합", allowed_names=list(dict.fromkeys(labels)), combos=residuals))
     return out
+
+
+def _factor_slots(residuals: list[list[list[str]]], key) -> list[list[list[str]]] | None:
+    """그룹들이 "칸마다 하나씩 고른 모든 조합"인지 본다 — 예: {A,C} {A,D} {B,C} {B,D} = (A 또는 B) 그리고 (C 또는 D).
+    맞으면 칸 목록(칸마다 행 목록)을, 아니면 None. 한 그룹 안에 같이 나온 면허는 다른 칸, 한 번도 같이 안 나온 면허는 같은 칸.
+    """
+    rows_by_key: dict[str, list[str]] = {}
+    sets = []
+    for res in residuals:
+        keys = frozenset(key(r) for r in res)
+        if len(keys) != len(res):
+            return None
+        for r in res:
+            rows_by_key.setdefault(key(r), r)
+        sets.append(keys)
+    unique = set(sets)
+    if len({len(s) for s in unique}) != 1:
+        return None
+    together = {k: set() for k in rows_by_key}
+    for s in unique:
+        for k in s:
+            together[k] |= s - {k}
+    slots: list[list[str]] = []
+    for k in rows_by_key:  # 처음 나온 순서대로
+        for slot in slots:
+            if not any(k in together[other] for other in slot):
+                slot.append(k)
+                break
+        else:
+            slots.append([k])
+    if len(slots) < 2 or any(sum(1 for k in s if k in slot) != 1 for s in unique for slot in slots):
+        return None
+    total = 1
+    for slot in slots:
+        total *= len(slot)
+    if total != len(unique):  # 모든 조합이 다 있어야 칸으로 나눌 수 있다
+        return None
+    return [[rows_by_key[k] for k in slot] for slot in slots]
 
 
 def evaluate(

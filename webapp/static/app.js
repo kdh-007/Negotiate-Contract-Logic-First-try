@@ -4,7 +4,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // 이 화면이 기대하는 수집 결과 형식 — webapp/collect.py RESULT_FORMAT과 같이 올린다
-const APP_FORMAT = 14;
+const APP_FORMAT = 15;
 const store = {
   get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* 저장 불가여도 동작 */ } },
@@ -161,6 +161,24 @@ function joinParticle(label) {
   if (!ch) return "과(와)";
   return (ch.charCodeAt(0) - 0xac00) % 28 ? "과" : "와";
 }
+// 필수 보유 요건(하나만 있는 요건)은 한 칸에 모아 보여준다(2026-10-01 요청) — 미보유가 있으면 그 칸이 맨 앞
+function reqBlocks(all, mixed) {
+  const isMust = (r) => !r.any_of && !r.combos && !r.why;
+  const must = all.filter(isMust);
+  if (must.length < 2) return all.map((r) => reqHtml(r, mixed)).join("");
+  const items = uniqBy(must.map((r) => r.items[0]), (i) => i.label)
+    .sort((a, b) => Number(a.held) - Number(b.held));
+  const line = (i) => `<div class="tip-sub ${i.held ? "held" : ""}">${i.held ? "✓" : "✗"} ${mixed ? `<span class="kind">${KIND_TAG[i.kind]}</span> ` : ""}${labelHtml(i.label)}${i.via ? ` <small>← ${esc(i.via)}</small>` : ""}</div>`;
+  const block = `<div class="tip-item"><span class="why">필수 보유 — ${items.length}개 모두 필요</span>${items.map(line).join("")}</div>`;
+  // 필수 칸은 첫 필수 요건 자리에 — 요건 목록이 미달 먼저라, 필수 중 미보유가 있으면 미달 쪽에 온다
+  let placed = false;
+  return all.map((r) => {
+    if (!isMust(r)) return reqHtml(r, mixed);
+    if (placed) return "";
+    placed = true;
+    return block;
+  }).join("");
+}
 function reqHtml(req, mixed) {
   if (req.combos) req = { ...req, combos: req.combos.map((c) => ({ ...c, rows: uniqBy(c.rows, (r) => r.label) })) };
   else if (req.items) req = { ...req, items: uniqBy(req.items, (i) => i.label) };
@@ -180,7 +198,7 @@ function reqHtml(req, mixed) {
       + req.combos.map((c, i) => `<div class="tip-sub combo"><span class="no">${circled[i] || `${i + 1}.`}</span><div>${c.rows.map(row).join("")}</div></div>`).join("") + `</div>`;
   }
   // 미보유는 전부 붉은 ✗로 — 흰 글씨면 보유한 자격으로 착각한다(2026-09-30 제보)
-  if (!req.any_of) return `<div class="tip-item"><span class="why">${esc(req.why || "반드시 보유")}</span>${item(req.items[0])}</div>`;
+  if (!req.any_of) return `<div class="tip-item"><span class="why">${esc(req.why || "필수 보유")}</span>${item(req.items[0])}</div>`;
   // "미달 1건"이 면허 1개가 없다는 뜻으로 읽히지 않게, 요건 1건 = 아래 N개 중 택1임을 풀어 쓴다
   const n = req.items.length;
   const none = req.items.every((i) => !i.held);
@@ -226,7 +244,7 @@ function qualBadge(q) {
     if (all.length) {
       const mixed = all.some((r) => new Set((r.items || []).map((i) => i.kind)).size > 1);
       body += `<div class="tip-title">${esc(p.name)} ${all.length}건 — <span class="good">충족 ${ok.length}</span> · <span class="${p.missing.length ? "bad" : ""}">미달 ${p.missing.length}</span></div>`
-        + all.map((r) => reqHtml(r, mixed)).join("");
+        + reqBlocks(all, mixed);
     } else if (p.held.length)
       body += `<div class="tip-title good">보유로 충족한 자격 ${p.held.length}건</div>` + p.held.map((n) => `<div class="tip-item">✓ ${esc(n)}</div>`).join("");
     if (!body) body = `<div class="tip-title">${esc(p.name)} ${esc(p.status)}</div><div class="tip-note">${esc(QUAL_EMPTY[p.key][p.status] || "")}</div>`;
