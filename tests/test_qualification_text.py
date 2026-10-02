@@ -279,3 +279,19 @@ class TestHeadingAfterBody(unittest.TestCase):
     def test_evaluation_section_is_not_qualification(self):
         text = "가. 제안서 평가는 참가자격 요건을 갖춘 업체를 대상으로 기술능력평가와 가격평가로 구분\n나. 기술능력 80점"
         self.assertIsNone(find_qualification_section(text))
+
+
+def test_box_heading_section_ends_at_next_box_heading():
+    """안성 고삼호수 R26BK01719354 — "□ 참가자격" 절이 "□ 제안서 접수"·평가 배점표까지 삼키던 것."""
+    text = (
+        " □ 선정방식 \n   ○ 협상에 의한 계약\n"
+        " □ 참가자격 \n   ○ 입찰참가자격: 각 호를 모두 충족하여야 함\n"
+        "  - 실내건축공사업(업종코드 4990)을 등록한 업체\n"
+        "   ○ 공동도급(분담이행방식)으로 입찰 참여가 가능\n"
+        "□ 제안서 접수 \n   ○ 접수일시: 2026년 9월 7일\n"
+        "□ 평가항목 및 배점기준\n   ○ 평가항목별 배점 - 전문인력 보유현황 (6점)\n"
+    )
+    section = find_qualification_section(text)
+    assert section is not None
+    assert "4990" in section.body
+    assert "제안서 접수" not in section.body and "배점" not in section.body

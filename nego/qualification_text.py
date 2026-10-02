@@ -83,6 +83,8 @@ _SECTION_END = {
     "roman": (_ROMAN_HEADING_RE,),
     "none": (_NEXT_TOP_HEADING_RE, _ROMAN_HEADING_RE),
 }
+# 상자형 기호만 — "○ 참가자격" 아래 항목도 "○"로 다는 문서가 있어 동그라미는 끝 표시로 쓰면 첫 항목에서 잘린다
+_SYMBOL_MARKERS = set("□■◇◆")
 # 번호 없는 제목·기호 제목은 끝이 불분명해 문서 끝까지 삼킬 수 있다 — 길이 상한을 둔다.
 _MAX_SECTION_CHARS = 4000
 
@@ -150,7 +152,14 @@ def find_qualification_section(text: str) -> QualificationSection | None:
         kind = _marker_kind(match.group("marker"))
         start = match.end()
         end = len(text)
-        for rx in _SECTION_END[kind]:
+        marker = match.group("marker") or ""
+        ends = _SECTION_END[kind]
+        if marker in _SYMBOL_MARKERS:
+            # "□ 참가자격" 절은 다음 "□ 제안서 접수"에서 끝난다 — 예전엔 번호 제목("3.")만 끝으로 봐서
+            # 접수·평가 방법·배점표까지 삼켰음(2026-10-02 실측: 안성 고삼호수 R26BK01719354 — 배점표 "전문인력
+            # 보유현황 (6점)"이 기술인력 칩으로 잡힘)
+            ends = ends + (re.compile(r"^" + _WS + re.escape(marker), re.MULTILINE),)
+        for rx in ends:
             nxt = rx.search(text, pos=start)
             if nxt and nxt.start() < end:
                 end = nxt.start()
