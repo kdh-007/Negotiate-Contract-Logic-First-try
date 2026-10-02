@@ -367,6 +367,7 @@ def save_attachment_texts(
         schedule = getattr(candidate, "schedule", None)
         needs_deadline = schedule is not None and schedule.earliest is None
         all_items: list[str] = []
+        read_files: list[tuple[str, str]] = []  # (파일명, 원문) — 칩 원문의 출처 파일을 찾을 때 쓴다
         deadline = None
 
         for result in collect_notice_attachment_texts(session, notice, timeout=timeout):
@@ -381,6 +382,7 @@ def save_attachment_texts(
             stats["ok"] += 1
             base = _safe_filename(f"{notice.notice_no}_{notice.notice_ord}_{result.seq}_{result.file_name}")
             (text_dir / f"{base}.txt").write_text(result.text, encoding="utf-8")
+            read_files.append((result.file_name, result.text))
             if hasattr(candidate, "attachment_text"):
                 candidate.attachment_text += f"\n\n=== {result.file_name} ===\n{result.text}"
 
@@ -414,9 +416,11 @@ def save_attachment_texts(
 
         # 실적·현장설명회·기술인력 요건 — 판정 없이 "확인 필요" 칩으로 (2026-09-30 사용자 요청)
         if hasattr(candidate, "text_flags"):
-            from .text_requirements import flag_requirements
+            from .text_requirements import attach_sources, flag_requirements
 
-            candidate.text_flags = flag_requirements(all_items, getattr(candidate, "attachment_text", ""))
+            candidate.text_flags = attach_sources(
+                flag_requirements(all_items, getattr(candidate, "attachment_text", "")), read_files
+            )
 
         if not needs_check or not all_items:
             continue
