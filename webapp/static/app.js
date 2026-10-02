@@ -371,22 +371,14 @@ function regionBadge(c) {
   const pop = (label, cls, title, lines, note) => qualButton(label, cls, label,
     `<div class="tip-title ${cls}">${esc(title)}</div>` + lines.filter(Boolean).map((l) => `<div class="tip-item">${l}</div>`).join("")
     + (note ? `<div class="tip-note">${esc(note)}</div>` : ""));
-  // 2026-10-02 요청: 원문 표기가 공고마다 달라 읽기 어려움 → 핵심 낱말로 같은 모양(요건·기간·지일 소재지)을 먼저,
-  // 원문은 맨 아래 작게(출처와 함께)
-  const sm = r.summary;
-  const kv = [];
-  if (sm) {
-    kv.push(["요건", `${sm.basis}가 ${req.join("·")}`]);
-    if (sm.period) kv.push(["기간", sm.period]);
-    if (sm.individual) kv.push(["개인사업자", "사업자등록증 등에 적힌 사업장 소재지 기준"]);
-  } else if (r.source) kv.push(["요건", `${r.source}: ${req.join("·") || r.evidence || ""}`]);
+  // 2026-10-02 요청: 팝업엔 참가 가능 지역과 지일 소재지만(요건·기간·개인사업자 칸, 원문, 안내 문구는 뺌).
+  // region_check의 summary·evidence는 수집 결과에 그대로 남아 있음 — 다시 보여줄 땐 여기서만 바꾸면 됨
+  const kv = [["참가 가능 지역", req.join("·")]];
   if (company) kv.push(["지일 소재지", company]);
-  const basis = [summaryHtml(kv, sm ? r.evidence : "", r.source)];
-  if (r.status === "미달")
-    return pop(`지역 미달 (${req.join("·")}만)`, "bad", `참가 가능 지역: ${req.join("·")}`, basis,
-      "지역 제한은 후보에서 빼지 않고 표시만 합니다. 공동수급으로 보완할 수 있는지 공고문을 확인하세요.");
+  const basis = [summaryHtml(kv, "", "")];
+  if (r.status === "미달") return pop(`지역 미달 (${req.join("·")}만)`, "bad", "지역 미달", basis);
   if (r.status === "충족")
-    return pop(`지역 충족 (${req.slice(0, 2).join("·")}${req.length > 2 ? " 외" : ""})`, "good", `참가 가능 지역: ${req.join("·")}`, basis);
+    return pop(`지역 충족 (${req.slice(0, 2).join("·")}${req.length > 2 ? " 외" : ""})`, "good", "지역 충족", basis);
   if (c.regions && c.regions.length)
     return pop(`지역제한 ${c.regions.slice(0, 2).join("·")}${c.regions.length > 2 ? " 외" : ""}`, "warn", "나라장터 참가가능지역",
       [esc(c.regions.join(", ")), company ? `<span class="why">지일 소재지</span>${esc(company)}` : ""],
