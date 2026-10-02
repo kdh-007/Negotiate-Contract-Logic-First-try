@@ -728,19 +728,68 @@ async function loadPast() {
   }
   renderPast();
 }
+// 2026-10-02 요청: 설명 글이 너무 많아 연도·공고명만 보이고, 누르면 과업·전시내용이 펼쳐지게.
+// 연도별로 묶고(최신 연도 먼저), 과업은 쉼표 목록을 한 줄씩(괄호 안 쉼표는 그대로) 나눠 읽기 쉽게 한다.
+function splitTopLevel(text) {
+  const out = []; let depth = 0, cur = "";
+  for (const ch of text || "") {
+    if ("([{（".includes(ch)) depth++;
+    else if (")]}）".includes(ch)) depth = Math.max(0, depth - 1);
+    if (ch === "," && depth === 0) { if (cur.trim()) out.push(cur.trim()); cur = ""; } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
+function markHtml(text, q) {
+  const t = esc(text || "");
+  if (!q) return t;
+  const i = (text || "").toLowerCase().indexOf(q);
+  if (i < 0) return t;
+  return esc(text.slice(0, i)) + `<mark>${esc(text.slice(i, i + q.length))}</mark>` + esc(text.slice(i + q.length));
+}
+function pastItem(p, q) {
+  const d = document.createElement("details");
+  d.className = "pastitem";
+  const inBody = q && !(p.title || "").toLowerCase().includes(q);
+  const tasks = splitTopLevel(p.overview);
+  const tags = Object.values(p.tags || {}).flat();
+  d.innerHTML = `<summary><span class="pt">${markHtml(p.title, q)}</span>`
+    + (inBody ? `<span class="pasthit">내용에서 일치</span>` : "") + `</summary>`
+    + `<div class="pastbody">`
+    + (tasks.length ? `<h4>과업</h4><ul>${tasks.map((t) => `<li>${markHtml(t, q)}</li>`).join("")}</ul>` : "")
+    + (p.exhibition ? `<h4>전시내용</h4><p>${markHtml(p.exhibition, q)}</p>` : "")
+    + (tags.length ? `<details class="pasttags"><summary>분류 태그 ${tags.length}개</summary><div class="tags">${tags.map((t) => `<span>${esc(t)}</span>`).join("")}</div></details>` : "")
+    + (!tasks.length && !p.exhibition ? `<p class="muted">등록된 세부 내용이 없습니다.</p>` : "")
+    + `</div>`;
+  if (inBody) d.open = true;  // 내용에서만 일치하면 어디가 맞았는지 바로 보이게
+  return d;
+}
 function renderPast() {
   if (!PAST) return;
   const q = $("#pastQ").value.trim().toLowerCase(), y = $("#pastYear").value;
   const rows = PAST.filter((p) => (!y || String(p.year) === y) && (!q || [p.title, p.overview, p.exhibition].some((v) => (v || "").toLowerCase().includes(q))));
-  $("#pastList").replaceChildren(...(rows.length ? rows.map((p) => {
-    const d = document.createElement("div");
-    d.className = "pastrow";
-    d.innerHTML = `<div><span class="y">${esc(p.year)}</span><b>${esc(p.title)}</b></div>`
-      + (p.overview ? `<p><span class="lab">과업</span> ${esc(p.overview)}</p>` : "")
-      + (p.exhibition ? `<p><span class="lab">전시내용</span> ${esc(p.exhibition)}</p>` : "");
-    return d;
-  }) : [emptyBox("일치하는 과거 사업이 없습니다.")]));
+  $("#pastCount").textContent = `${rows.length}건`;
+  $("#pastToggle").textContent = "모두 펼치기";
+  if (!rows.length) { $("#pastList").replaceChildren(emptyBox("일치하는 과거 사업이 없습니다.")); return; }
+  const byYear = new Map();
+  for (const p of rows) { if (!byYear.has(p.year)) byYear.set(p.year, []); byYear.get(p.year).push(p); }
+  $("#pastList").replaceChildren(...[...byYear.keys()].sort((a, b) => b - a).map((yr) => {
+    const g = document.createElement("section");
+    g.className = "pastyear";
+    g.innerHTML = `<h3>${esc(yr)}<span>${byYear.get(yr).length}건</span></h3>`;
+    const list = document.createElement("div");
+    list.className = "pastlist";
+    list.append(...byYear.get(yr).map((p) => pastItem(p, q)));
+    g.append(list);
+    return g;
+  }));
 }
+$("#pastToggle").addEventListener("click", () => {
+  const items = [...document.querySelectorAll("#pastList details.pastitem")];  // 안쪽 태그 접기는 건드리지 않음
+  const open = items.some((d) => !d.open);
+  items.forEach((d) => { d.open = open; });
+  $("#pastToggle").textContent = open ? "모두 접기" : "모두 펼치기";
+});
 $("#pastQ").addEventListener("input", renderPast);
 $("#pastYear").addEventListener("change", renderPast);
 
