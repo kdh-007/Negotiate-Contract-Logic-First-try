@@ -365,7 +365,8 @@ def save_attachment_texts(
         qualification = getattr(candidate, "qualification", None)
         needs_check = held_codes is not None and qualification is not None
         schedule = getattr(candidate, "schedule", None)
-        needs_deadline = schedule is not None and schedule.earliest is None
+        # 마감 정보가 없거나, 공동수급협정 마감만 있는 공고는 첨부의 등록·제출 마감도 찾는다
+        needs_deadline = schedule is not None and (schedule.earliest is None or getattr(schedule, "joint_only", False))
         all_items: list[str] = []
         read_files: list[tuple[str, str]] = []  # (파일명, 원문) — 칩 원문의 출처 파일을 찾을 때 쓴다
         deadline = None

@@ -20,8 +20,9 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+_S = r"\s*"  # 표 머리글은 "제 출 일 시"처럼 글자 사이를 띄운다(2026-10-02 고흥분청문화박물관)
 _DEADLINE_LABEL_RE = re.compile(
-    r"(?:제안서\s*)?제출\s*(?:기한|기간|일시)|마감\s*(?:일시|일자|기한)?|접수\s*마감"
+    r"(?:제안서\s*)?제" + _S + r"출" + _S + r"(?:기" + _S + r"한|기" + _S + r"간|일" + _S + r"시)|마감\s*(?:일시|일자|기한)?|접수\s*마감"
 )
 _DATE_RE = re.compile(
     r"(?P<year>20\d{2})\s*[.\-년]\s*(?P<month>1[0-2]|0?[1-9])\s*[.\-월]\s*(?P<day>3[01]|[12]\d|0?[1-9])\s*일?\.?"
@@ -33,6 +34,8 @@ _TIME_RE = re.compile(
 # 라벨→날짜, 날짜→시각까지 허용하는 거리(문자 수). 절 제목처럼 라벨만 있고
 # 값이 멀리 떨어진 경우를 걸러내는 용도라 넉넉하게 잡을 필요는 없다.
 _LABEL_TO_DATE_WINDOW = 20
+# 표에서는 머리글 줄("제 출 일 시 제출장소 제출방법 제 출 자 제출서류") 다음 줄에 값이 온다 — 그만큼 더 본다
+_TABLE_WINDOW = 60
 _DATE_TO_TIME_WINDOW = 25
 
 
@@ -41,7 +44,7 @@ _DATE_TO_TIME_WINDOW = 25
 _REGISTRATION_LABEL_RE = re.compile(
     r"(?:응모|참가|입찰\s*참가)\s*신청\s*서?\s*(?:등록|접수|제출)\s*(?:일시|기간|기한|마감)?|(?:응모|참가)\s*등록\s*(?:일시|기간|기한|마감)?"
 )
-REGISTRATION = "응모신청 등록 마감"
+REGISTRATION = "참가등록 마감"
 SUBMISSION = "첨부파일 제출기한"
 
 
@@ -63,7 +66,11 @@ def extract_deadlines(text: str) -> list[tuple[str, datetime]]:
 def _first_deadline(text: str, label_re: re.Pattern) -> datetime | None:
     for label_match in label_re.finditer(text):
         date_match = _DATE_RE.search(text, label_match.end())
-        if not date_match or date_match.start() - label_match.end() > _LABEL_TO_DATE_WINDOW:
+        # 넓게 보는 건 글자를 띄운 표 머리글("제 출 일 시")뿐 — "도장 마감\n…(2022.6.30.)", "마감일로부터 …\n 선정 : 2021.10.22"
+        # 처럼 흔한 낱말 뒤 아무 날짜나 잡지 않게(과거 문서로 확인)
+        spaced_header = bool(re.fullmatch(r"(?:\S\s+){3,}\S", label_match.group(0).strip()))  # 한 글자씩 띄운 머리글만
+        window = _TABLE_WINDOW if spaced_header else _LABEL_TO_DATE_WINDOW
+        if not date_match or date_match.start() - label_match.end() > window:
             continue
 
         try:

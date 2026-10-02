@@ -265,6 +265,11 @@ class Schedule:
             ("입찰 마감", self.bid_deadline),
         ]
         valid = [(label, dt) for label, dt in candidates if dt is not None]
+        if valid and self.joint_only and self.attachment_deadline is not None:
+            # 나라장터에 공동수급협정 마감만 있으면 첨부의 등록·제출 마감도 같이 본다. 같은 시각이면 첨부 쪽 이름을
+            # 쓴다 — 단독 참가에도 해당하는 기한이라서(2026-10-02 고흥분청문화박물관: 둘 다 10/13 17:00)
+            att = (self.attachment_deadline_kind, self.attachment_deadline)
+            return att if att[1] <= valid[0][1] else valid[0]
         if valid:
             return min(valid, key=lambda pair: pair[1])
         if self.opinion_deadline is not None:
@@ -272,6 +277,12 @@ class Schedule:
         if self.attachment_deadline is not None:
             return (self.attachment_deadline_kind, self.attachment_deadline)
         return None
+
+    @property
+    def joint_only(self) -> bool:
+        """나라장터 마감 필드 중 공동수급협정 마감만 있고 자격등록·입찰 마감은 빈 공고."""
+        return (self.joint_agreement_deadline is not None and self.qualification_deadline is None
+                and self.bid_deadline is None)
 
     @property
     def all_deadlines(self) -> list[tuple[str, datetime]]:
@@ -285,8 +296,8 @@ class Schedule:
         found = [(label, dt) for label, dt in items if dt is not None]
         if not found and self.opinion_deadline is not None:
             found = [("의견등록 마감", self.opinion_deadline)]
-        if not found and self.attachment_deadline is not None:
-            found = [(self.attachment_deadline_kind, self.attachment_deadline)]
+        if self.attachment_deadline is not None and (not found or self.joint_only):
+            found.append((self.attachment_deadline_kind, self.attachment_deadline))
         return sorted(found, key=lambda pair: pair[1])
 
     def days_left(self, now: datetime) -> int | None:

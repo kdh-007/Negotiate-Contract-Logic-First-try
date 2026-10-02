@@ -4,7 +4,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // 이 화면이 기대하는 수집 결과 형식 — webapp/collect.py RESULT_FORMAT과 같이 올린다
-const APP_FORMAT = 23;
+const APP_FORMAT = 24;
 const store = {
   get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* 저장 불가여도 동작 */ } },
@@ -157,12 +157,17 @@ function dday(c) {
   const text = c.days_left < 0 ? "마감됨" : c.days_left === 0 ? "마감 D-day" : `마감 D-${c.days_left}`;
   // 마감이 여럿이면(자격등록·공동수급협정·입찰) 전부 날짜순으로 — 가장 이른 것이 카드의 D-N(2026-10-02 요청)
   const list = c.deadlines || [];
-  if (list.length > 1) {
+  // 마감이 둘 이상이거나, 하나뿐이어도 공동수급협정 마감이면(단독 참가 기한이 따로 있을 수 있어) 목록 팝업
+  if (list.length > 1 || (list.length === 1 && list[0][0] === "공동수급협정 마감")) {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const dn = (iso) => { const d = new Date(iso); d.setHours(0, 0, 0, 0); const n = Math.round((d - today) / 864e5); return n < 0 ? "지남" : n === 0 ? "D-day" : `D-${n}`; };
-    const rows = list.map(([label, iso], i) => `<dt>${esc(label)}</dt><dd${i ? ' class="sub"' : ""}>${esc(fmtDt(iso))} <span class="why-inline">${dn(iso)}</span></dd>`).join("");
-    const joint = list[0][0] === "공동수급협정 마감"
-      ? "<br>공동수급협정 마감은 공동수급으로 참가할 때만 해당합니다. 단독 참가라면 그 아래 마감을 보세요." : "";
+    // 카드 D-N의 기준(c.deadline_label)인 줄을 굵게
+    const rows = list.map(([label, iso]) => `<dt>${esc(label)}</dt><dd${label === c.deadline_label ? "" : ' class="sub"'}>${esc(fmtDt(iso))} <span class="why-inline">${dn(iso)}</span></dd>`).join("");
+    const hasJoint = list.some(([label]) => label === "공동수급협정 마감");
+    const joint = !hasJoint ? ""
+      : list.length === 1
+        ? "<br>나라장터에는 공동수급협정서 제출 마감만 등록돼 있습니다. 단독 참가 기한은 첨부 공고문에서 확인하세요."
+        : "<br>공동수급협정 마감은 공동수급으로 참가할 때만 해당합니다.";
     const body = `<div class="tip-title">마감 일정 ${list.length}건</div><dl class="kv">${rows}</dl>`
       + `<div class="tip-note">가장 이른 마감 기준으로 남은 날수를 표시합니다.${joint}</div>`;
     return qualButton(text, `dday${c.days_left > 7 ? " far" : ""}`, `${text} — ${list[0][0]}`, body);
