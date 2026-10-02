@@ -24,10 +24,35 @@ _OR_HINT = re.compile(r"또는|혹은|중\s*(?:하나|1\s*개|한\s*가지)|어�
 # 요건이 아닌 항목 — 공동수급 방법·실적·결격사유 설명 속 업종명은 판정하지 않는다
 # "적격심사 평가대상 업종 및 평가비율" 표는 자격요건이 아니다(2026-10-01 고이분교: "종합 건축공사업 … 100%")
 _NOT_REQUIREMENT = re.compile(r"공동수급|공동도급|공동이행|분담이행|대표사|구성원|실적|제재|부정당|하도급|평가\s*대상\s*업종|평가\s*비율")
+# 대기업·중견기업 참여 제한 문장("대기업 및 중견기업 소프트웨어 사업자는 본 입찰에 참여할 수 없으며") 속 업종명은 요건이 아니다
+# (2026-10-02 제보: 고흥분청문화박물관 실감콘텐츠 — 원문에 없는 "소프트웨어사업자(1470)"가 보유 확인으로 뜸).
+# 진짜 요건 항목 안에 "※ … 대기업 참여는 불가" 주석으로 끼어 있는 경우가 많아 항목 전체가 아니라 그 문장만 뺀다.
+_RESTRICTION_SENTENCE = re.compile(r"대기업|중견\s*기업|상호\s*출자")
 _DESIGN_FIELDS = ("시각", "제품", "포장", "환경", "멀티미디어", "서비스", "종합")
 _DESIGN_RE = re.compile(r"산업\s*디자인\s*전문\s*회사\s*[(\[]([^)\]]{1,80})[)\]]")
 _DIRECT_RE = re.compile(r"직접\s*생산\s*(?:확인)?\s*증명(?:서)?")
 _CLASS8_RE = re.compile(r"(?:물품\s*(?:분류)?\s*번호|분류\s*번호)\s*[:：]?\s*(\d{8})(?!\d)")
+
+
+# 금지·제한 문장 속 업종명도 요건이 아니다 — "… 사업자는 참여할 수 없음", "참여를 제한", "해당하지 않는 자", "제외함"
+# (2026-10-02 사용자 요청: 고흥 사례가 다른 표현으로 다시 생기지 않게). 요건 동사("등록한 업체")까지 요구하면 "1) ○○법에 따른
+# 산업디자인전문회사 …"처럼 동사 없이 나열한 진짜 요건이 빠져서(과거 문서 9건) 금지·제한 쪽만 거른다.
+_PROHIBITION = re.compile(
+    r"참(?:여|가)\s*할\s*수\s*없|참(?:여|가)\s*(?:가|는|를|을)?\s*(?:불가|제한|금지)|입찰\s*참(?:여|가)\s*를?\s*제한"
+    r"|해당\s*(?:하|되)지\s*(?:않|아니)|제외\s*(?:한다|함|됨)"
+)
+
+
+def _is_restriction(sent: str) -> bool:
+    return bool(_RESTRICTION_SENTENCE.search(sent) or _PROHIBITION.search(sent))
+
+
+def _drop_restriction_sentences(item: str) -> str:
+    """제한·금지 문장만 빼고 이름을 찾는다. 그런 문장이 없으면 원문 그대로(줄 모양을 바꾸지 않으려고)."""
+    sents = _sentences(item)
+    if not any(_is_restriction(sent) for sent in sents):
+        return item
+    return "\n".join(sent for sent in sents if not _is_restriction(sent))
 
 
 def _norm(text: str) -> str:
@@ -97,6 +122,8 @@ def name_bundles(
         return [b for p in parts for b in name_bundles(p, held_code_names, lookup)]
     if _NOT_REQUIREMENT.search(item):
         return []
+    # 건너뛸 항목 판단은 원문으로 먼저 하고, 그다음 제한·금지 문장만 빼고 이름을 찾는다
+    item = _drop_restriction_sentences(item)
     held_names = {_norm(n) for n in held_code_names.values()}
     held_products = {code: name for code, name in held_code_names.items() if len(code) == 10}
     found: list[NameReq] = []
