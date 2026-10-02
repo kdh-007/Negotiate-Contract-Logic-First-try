@@ -152,3 +152,13 @@ def test_attach_sources_names_file_and_zip_member():
     assert out[0]["source"] == "제안요청서.hwp"
     assert out[1]["source"] == "입찰서류.zip › 공고문.pdf"
     assert "source" not in out[2]
+
+
+def test_staff_flag_skips_scoring_table():
+    from nego.text_requirements import flag_requirements
+
+    table = ("○ 평가항목별 배점 구 분 | 평 가 항 목 | 배 점 | 비 고 기술능력 평 가 (80점) | "
+             "정량적 | - 기업신용평가 (5점) | - 전문인력 보유현황 (6점) | - 사업수행 실적 (6점) | 20점 |")
+    assert [f for f in flag_requirements([table]) if f["kind"] == "인력"] == []
+    real = "다. 건축사 자격을 보유한 기술자 1인 이상이 재직 중인 업체"
+    assert [f["kind"] for f in flag_requirements([real])] == ["인력"]

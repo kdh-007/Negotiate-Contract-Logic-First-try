@@ -182,6 +182,10 @@ _NOT_TRACK_REQUIREMENT = re.compile(
     r"|평가\s*대상\s*업종|평가\s*비율|배\s*점|평\s*점|가\s*점"
 )
 
+# 기술인력 칩에서 뺄 문장 — 평가 배점표("평가항목별 배점 … 전문인력 보유현황 (6점)", 2026-10-02 제보)는 점수 산정이지
+# 인력을 갖춰야 참가할 수 있다는 요건이 아니다
+_NOT_STAFF_REQUIREMENT = re.compile(r"배\s*점|평\s*가\s*항\s*목|평\s*점|가\s*점|\(\s*\d+(?:\.\d+)?\s*점\s*\)")
+
 
 def flag_requirements(items: list[str], full_text: str = "") -> list[dict]:
     """실적·현장설명회 참가·기술인력 요건을 찾아 [{kind, text, date?}]로. 판정은 하지 않는다."""
@@ -200,6 +204,8 @@ def flag_requirements(items: list[str], full_text: str = "") -> list[dict]:
                 continue  # 코드 있는 업종과 "또는"으로 나열된 대안일 뿐 — 코드 판정이 이미 본다
             if kind == "실적" and _NOT_TRACK_REQUIREMENT.search(s):
                 continue  # 실적으로 참가를 "제한하지 않는다"·적격심사 평가(배점) 설명은 참가 요건이 아니다
+            if kind == "인력" and _NOT_STAFF_REQUIREMENT.search(s):
+                continue  # 평가 배점표의 "전문인력 보유현황 (6점)" 같은 칸은 참가 요건이 아니다
             if subject.search(s) and detail.search(s) and not (kind == "현장설명회" and _NOT_MANDATORY.search(s)):
                 entry = {"kind": kind, "text": re.sub(r"\s+", " ", s).strip()[:220]}
                 if kind == "현장설명회":
