@@ -388,11 +388,11 @@ function regionBadge(c) {
 }
 // 판정하지 않는 글로 된 요건 — 실적·현장설명회·기술인력. 커서를 대면 팝업으로 원문 문장(현장설명회는 일시도)
 const FLAG_LABEL = { "실적": "실적 요건", "현장설명회": "현장설명회 참가 필수", "인력": "기술인력 요건", "건축사사무소": "건축사사무소 요건" };
+const FLAG_CHIP = { "현장설명회": "현장설명회" };
 function flagBadges(c) {
   return (c.text_flags || []).map((f) => {
-    // 칩 날짜는 "10/13"(월/일, 앞 0 없이 — 10/2 요청). 팝업 일시 칸은 원래대로 전체 일시
-    const md = f.date && /^\d{4}-(\d{2})-(\d{2})/.exec(f.date);
-    const label = `${FLAG_LABEL[f.kind] || f.kind}${md ? ` ${+md[1]}/${+md[2]}` : ""}`;
+    // 칩은 이름만("현장설명회" — 10/2 요청, 날짜는 팝업 일시 칸에). 팝업 제목은 FLAG_LABEL 그대로
+    const label = FLAG_CHIP[f.kind] || FLAG_LABEL[f.kind] || f.kind;
     // 요약(f.summary: [[항목, 값]…])이 있으면 표를 먼저, 원문은 아래 작게. 예전 결과(요약 없음)는 일시 + 원문만
     const rows = f.summary && f.summary.length ? f.summary : (f.date ? [["일시", f.date]] : []);
     const body = `<div class="tip-title warn">${esc(FLAG_LABEL[f.kind] || f.kind)} — 확인 필요</div>`
