@@ -247,6 +247,8 @@ def flag_requirements(items: list[str], full_text: str = "") -> list[dict]:
                             f" {d.group(4).replace(' ', '')}" if d.group(4) else "")
                 out.setdefault(kind, entry)
                 break
+    for entry in out.values():
+        entry["summary"] = summarize_flag(entry)
     return list(out.values())
 
 
@@ -277,3 +279,131 @@ def attach_sources(flags: list[dict], files: list[tuple[str, str]]) -> list[dict
                 flag["source"] = hit
                 break
     return flags
+
+
+# ── 팝업용 요약 (2026-10-02 사용자 요청: 원문 표기가 공고마다 제각각이라 핵심 낱말로 같은 모양을 만든다) ──
+# 결과는 [[항목, 값], …] — 화면은 이걸 표로 먼저 보여주고 원문은 아래에 작게. 못 뽑은 항목은 빼고, 아무것도 못 뽑으면 [].
+_AMOUNT_RE = re.compile(
+    r"(\d[\d,.]*\s*(?:억|천만|백만)\s*(?:\d[\d,.]*\s*(?:천만|백만|만)\s*)?원?|\d[\d,.]*\s*만?\s*원)\s*(?:\([^)]{0,15}\)\s*)?(이상|초과)?"
+)
+# 실적 대상 분야는 괄호 안에 "…관련/…분야"로 적는 경우가 많다 — 발주기관 나열("국가 및 지자체 등")은 대상이 아니다
+_FIELD_PAREN_RE = re.compile(r"\(([^()]{4,60}(?:관련|분야)[^()]{0,20})\)")
+_VAT_RE = re.compile(r"VAT\s*포함|부가\s*가치\s*세\s*포함|부가세\s*포함")
+_VAT_EXCL_RE = re.compile(r"부가\s*(?:가치\s*)?세\s*별도|VAT\s*별도")
+_PERIOD_RE = re.compile(r"(?:최근\s*)?(\d+)\s*년\s*(?:이내|간|동안)")
+# 실적 대상 앞쪽 경계 — 기간·발주처·금액 표현 뒤부터가 "무엇을 했는지"다
+_TARGET_START_RE = re.compile(
+    r".*(?:이상|원|발주한|시행한|발주하거나|투자한|의한|따른|이내에?|년간|기준|으로|당)\s*(?=\S)"
+)
+_TARGET_TRIM_HEAD = re.compile(r"^(?:[의에을를로]\s+|규모의\s*|단일\s*(?:사업|건)?\s*(?:으로|당)?\s*)")
+_TARGET_TRIM_TAIL = re.compile(r"\s*(?:준공된|된|한|하는|을|를|의|이|가|으로|로|사업으로|관련|등의|단일\s*(?:사업|건)?\s*(?:으로)?|수행)\s*$")
+
+
+def _sq(t: str) -> str:
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _won(amt: str) -> str:
+    """금액 표기를 "N억원"/"N천만원"으로 맞춘다 — "100,000,000원"·"50백만원"·"334백만원"·"1억"."""
+    m = re.fullmatch(r"([\d,.]+)(억|천만|백만|만)?원?", amt)
+    if not m:
+        return amt if amt.endswith("원") else amt + "원"
+    try:
+        n = float(m.group(1).replace(",", "")) * {"억": 1e8, "천만": 1e7, "백만": 1e6, "만": 1e4, None: 1}[m.group(2)]
+    except ValueError:
+        return amt
+    if n >= 1e8:
+        return f"{n / 1e8:g}억원"
+    if n >= 1e7 and n % 1e7 == 0:
+        return f"{n / 1e7:g}천만원"
+    if n >= 1e4 and n % 1e4 == 0:
+        return f"{n / 1e4:,.0f}만원"
+    return amt
+
+
+def _target(line: str) -> str | None:
+    paren = _FIELD_PAREN_RE.search(line)
+    if paren:
+        return _sq(paren.group(1))
+    pre = _sq(re.sub(r"[(\[][^)\]]*[)\]]", " ", line.split("실적")[0]))
+    pre = re.sub(r"^\s*(?:[-·•◦○❍※]|\d{1,2}\)|[①-⑳])\s*", "", pre)
+    m = _TARGET_START_RE.match(pre)
+    seg = pre[m.end():] if m else pre
+    for _ in range(3):
+        seg = _TARGET_TRIM_TAIL.sub("", _TARGET_TRIM_HEAD.sub("", seg)).strip(" ,·․’'\"“”")
+    return seg if 3 <= len(seg) <= 50 else None
+
+
+def _track_summary(text: str) -> list[list[str]]:
+    rows: list[list[str]] = []
+    period = _PERIOD_RE.search(text)
+    if period:
+        rows.append(["기간", f"최근 {period.group(1)}년"])
+    amounts, targets = [], []
+    for line in text.split("\n"):
+        for m in _AMOUNT_RE.finditer(line):
+            if re.fullmatch(r"\d+", m.group(1).strip()):
+                continue
+            kind = "단일" if re.search(r"단일|1\s*건", line) else "누적" if re.search(r"누적|합산|합계", line) else ""
+            amounts.append(" ".join(x for x in (kind, _won(re.sub(r"\s+", "", m.group(1))), m.group(2) or "이상") if x))
+        if "실적" in line:
+            t = _target(line)
+            if t:
+                targets.append(t)
+    if amounts:
+        rows.append(["금액", " / ".join(dict.fromkeys(amounts))])
+    if targets:
+        rows.append(["대상", " / ".join(dict.fromkeys(targets))])
+    if _VAT_RE.search(text):
+        rows.append(["비고", "부가세 포함 금액"])
+    elif _VAT_EXCL_RE.search(text):
+        rows.append(["비고", "부가세 별도 금액"])
+    return rows
+
+
+def _staff_summary(text: str) -> list[list[str]]:
+    rows: list[list[str]] = []
+    role = re.search(r"([가-힣·\s및]{2,24}?)(?:을|를)\s*담당하는\s*자", text)
+    if role:
+        rows.append(["역할", _sq(role.group(1))])
+    quals = list(dict.fromkeys(m.group(0) for m in re.finditer(r"[가-힣]{0,8}(?:기술사|건축사|기술자|학예사|기사)(?:\s*자격(?:증)?)?", text)))
+    if quals:
+        rows.append(["자격", " / ".join(_sq(q) for q in quals[:3])])
+    count = re.search(r"(\d+)\s*(?:인|명)\s*이상", text)
+    if count:
+        rows.append(["인원", f"{count.group(1)}명 이상"])
+    if re.search(r"콘소시엄|컨소시엄|계약서", text):
+        rows.append(["보완", "컨소시엄·계약으로 확보 가능(증빙 첨부)"])
+    return rows
+
+
+def _site_summary(text: str, date: str | None) -> list[list[str]]:
+    rows = [["참가", "필수 (불참 시 입찰·응모 불가)"]]
+    if date:
+        rows.append(["일시", date])
+    place = re.search(r"장소\s*[:：]\s*([^\n,·]{2,40})", text)
+    if place:
+        rows.append(["장소", _sq(place.group(1))])
+    return rows
+
+
+def _office_summary(text: str) -> list[list[str]]:
+    rows = [["요건", "건축사사무소 개설 신고(등록)"]]
+    law = re.search(r"건축사법[」\"']?\s*(제\s*\d+\s*조)?", text)
+    if law:
+        rows.append(["근거", _sq("건축사법 " + (law.group(1) or "")).strip()])
+    return rows
+
+
+def summarize_flag(flag: dict) -> list[list[str]]:
+    text = flag.get("text", "")
+    kind = flag.get("kind")
+    if kind == "실적":
+        return _track_summary(text)
+    if kind == "인력":
+        return _staff_summary(text)
+    if kind == "현장설명회":
+        return _site_summary(text, flag.get("date"))
+    if kind == "건축사사무소":
+        return _office_summary(text)
+    return []

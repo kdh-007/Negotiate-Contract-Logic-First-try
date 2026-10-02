@@ -80,3 +80,16 @@ class TestRealRfp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_summary_uses_same_shape_for_different_wordings():
+    """2026-10-02 사용자 요청 — 원문 표기가 공고마다 달라 핵심 낱말로 같은 모양을 만든다."""
+    from nego.region import summarize
+
+    a = summarize("입찰공고일 전일부터 입찰일(낙찰자는 계약체결일)까지 법인등기부상 본점 소재지(개인사업자인 경우에는 "
+                  "사업자등록증 … 사업장의 소재지)가 경기도 내에 있는 업체이어야 합니다.")
+    assert a == {"basis": "법인등기부상 본점 소재지", "period": "입찰공고일 전일 ~ 입찰일 (낙찰자: 계약체결일)", "individual": True}
+    b = summarize("입찰 공고일 전일 현재 제주특별자치도에 주된 영업소를 두고 당해 자격을 입찰일(낙찰자는 계약 체결일)까지 유지하고 있는 업체")
+    assert b == {"basis": "주된 영업소 소재지", "period": "입찰공고일 전일 ~ 입찰일 (낙찰자: 계약체결일)", "individual": False}
+    c = summarize("주된 영업소의 소재지가 경기도에 있는 업체")
+    assert c == {"basis": "주된 영업소 소재지", "period": None, "individual": False}

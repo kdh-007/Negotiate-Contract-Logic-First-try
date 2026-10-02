@@ -74,7 +74,8 @@ class RegionCheck:
 
     def to_dict(self) -> dict:
         return {"status": self.status, "required": self.required, "company": self.company,
-                "source": self.source, "evidence": self.evidence}
+                "source": self.source, "evidence": self.evidence,
+                "summary": summarize(self.evidence) if self.source == "첨부 공고문" else None}
 
 
 def company_sido(held_raw: dict) -> str | None:
@@ -107,7 +108,7 @@ def from_text(items: list[str], company: str | None) -> RegionCheck | None:
             required = {sido_of(m.group(0)) for m in _SIDO_RE.finditer(sentence)} - {None}
             if not required:
                 continue
-            evidence = re.sub(r"\s+", " ", sentence).strip()[:160]
+            evidence = re.sub(r"\s+", " ", sentence).strip()[:300]
             return _judge(required, company, "첨부 공고문", evidence)
     return None
 
@@ -117,3 +118,49 @@ def combine(api: RegionCheck, text: RegionCheck | None) -> RegionCheck:
     if text is not None and text.status != "미확인":
         return text
     return api
+
+
+# ── 팝업용 요약 (2026-10-02 사용자 요청: 원문 표기가 공고마다 제각각이라 핵심 낱말로 같은 모양의 문장을 만든다) ──
+# 결과: {"basis": "법인등기부상 본점 소재지", "period": "입찰공고일 전일 ~ 입찰일 (낙찰자: 계약체결일)", "individual": True}
+_WSP = r"\s*"
+_START_RE = re.compile(r"(입찰" + _WSP + r")?공고" + _WSP + r"일" + _WSP + r"(전일|현재|기준)?")
+_END_RE = re.compile(
+    r"(입찰" + _WSP + r"참가" + _WSP + r"(?:등록|신청)" + _WSP + r"마감" + _WSP + r"일|입찰" + _WSP + r"일|개찰" + _WSP
+    + r"일|계약" + _WSP + r"체결" + _WSP + r"일)" + r"[^.]{0,40}?까지"
+)
+_WINNER_CONTRACT_RE = re.compile(r"낙찰자" + _WSP + r"(?:는|의\s*경우)?" + _WSP + r"계약" + _WSP + r"체결" + _WSP + r"일")
+
+
+def _basis(s: str) -> str:
+    if "법인등기" in s and ("본점" in s or "본사" in s):
+        return "법인등기부상 본점 소재지"
+    if re.search(r"주된" + _WSP + r"영업소", s):
+        return "주된 영업소 소재지"
+    if "본점" in s or "본사" in s:
+        return "본점(본사) 소재지"
+    if "사업장" in s:
+        return "사업장 소재지"
+    if "관내" in s:
+        return "관내 업체"
+    return "업체 소재지"
+
+
+def _period(s: str) -> str | None:
+    start = _START_RE.search(s)
+    if not start:
+        return None
+    label = ("입찰공고일" if start.group(1) else "공고일") + (f" {start.group(2)}" if start.group(2) else "")
+    end = _END_RE.search(s, start.end())
+    if not end:
+        return label + ("" if start.group(2) in ("현재", "기준") else " 기준")
+    end_label = re.sub(r"\s+", "", end.group(1))
+    end_label = {"입찰참가등록마감일": "입찰참가등록 마감일", "입찰참가신청마감일": "입찰참가신청 마감일",
+                 "계약체결일": "계약체결일"}.get(end_label, end_label)
+    winner = " (낙찰자: 계약체결일)" if end_label != "계약체결일" and _WINNER_CONTRACT_RE.search(s) else ""
+    return f"{label} ~ {end_label}{winner}"
+
+
+def summarize(evidence: str | None) -> dict | None:
+    if not evidence:
+        return None
+    return {"basis": _basis(evidence), "period": _period(evidence), "individual": "개인사업자" in evidence}
