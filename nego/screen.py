@@ -256,37 +256,57 @@ class Schedule:
     attachment_deadline_kind: str = "첨부파일 제출기한"
     # 사전규격의 의견등록 마감. 본공고에는 없다(항상 None) — 입찰 마감이 없는 사전규격에서만 쓰인다.
     opinion_deadline: datetime | None = None
+    # 팝업에 같이 보여줄 일시(카드 마감 계산엔 안 씀) — 공고 게시·개찰, 첨부 공고문에서 찾은 참가등록·제출 마감 전부(2026-10-02 요청)
+    posted_at: datetime | None = None
+    opening_at: datetime | None = None
+    attachment_deadlines: list = field(default_factory=list)
 
     @property
     def earliest(self) -> tuple[str, datetime] | None:
-        candidates = [
+        """카드 마감(D-N 기준). 이름은 예전 그대로지만 "가장 이른 것"이 아니라 **우선순위**로 고른다(2026-10-02 사용자 결정):
+        ① 입찰참가자격등록 마감 ② 입찰 마감 ③ 사전규격 의견등록 마감 ④ 첨부 공고문의 참가등록·제출 마감
+        ⑤ 공동수급협정 마감(공동수급으로 참가할 때만 해당해서 맨 뒤). 나머지 마감은 팝업(`all_deadlines`)에 날짜순으로 보인다."""
+        for label, dt in (
             ("자격등록 마감", self.qualification_deadline),
-            ("공동수급협정 마감", self.joint_agreement_deadline),
             ("입찰 마감", self.bid_deadline),
-        ]
-        valid = [(label, dt) for label, dt in candidates if dt is not None]
-        if valid:
-            return min(valid, key=lambda pair: pair[1])
-        if self.opinion_deadline is not None:
-            return ("의견등록 마감", self.opinion_deadline)
-        if self.attachment_deadline is not None:
-            return (self.attachment_deadline_kind, self.attachment_deadline)
+            ("의견등록 마감", self.opinion_deadline),
+            (self.attachment_deadline_kind, self.attachment_deadline),
+            ("공동수급협정 마감", self.joint_agreement_deadline),
+        ):
+            if dt is not None:
+                return (label, dt)
         return None
 
     @property
+    def needs_attachment_deadline(self) -> bool:
+        """자격등록·입찰·의견등록 마감이 모두 빈 공고 — 첨부 공고문에서 참가등록·제출 마감을 찾는다
+        (공동수급협정 마감만 있는 공고 포함: 2026-10-02 고흥분청문화박물관)."""
+        return self.qualification_deadline is None and self.bid_deadline is None and self.opinion_deadline is None
+
+    @property
+    def joint_only(self) -> bool:
+        """나라장터 마감 필드 중 공동수급협정 마감만 있고 자격등록·입찰 마감은 빈 공고."""
+        return (self.joint_agreement_deadline is not None and self.qualification_deadline is None
+                and self.bid_deadline is None)
+
+    @property
     def all_deadlines(self) -> list[tuple[str, datetime]]:
-        """알려진 마감 전부를 날짜순으로 — 화면 마감 팝업에 같이 보여준다(2026-10-02 요청: 공동수급협정 마감이 가장 일러
-        마감으로 잡힐 때 자격등록·입찰 마감도 바로 보이게). API 필드가 있으면 첨부에서 찾은 마감은 쓰지 않는 규칙은 그대로."""
+        """팝업용 일시 전부를 날짜순으로(2026-10-02 요청: 카드 마감 말고 나머지 일시도 팝업에서) — 공고 게시, 자격등록·공동수급협정·
+        입찰·의견등록 마감, 개찰, 첨부 공고문의 참가등록·제출 마감. 카드 마감(`earliest`)과 같은 (이름, 일시)가 그대로 들어 있어
+        화면이 그 줄을 굵게 표시한다."""
         items = [
+            ("공고 게시", self.posted_at),
             ("자격등록 마감", self.qualification_deadline),
             ("공동수급협정 마감", self.joint_agreement_deadline),
             ("입찰 마감", self.bid_deadline),
+            ("의견등록 마감", self.opinion_deadline),
+            ("개찰", self.opening_at),
         ]
         found = [(label, dt) for label, dt in items if dt is not None]
-        if not found and self.opinion_deadline is not None:
-            found = [("의견등록 마감", self.opinion_deadline)]
-        if not found and self.attachment_deadline is not None:
-            found = [(self.attachment_deadline_kind, self.attachment_deadline)]
+        extra = list(self.attachment_deadlines)
+        if self.attachment_deadline is not None and (self.attachment_deadline_kind, self.attachment_deadline) not in extra:
+            extra.append((self.attachment_deadline_kind, self.attachment_deadline))
+        found.extend(pair for pair in extra if pair not in found)
         return sorted(found, key=lambda pair: pair[1])
 
     def days_left(self, now: datetime) -> int | None:
@@ -302,4 +322,6 @@ def build_schedule(notice: Notice) -> Schedule:
         joint_agreement_deadline=parse_datetime(notice.joint_agreement_deadline),
         bid_deadline=parse_datetime(notice.bid_deadline),
         opinion_deadline=parse_datetime(notice.opinion_deadline),
+        posted_at=parse_datetime(getattr(notice, "posted_at", None)),
+        opening_at=parse_datetime(getattr(notice, "opening_at", None)),
     )
