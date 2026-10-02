@@ -4,7 +4,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // 이 화면이 기대하는 수집 결과 형식 — webapp/collect.py RESULT_FORMAT과 같이 올린다
-const APP_FORMAT = 18;
+const APP_FORMAT = 19;
 const store = {
   get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* 저장 불가여도 동작 */ } },
@@ -351,7 +351,7 @@ function flagBadges(c) {
     const label = `${FLAG_LABEL[f.kind] || f.kind}${f.date ? ` ${f.date.slice(5, 10)}` : ""}`;
     const body = `<div class="tip-title warn">${esc(FLAG_LABEL[f.kind] || f.kind)} — 확인 필요</div>`
       + (f.date ? `<div class="tip-item"><span class="why">일시</span>${esc(f.date)}</div>` : "")
-      + `<div class="tip-item"><span class="why">공고문 원문</span>${esc(f.text)}</div>`
+      + `<div class="tip-item flag-text"><span class="why">공고문 원문</span>${esc(f.text)}</div>`
       + `<div class="tip-note">자동 판정하지 않습니다 — 공고문에서 직접 확인하세요.</div>`
       + (f.source ? `<div class="tip-src">출처: ${esc(f.source)}</div>` : "");
     return qualButton(label, "warn", label, body);

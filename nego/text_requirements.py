@@ -186,11 +186,42 @@ _NOT_TRACK_REQUIREMENT = re.compile(
 # 인력을 갖춰야 참가할 수 있다는 요건이 아니다
 _NOT_STAFF_REQUIREMENT = re.compile(r"배\s*점|평\s*가\s*항\s*목|평\s*점|가\s*점|\(\s*\d+(?:\.\d+)?\s*점\s*\)")
 
+_SUB_LINE = re.compile(r"^\s*[-·•]")  # "◦""▪"는 항목 머리표로도 써서(아리랑보부상로드 "◦ 공고일로부터 …") 하위 줄로 안 봄
+_MAX_FLAG_TEXT = 220
+_MAX_CONTEXT_TEXT = 500
+_MAX_SIBLINGS = 4
+
+
+def _with_context(sent: str, owner: dict) -> str:
+    """칩 원문. "- 전시제작·설치 준공실적이 단일 건으로 5억원 이상"처럼 하위 줄이면 위의 머리 문장
+    ("9) 다음 사항에 해당되는 업체(공고일 기준 최근 3년간…)")과 같은 머리 아래 다른 하위 줄도 줄바꿈으로 붙인다
+    (2026-10-02 사용자 요청 — 남원 어린이과학체험관: 기간·두 번째 실적 조건이 팝업에서 빠져 보였음)."""
+    flat = lambda t: re.sub(r"\s+", " ", t).strip()
+    if not _SUB_LINE.match(sent) or sent not in owner:
+        return flat(sent)[:_MAX_FLAG_TEXT]
+    sents, i = owner[sent]
+    head = i
+    while head > 0 and _SUB_LINE.match(sents[head]):
+        head -= 1
+    if _SUB_LINE.match(sents[head]):
+        return flat(sent)[:_MAX_FLAG_TEXT]  # 머리 문장이 없는 목록 — 예전처럼 한 줄만
+    end = head + 1
+    while end < len(sents) and _SUB_LINE.match(sents[end]):
+        end += 1
+    # 하위 줄이 많으면("○ 입찰참가자격: 각 호를 모두 충족" 아래 면허·실적·소재지 6줄 — 안성 고삼호수) 머리 문장 + 해당 줄만
+    lines = sents[head:end] if end - head - 1 <= _MAX_SIBLINGS else [sents[head], sent]
+    return "\n".join(flat(x) for x in lines)[:_MAX_CONTEXT_TEXT]
+
 
 def flag_requirements(items: list[str], full_text: str = "") -> list[dict]:
     """실적·현장설명회 참가·기술인력 요건을 찾아 [{kind, text, date?}]로. 판정은 하지 않는다."""
     out: dict[str, dict] = {}
-    sentences = [s for item in items for s in _sentences(item)]
+    per_item = [_sentences(item) for item in items]
+    sentences = [s for sents in per_item for s in sents]
+    owner = {}  # 문장 → (그 항목의 문장 목록, 위치) — 하위 줄이면 머리 문장·형제 줄을 같이 보여주려고
+    for sents in per_item:
+        for i, sent in enumerate(sents):
+            owner.setdefault(sent, (sents, i))
     # 현장설명회는 참가자격 절 밖("입찰 일정")에 "참석 필수"로만 적히기도 해서 원문 전체도 본다
     extra = [m.group(0) for m in re.finditer(r"[^\n]{0,60}현장\s*설명회[^\n]{0,100}", full_text or "")]
     for kind, subject, detail in _FLAGS:
@@ -207,7 +238,7 @@ def flag_requirements(items: list[str], full_text: str = "") -> list[dict]:
             if kind == "인력" and _NOT_STAFF_REQUIREMENT.search(s):
                 continue  # 평가 배점표의 "전문인력 보유현황 (6점)" 같은 칸은 참가 요건이 아니다
             if subject.search(s) and detail.search(s) and not (kind == "현장설명회" and _NOT_MANDATORY.search(s)):
-                entry = {"kind": kind, "text": re.sub(r"\s+", " ", s).strip()[:220]}
+                entry = {"kind": kind, "text": _with_context(s, owner)}
                 if kind == "현장설명회":
                     near = [m.group(0) for m in re.finditer(r"[^\n]{0,20}현장\s*설명회[^\n]{0,120}", full_text or "")]
                     d = next((_DATE_RE.search(n) for n in near if _DATE_RE.search(n)), None)
