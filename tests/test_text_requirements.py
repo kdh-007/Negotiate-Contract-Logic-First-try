@@ -162,3 +162,27 @@ def test_staff_flag_skips_scoring_table():
     assert [f for f in flag_requirements([table]) if f["kind"] == "인력"] == []
     real = "다. 건축사 자격을 보유한 기술자 1인 이상이 재직 중인 업체"
     assert [f["kind"] for f in flag_requirements([real])] == ["인력"]
+
+
+def test_sub_line_flag_shows_head_and_siblings():
+    """남원 어린이과학체험관 — "- 전시제작… 5억원 이상" 한 줄만 보여 기간·두 번째 실적 조건이 빠져 보였음."""
+    from nego.text_requirements import flag_requirements
+
+    item = ("9) 다음 사항에 해당되는 업체(공고일 기준 최근 3년간, 부가가치세 포함)\n"
+            "  - 전시제작·설치 준공실적이 단일 건으로 5억원 이상\n"
+            "  - 과학관 기초과학분야 전시제작·설치 준공실적이 단일건으로 3억원이상")
+    text = flag_requirements([item])[0]["text"]
+    assert text.splitlines() == [
+        "9) 다음 사항에 해당되는 업체(공고일 기준 최근 3년간, 부가가치세 포함)",
+        "- 전시제작·설치 준공실적이 단일 건으로 5억원 이상",
+        "- 과학관 기초과학분야 전시제작·설치 준공실적이 단일건으로 3억원이상",
+    ]
+
+
+def test_sub_line_flag_with_many_siblings_keeps_only_head_and_match():
+    from nego.text_requirements import flag_requirements
+
+    item = ("○ 입찰참가자격: 각 호를 모두 충족하여야 함\n  - 시행령 제13조 자격\n  - 실내건축공사업(4990)\n"
+            "  - 산업디자인 전문회사(4442)\n  - 최근 3년 이내 단일 용역 5천만원 이상 실적이 있는 업체\n  - 경기도 소재 업체")
+    assert flag_requirements([item])[0]["text"].splitlines() == [
+        "○ 입찰참가자격: 각 호를 모두 충족하여야 함", "- 최근 3년 이내 단일 용역 5천만원 이상 실적이 있는 업체"]
