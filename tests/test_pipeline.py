@@ -714,7 +714,9 @@ class TestScreen(unittest.TestCase):
 
 
 class TestSchedule(unittest.TestCase):
-    def test_earliest_deadline_is_chosen(self):
+    def test_card_deadline_is_qualification_registration_first(self):
+        """카드 마감은 가장 이른 것이 아니라 입찰참가자격등록 마감 우선(2026-10-02 사용자 결정) — 공동수급협정 마감(9/18)이
+        더 일러도 자격등록(9/20)이 기준이고, 공동수급협정 마감은 팝업(all_deadlines)에 보인다."""
         n = notice_from_raw(
             fixtures.notice(
                 "X",
@@ -726,9 +728,20 @@ class TestSchedule(unittest.TestCase):
         )
         sched = screen.build_schedule(n)
         label, when = sched.earliest
-        self.assertEqual(label, "공동수급협정 마감")
-        self.assertEqual(when, datetime(2026, 9, 18, 18, 0))
-        self.assertEqual(sched.days_left(NOW), 4)
+        self.assertEqual(label, "자격등록 마감")
+        self.assertEqual(when, datetime(2026, 9, 20, 18, 0))
+        self.assertEqual(sched.days_left(NOW), 6)
+        self.assertEqual([l for l, _ in sched.all_deadlines], ["공고 게시", "공동수급협정 마감", "자격등록 마감", "입찰 마감"])
+
+    def test_card_deadline_fallback_order(self):
+        """자격등록 없으면 입찰 마감, 둘 다 없으면 첨부 마감, 그것도 없으면 공동수급협정 마감."""
+        s = screen.Schedule(qualification_deadline=None, joint_agreement_deadline=datetime(2026, 9, 18, 18),
+                            bid_deadline=datetime(2026, 9, 25, 10))
+        self.assertEqual(s.earliest[0], "입찰 마감")
+        s = screen.Schedule(qualification_deadline=None, joint_agreement_deadline=datetime(2026, 9, 18, 18), bid_deadline=None)
+        self.assertEqual(s.earliest[0], "공동수급협정 마감")
+        s.attachment_deadline_kind, s.attachment_deadline = "첨부파일 제출기한", datetime(2026, 9, 20, 17)
+        self.assertEqual(s.earliest, ("첨부파일 제출기한", datetime(2026, 9, 20, 17)))
 
     def test_missing_schedule_returns_none(self):
         n = notice_from_raw(

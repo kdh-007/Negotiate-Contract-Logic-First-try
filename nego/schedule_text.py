@@ -44,7 +44,7 @@ _DATE_TO_TIME_WINDOW = 25
 _REGISTRATION_LABEL_RE = re.compile(
     r"(?:응모|참가|입찰\s*참가)\s*신청\s*서?\s*(?:등록|접수|제출)\s*(?:일시|기간|기한|마감)?|(?:응모|참가)\s*등록\s*(?:일시|기간|기한|마감)?"
 )
-REGISTRATION = "참가등록 마감"
+REGISTRATION = "첨부 참가등록 마감"
 SUBMISSION = "첨부파일 제출기한"
 
 

@@ -4,7 +4,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // 이 화면이 기대하는 수집 결과 형식 — webapp/collect.py RESULT_FORMAT과 같이 올린다
-const APP_FORMAT = 24;
+const APP_FORMAT = 25;
 const store = {
   get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* 저장 불가여도 동작 */ } },
@@ -155,25 +155,28 @@ function dday(c) {
   if (c.days_left == null) return chip("일정 미상", "", "마감 정보 없음", "나라장터 공고와 첨부파일 어디에서도 마감 일시를 찾지 못했습니다.");
   // 지난 공고는 "마감 마감"이 되지 않게 "마감됨" 한 번만
   const text = c.days_left < 0 ? "마감됨" : c.days_left === 0 ? "마감 D-day" : `마감 D-${c.days_left}`;
-  // 마감이 여럿이면(자격등록·공동수급협정·입찰) 전부 날짜순으로 — 가장 이른 것이 카드의 D-N(2026-10-02 요청)
+  // 카드 D-N은 입찰참가자격등록 마감 우선(없으면 입찰 마감 → 의견등록 → 첨부 등록·제출 → 공동수급협정, 2026-10-02 사용자 결정).
+  // 팝업엔 나머지 일시도 전부 날짜순으로 — 공고 게시·자격등록·공동수급협정·입찰·개찰·첨부 공고문 마감. 카드 기준 줄은 굵게.
   const list = c.deadlines || [];
-  // 마감이 둘 이상이거나, 하나뿐이어도 공동수급협정 마감이면(단독 참가 기한이 따로 있을 수 있어) 목록 팝업
-  if (list.length > 1 || (list.length === 1 && list[0][0] === "공동수급협정 마감")) {
+  if (list.length) {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const dn = (iso) => { const d = new Date(iso); d.setHours(0, 0, 0, 0); const n = Math.round((d - today) / 864e5); return n < 0 ? "지남" : n === 0 ? "D-day" : `D-${n}`; };
-    // 카드 D-N의 기준(c.deadline_label)인 줄을 굵게
-    const rows = list.map(([label, iso]) => `<dt>${esc(label)}</dt><dd${label === c.deadline_label ? "" : ' class="sub"'}>${esc(fmtDt(iso))} <span class="why-inline">${dn(iso)}</span></dd>`).join("");
-    const hasJoint = list.some(([label]) => label === "공동수급협정 마감");
-    const joint = !hasJoint ? ""
-      : list.length === 1
-        ? "<br>나라장터에는 공동수급협정서 제출 마감만 등록돼 있습니다. 단독 참가 기한은 첨부 공고문에서 확인하세요."
-        : "<br>공동수급협정 마감은 공동수급으로 참가할 때만 해당합니다.";
-    const body = `<div class="tip-title">마감 일정 ${list.length}건</div><dl class="kv">${rows}</dl>`
-      + `<div class="tip-note">가장 이른 마감 기준으로 남은 날수를 표시합니다.${joint}</div>`;
-    return qualButton(text, `dday${c.days_left > 7 ? " far" : ""}`, `${text} — ${list[0][0]}`, body);
+    const isCard = (label, iso) => label === c.deadline_label && fmtDt(iso) === fmtDt(c.deadline);
+    const rows = list.map(([label, iso]) => {
+      const tag = label === "공고 게시" || label === "개찰" ? "" : ` <span class="why-inline">${dn(iso)}</span>`;
+      return `<dt>${esc(label)}${isCard(label, iso) ? " ★" : ""}</dt><dd${isCard(label, iso) ? "" : ' class="sub"'}>${esc(fmtDt(iso))}${tag}</dd>`;
+    }).join("");
+    const labels = list.map(([label]) => label);
+    const notes = ["★ = 카드 D-N 기준. 입찰참가자격등록 마감이 우선이고, 없으면 입찰 마감 → 첨부 공고문 마감 → 공동수급협정 마감 순입니다."];
+    if (labels.includes("공동수급협정 마감")) notes.push("공동수급협정 마감은 공동수급으로 참가할 때만 해당합니다.");
+    if (c.deadline_label === "공동수급협정 마감")
+      notes.push("나라장터에는 공동수급협정서 제출 마감만 등록돼 있습니다. 단독 참가 기한은 첨부 공고문에서 확인하세요.");
+    const body = `<div class="tip-title">입찰 일정</div><dl class="kv">${rows}</dl>`
+      + `<div class="tip-note">${notes.map(esc).join("<br>")}</div>`;
+    return qualButton(text, `dday${c.days_left > 7 ? " far" : ""}`, `${text} — ${c.deadline_label || "마감"}`, body);
   }
   return chip(text, `dday${c.days_left > 7 ? " far" : ""}`, `${c.deadline_label || "마감"} ${fmtDt(c.deadline)}`,
-    "가장 이른 마감(입찰·자격등록·제안서 제출 등) 기준, 오늘부터 남은 날수입니다.");
+    "입찰참가자격등록 마감 기준(없으면 입찰 마감·첨부 공고문 마감), 오늘부터 남은 날수입니다.");
 }
 const QUAL_NOTES = {
   industry: "자격요건 = 업종·면허(업종코드 4자리). ✓ 보유 · ✗ 미보유 · – 이미 충족해서 없어도 됨.",

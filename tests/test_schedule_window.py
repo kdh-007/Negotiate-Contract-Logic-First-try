@@ -74,7 +74,7 @@ def test_registration_deadline_before_submission():
     notice = ("응모신청서\n등록\n ◦ 응모신청서 등록 일시 : 2026. 10. 13.(화) 13:00 ~ 14:00\n"
               " ◦ 응모신청서 등록 장소 : 거제시 일운면 옥림리 산1 지심도 휴게소\n")
     guide = "제안서 제출기한 : 2026. 11. 17.(화) 09:00~18:00\n"
-    assert extract_deadlines(notice) == [("참가등록 마감", datetime(2026, 10, 13, 14, 0))]
+    assert extract_deadlines(notice) == [("첨부 참가등록 마감", datetime(2026, 10, 13, 14, 0))]
     assert extract_deadlines(guide) == [("첨부파일 제출기한", datetime(2026, 11, 17, 18, 0))]
 
 
@@ -85,7 +85,7 @@ def test_all_deadlines_sorted_for_popup():
 
     s = Schedule(qualification_deadline=datetime(2026, 11, 9, 18), joint_agreement_deadline=datetime(2026, 10, 19, 18),
                  bid_deadline=datetime(2026, 11, 10, 10))
-    assert s.earliest == ("공동수급협정 마감", datetime(2026, 10, 19, 18))
+    assert s.earliest == ("자격등록 마감", datetime(2026, 11, 9, 18))  # 카드는 자격등록 기준(2026-10-02 사용자 결정)
     assert [label for label, _ in s.all_deadlines] == ["공동수급협정 마감", "자격등록 마감", "입찰 마감"]
 
 

@@ -366,7 +366,7 @@ def save_attachment_texts(
         needs_check = held_codes is not None and qualification is not None
         schedule = getattr(candidate, "schedule", None)
         # 마감 정보가 없거나, 공동수급협정 마감만 있는 공고는 첨부의 등록·제출 마감도 찾는다
-        needs_deadline = schedule is not None and (schedule.earliest is None or getattr(schedule, "joint_only", False))
+        needs_deadline = schedule is not None and getattr(schedule, "needs_attachment_deadline", schedule.earliest is None)
         all_items: list[str] = []
         read_files: list[tuple[str, str]] = []  # (파일명, 원문) — 칩 원문의 출처 파일을 찾을 때 쓴다
         deadline = None
@@ -394,12 +394,13 @@ def save_attachment_texts(
                 (text_dir / f"{base}_참가자격.txt").write_text(summary, encoding="utf-8")
                 all_items.extend(section.items)
 
-            if needs_deadline:
-                # 모든 첨부의 제출기한·응모신청 등록 마감 중 가장 이른 것 — 공고문엔 등록 마감, 지침서엔 제출기한만
-                # 있는 식으로 갈라 적는 공고가 있다(거제 지심도: 등록 10/13, 제출 11/17)
-                for found in extract_deadlines(result.text):
-                    if deadline is None or found[1] < deadline[1]:
-                        deadline = found
+            # 첨부의 제출기한·참가등록 마감은 늘 모아 둔다(팝업에 보임). 카드 마감으로 쓰는 건 나라장터 자격등록·입찰 마감이
+            # 빈 공고뿐 — 그때는 가장 이른 것(거제 지심도: 공고문엔 등록 10/13, 지침서엔 제출 11/17)
+            for found in extract_deadlines(result.text):
+                if schedule is not None and found not in schedule.attachment_deadlines:
+                    schedule.attachment_deadlines.append(found)
+                if needs_deadline and (deadline is None or found[1] < deadline[1]):
+                    deadline = found
 
         if needs_deadline and deadline is not None:
             schedule.attachment_deadline_kind, schedule.attachment_deadline = deadline
