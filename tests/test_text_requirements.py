@@ -134,3 +134,21 @@ class TestFlags(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_attach_sources_names_file_and_zip_member():
+    from nego.text_requirements import attach_sources
+
+    flags = [
+        {"kind": "인력", "text": "건축사 자격을 보유한 기술자 1인 이상 재직"},
+        {"kind": "실적", "text": "최근 3년 이내 단일 실적 5억원 이상"},
+        {"kind": "현장설명회", "text": "어디에도 없는 문장"},
+    ]
+    files = [
+        ("제안요청서.hwp", "가. 건축사 자격을\n보유한 기술자 1인 이상\n재직 업체"),
+        ("입찰서류.zip", "=== [압축 안] 공고문.pdf ===\n나. 최근 3년 이내 단일 실적\n5억원 이상"),
+    ]
+    out = attach_sources(flags, files)
+    assert out[0]["source"] == "제안요청서.hwp"
+    assert out[1]["source"] == "입찰서류.zip › 공고문.pdf"
+    assert "source" not in out[2]

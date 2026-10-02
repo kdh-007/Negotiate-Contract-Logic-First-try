@@ -211,3 +211,32 @@ def flag_requirements(items: list[str], full_text: str = "") -> list[dict]:
                 out.setdefault(kind, entry)
                 break
     return list(out.values())
+
+
+_ZIP_PART_RE = re.compile(r"^=== \[압축 안\] (.+?) ===$", re.M)
+
+
+def _squeeze(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
+def attach_sources(flags: list[dict], files: list[tuple[str, str]]) -> list[dict]:
+    """칩 원문 문장이 어느 첨부파일에서 나왔는지 `source`(파일명)를 붙인다 (2026-10-02 사용자 요청 — 팝업 하단 출처).
+
+    PDF·HWP는 문장 중간에서 줄을 바꾸므로 공백을 다 지우고 원문 앞 40자로 찾는다. 압축 첨부는 "=== [압축 안] 이름 ==="
+    구분으로 나눠 "압축파일 › 안쪽 파일"로 적는다. 못 찾으면 source를 넣지 않는다(화면은 출처 줄을 안 그림)."""
+    for flag in flags:
+        needle = _squeeze(flag.get("text", ""))[:40]
+        if not needle:
+            continue
+        for file_name, text in files:
+            pieces = _ZIP_PART_RE.split(text)
+            # split 결과: [압축 밖 앞부분, 이름1, 본문1, 이름2, 본문2, …]
+            parts = [(file_name, pieces[0])] + [
+                (f"{file_name} › {pieces[i]}", pieces[i + 1]) for i in range(1, len(pieces) - 1, 2)
+            ]
+            hit = next((label for label, body in parts if needle in _squeeze(body)), None)
+            if hit:
+                flag["source"] = hit
+                break
+    return flags
