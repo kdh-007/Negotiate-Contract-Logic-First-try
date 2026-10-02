@@ -63,3 +63,16 @@ class TestRejectedRow(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_registration_deadline_before_submission():
+    """거제 지심도 산마루문화놀이터 제안공모 — 공고문엔 응모신청서 등록(10/13 14:00), 지침서엔 제안서 제출(11/17)만 있어
+    D-46으로 보였음(2026-10-02). 등록 마감도 찾고, 화면 마감은 가장 이른 것."""
+    from datetime import datetime
+    from nego.schedule_text import extract_deadlines
+
+    notice = ("응모신청서\n등록\n ◦ 응모신청서 등록 일시 : 2026. 10. 13.(화) 13:00 ~ 14:00\n"
+              " ◦ 응모신청서 등록 장소 : 거제시 일운면 옥림리 산1 지심도 휴게소\n")
+    guide = "제안서 제출기한 : 2026. 11. 17.(화) 09:00~18:00\n"
+    assert extract_deadlines(notice) == [("응모신청 등록 마감", datetime(2026, 10, 13, 14, 0))]
+    assert extract_deadlines(guide) == [("첨부파일 제출기한", datetime(2026, 11, 17, 18, 0))]

@@ -252,6 +252,8 @@ class Schedule:
     # 제출기한(`attachments.save_attachment_texts` → `schedule_text.extract_deadline`).
     # API 값이 하나라도 있으면 이 필드는 아예 안 쓰인다.
     attachment_deadline: datetime | None = None
+    # 첨부에서 찾은 마감의 종류 — "첨부파일 제출기한" 또는 "응모신청 등록 마감"(2026-10-02)
+    attachment_deadline_kind: str = "첨부파일 제출기한"
     # 사전규격의 의견등록 마감. 본공고에는 없다(항상 None) — 입찰 마감이 없는 사전규격에서만 쓰인다.
     opinion_deadline: datetime | None = None
 
@@ -268,7 +270,7 @@ class Schedule:
         if self.opinion_deadline is not None:
             return ("의견등록 마감", self.opinion_deadline)
         if self.attachment_deadline is not None:
-            return ("첨부파일 제출기한", self.attachment_deadline)
+            return (self.attachment_deadline_kind, self.attachment_deadline)
         return None
 
     def days_left(self, now: datetime) -> int | None:

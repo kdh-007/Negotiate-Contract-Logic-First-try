@@ -36,9 +36,32 @@ _LABEL_TO_DATE_WINDOW = 20
 _DATE_TO_TIME_WINDOW = 25
 
 
+# 응모·참가 신청 등록 마감 — 제안서 제출보다 먼저 끝나는 경우가 있다(2026-10-02 실측: 거제 지심도 산마루문화놀이터
+# 제안공모 "응모신청서 등록 일시 : 2026. 10. 13.(화) 13:00 ~ 14:00" — 제안서 제출은 11/17이라 D-46으로 보였음)
+_REGISTRATION_LABEL_RE = re.compile(
+    r"(?:응모|참가|입찰\s*참가)\s*신청\s*서?\s*(?:등록|접수|제출)\s*(?:일시|기간|기한|마감)?|(?:응모|참가)\s*등록\s*(?:일시|기간|기한|마감)?"
+)
+REGISTRATION = "응모신청 등록 마감"
+SUBMISSION = "첨부파일 제출기한"
+
+
 def extract_deadline(text: str) -> datetime | None:
     """제출기한/마감 표기를 찾아 datetime으로 반환한다. 못 찾으면 None."""
-    for label_match in _DEADLINE_LABEL_RE.finditer(text):
+    return _first_deadline(text, _DEADLINE_LABEL_RE)
+
+
+def extract_deadlines(text: str) -> list[tuple[str, datetime]]:
+    """제출기한과 응모신청 등록 마감을 [(종류, 일시)]로. 화면 마감은 이 중 가장 이른 것을 쓴다."""
+    out = []
+    for kind, rx in ((REGISTRATION, _REGISTRATION_LABEL_RE), (SUBMISSION, _DEADLINE_LABEL_RE)):
+        found = _first_deadline(text, rx)
+        if found is not None:
+            out.append((kind, found))
+    return out
+
+
+def _first_deadline(text: str, label_re: re.Pattern) -> datetime | None:
+    for label_match in label_re.finditer(text):
         date_match = _DATE_RE.search(text, label_match.end())
         if not date_match or date_match.start() - label_match.end() > _LABEL_TO_DATE_WINDOW:
             continue
