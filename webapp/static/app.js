@@ -151,14 +151,11 @@ function chip(label, cls, head, note, headCls = "") {
   const body = `<div class="tip-title${headCls ? " " + headCls : ""}">${esc(head)}</div>` + (note ? `<div class="tip-note">${note}</div>` : "");
   return qualButton(label, cls, `${label} — ${head}`, body);
 }
-function dday(c) {
-  if (c.days_left == null) return chip("일정 미상", "", "마감 정보 없음", "나라장터 공고와 첨부파일 어디에서도 마감 일시를 찾지 못했습니다.");
-  // 지난 공고는 "마감 마감"이 되지 않게 "마감됨" 한 번만
-  const text = c.days_left < 0 ? "마감됨" : c.days_left === 0 ? "마감 D-day" : `마감 D-${c.days_left}`;
-  // 카드 D-N은 입찰참가자격등록 마감 우선(없으면 입찰 마감 → 의견등록 → 첨부 등록·제출 → 공동수급협정, 2026-10-02 사용자 결정).
-  // 팝업엔 나머지 일시도 전부 날짜순으로 — 공고 게시·자격등록·공동수급협정·입찰·개찰·첨부 공고문 마감. 카드 기준 줄은 굵게.
+// 입찰 일정 팝업 본문 — 본문 마감 날짜("연-월-일 시:분")에 커서를 대면 뜬다(2026-10-02 요청, 윗줄 "마감 D-N" 칩엔 안 붙임)
+function deadlineTipBody(c) {
   const list = c.deadlines || [];
-  if (list.length) {
+  if (!list.length) return "";
+  {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const dn = (iso) => { const d = new Date(iso); d.setHours(0, 0, 0, 0); const n = Math.round((d - today) / 864e5); return n < 0 ? "지남" : n === 0 ? "D-day" : `D-${n}`; };
     const isCard = (label, iso) => label === c.deadline_label && fmtDt(iso) === fmtDt(c.deadline);
@@ -173,10 +170,23 @@ function dday(c) {
       notes.push("나라장터에는 공동수급협정서 제출 마감만 등록돼 있습니다. 단독 참가 기한은 첨부 공고문에서 확인하세요.");
     const body = `<div class="tip-title">입찰 일정</div><dl class="kv">${rows}</dl>`
       + `<div class="tip-note">${notes.map(esc).join("<br>")}</div>`;
-    return qualButton(text, `dday${c.days_left > 7 ? " far" : ""}`, `${text} — ${c.deadline_label || "마감"}`, body);
+    return body;
   }
-  return chip(text, `dday${c.days_left > 7 ? " far" : ""}`, `${c.deadline_label || "마감"} ${fmtDt(c.deadline)}`,
-    "입찰참가자격등록 마감 기준(없으면 입찰 마감·첨부 공고문 마감), 오늘부터 남은 날수입니다.");
+}
+// 본문 마감 날짜 줄 — 날짜 글자에 커서를 대면 "입찰 일정" 팝업
+function deadlineCell(c, dd, note) {
+  const date = esc(fmtDt(c.deadline));
+  const body = deadlineTipBody(c);
+  const shown = body ? `<button type="button" class="qual dl-cell" aria-label="입찰 일정 보기">${date}<span class="tip" role="tooltip">${body}</span></button>` : date;
+  return `${shown}${dd} ${note}`;
+}
+function dday(c) {
+  if (c.days_left == null) return chip("일정 미상", "", "마감 정보 없음", "나라장터 공고와 첨부파일 어디에서도 마감 일시를 찾지 못했습니다.");
+  // 지난 공고는 "마감 마감"이 되지 않게 "마감됨" 한 번만
+  const text = c.days_left < 0 ? "마감됨" : c.days_left === 0 ? "마감 D-day" : `마감 D-${c.days_left}`;
+  // 카드 D-N은 입찰참가자격등록 마감 우선(없으면 입찰 마감 → 의견등록 → 첨부 등록·제출 → 공동수급협정, 2026-10-02 사용자 결정).
+  // 이 칩엔 팝업 없음 — 입찰 일정 팝업은 본문 날짜("연-월-일")에 커서를 댈 때만(2026-10-02 사용자 요청)
+  return `<span class="b dday${c.days_left > 7 ? " far" : ""}">${esc(text)}</span>`;
 }
 const QUAL_NOTES = {
   industry: "자격요건 = 업종·면허(업종코드 4자리). ✓ 보유 · ✗ 미보유 · – 이미 충족해서 없어도 됨.",
@@ -422,7 +432,8 @@ function card(c, withActions = true) {
   const urgent = c.days_left != null && c.days_left <= 3;
   el.className = "card" + (st.assignee && st.assignee === myName() ? " mine" : "") + (urgent ? " urgent" : "");
   const s = c.sync;
-  const note = c.deadline_label && !["입찰 마감", "의견등록 마감"].includes(c.deadline_label) ? `<span class="why">${esc(c.deadline_label)}</span>` : "";
+  // 머리글은 "마감" — 무슨 마감인지는 날짜 옆 글자로(카드 기준이 자격등록 마감 우선이라 "입찰 마감"이라 적으면 틀림)
+  const note = c.deadline_label && c.deadline_label !== "의견등록 마감" ? `<span class="why">${esc(c.deadline_label)}</span>` : "";
   const dd = c.days_left == null ? "" : ` <span class="dd">${c.days_left < 0 ? "마감" : c.days_left === 0 ? "D-day" : `D-${c.days_left}`}</span>`;
   el.innerHTML = `
     <div class="card-body">
@@ -430,7 +441,7 @@ function card(c, withActions = true) {
         <div class="badges">${badges(c)}</div>
         <div class="title">${c.detail_url ? `<a href="${esc(c.detail_url)}" target="_blank" rel="noopener" title="나라장터에서 공고 열기">${esc(c.title)} <span class="ext" aria-hidden="true">↗</span></a>` : esc(c.title)}</div>
         <dl class="meta">
-          <div><dt>${c.kind === "사전규격" ? "의견등록 마감" : "입찰 마감"}</dt><dd>${esc(fmtDt(c.deadline))}${dd} ${note}</dd></div>
+          <div><dt>${c.kind === "사전규격" ? "의견등록 마감" : "마감"}</dt><dd>${deadlineCell(c, dd, note)}</dd></div>
           <div><dt>수요기관</dt><dd>${esc(c.demand_institution || "-")}</dd></div>
           <div><dt>사업금액</dt><dd>${esc(won(c.budget))}</dd></div>
           ${c.excluded_reason ? `<div class="wide"><dt>제외 사유</dt><dd>${esc(c.excluded_reason)}${(c.match_explain || []).length ? `<ul class="explain">${c.match_explain.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}</dd></div>` : ""}
