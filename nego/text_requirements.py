@@ -323,7 +323,11 @@ _AMOUNT_RE = re.compile(
 _FIELD_PAREN_RE = re.compile(r"\(([^()]{4,60}(?:관련|분야)[^()]{0,20})\)")
 _VAT_RE = re.compile(r"VAT\s*포함|부가\s*가치\s*세\s*포함|부가세\s*포함")
 _VAT_EXCL_RE = re.compile(r"부가\s*(?:가치\s*)?세\s*별도|VAT\s*별도")
-_PERIOD_RE = re.compile(r"(?:최근\s*)?(\d+)\s*년\s*(?:이내|간|동안)")
+_PERIOD_RE = re.compile(r"최근\s*(\d+)\s*개?\s*년|(\d+)\s*개?\s*년\s*(?:이내|간|동안|내)")
+# "최근 3년(완료일자 기준)"처럼 기간 바로 뒤 괄호의 기준
+_PERIOD_BASIS_RE = re.compile(r"\s*\(([^)]{0,12}기준)\)")
+# "2021년 이후/부터"처럼 시작 연도로 적은 기간
+_SINCE_YEAR_RE = re.compile(r"((?:19|20)\d{2})\s*(?:년|\.)\s*(?:\d{1,2}\s*(?:월|\.)\s*(?:\d{1,2}\s*일?\.?)?\s*)?(?:이후|부터)")
 # 실적 대상 앞쪽 경계 — 기간·발주처·금액 표현 뒤부터가 "무엇을 했는지"다
 _TARGET_START_RE = re.compile(
     r".*(?:이상|원|발주한|시행한|발주하거나|투자한|의한|따른|이내에?|년간|기준|으로|당)\s*(?=\S)"
@@ -369,9 +373,16 @@ def _target(line: str) -> str | None:
 
 def _track_summary(text: str) -> list[list[str]]:
     rows: list[list[str]] = []
+    # 기간·금액은 늘 보이게(10/2 요청) — 원문에서 못 찾으면 "원문에서 못 찾음"으로 적는다(원문은 팝업 아래에 그대로)
     period = _PERIOD_RE.search(text)
+    since = _SINCE_YEAR_RE.search(text)
     if period:
-        rows.append(["기간", f"최근 {period.group(1)}년"])
+        basis = _PERIOD_BASIS_RE.match(text, period.end())
+        rows.append(["기간", f"최근 {period.group(1) or period.group(2)}년" + (f" ({_sq(basis.group(1))})" if basis else "")])
+    elif since:
+        rows.append(["기간", f"{since.group(1)}년 이후"])
+    else:
+        rows.append(["기간", "원문에서 못 찾음"])
     amounts, targets = [], []
     for line in text.split("\n"):
         for m in _AMOUNT_RE.finditer(line):
@@ -383,8 +394,7 @@ def _track_summary(text: str) -> list[list[str]]:
             t = _target(line)
             if t:
                 targets.append(t)
-    if amounts:
-        rows.append(["금액", " / ".join(dict.fromkeys(amounts))])
+    rows.append(["금액", " / ".join(dict.fromkeys(amounts)) if amounts else "원문에서 못 찾음"])
     if targets:
         rows.append(["대상", " / ".join(dict.fromkeys(targets))])
     if _VAT_RE.search(text):

@@ -246,3 +246,15 @@ def test_prohibition_sentence_names_are_not_requirements():
     # 동사 없이 나열한 진짜 요건은 그대로 판정 (과거 문서: "1) 「산업디자인 진흥법」제9조에 따른 산업디자인 전문회사(…)")
     listed = "4)「소프트웨어산업진흥법」제24조에 의한 소프트웨어사업자(디지털콘텐츠개발서비스사업)"
     assert name_bundles(listed, held, lookup) != []
+
+
+def test_track_summary_always_shows_period_and_amount():
+    # 10/2 요청: 실적 칩 팝업엔 기간(연도)·금액이 늘 보이게 — "최근 3년(완료일자 기준) 내" 표기도 기간으로 읽는다
+    from nego.text_requirements import _track_summary
+    rows = dict(_track_summary("(실적건수) 입찰공고일 기준 최근 3년(완료일자 기준) 내 해당기관이 수행 완료한 10억원 이상의 유사용역 건수의 총합"))
+    assert rows["기간"] == "최근 3년 (완료일자 기준)"
+    assert rows["금액"] == "10억원 이상"
+    assert dict(_track_summary("최근 5개년간 단일 1억원 이상"))["기간"] == "최근 5년"
+    assert dict(_track_summary("2021년 이후 준공한 전시 실적 1억원 이상"))["기간"] == "2021년 이후"
+    missing = dict(_track_summary("유사 실적을 보유한 자"))
+    assert missing["기간"] == "원문에서 못 찾음" and missing["금액"] == "원문에서 못 찾음"
