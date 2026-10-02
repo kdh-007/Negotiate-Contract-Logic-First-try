@@ -111,7 +111,14 @@ button.b.qual { cursor: help; position: relative; font: inherit; font-size: 12px
 .tip-sub .kind { font-size: 10.5px; padding: 0 5px; border-radius: 4px; background: var(--chip); color: var(--muted); }
 .tip-item .why { display: block; font-size: 11px; }
 .tip-note { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
-.tip-item.flag-text { white-space: pre-line; }
+.tip-item.flag-text .quote-src { white-space: pre-line; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 2px 0; font-size: 12.5px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-weight: 600; }
+.quote-src { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.kv + .quote-src { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); }
+.quote-src.solo { font-size: 12.5px; color: var(--ink); }
+.quote-src .why { display: block; font-size: 11px; margin-bottom: 2px; }
 .tip-src { font-size: 11px; color: var(--muted); margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); word-break: break-all; }
 .title { font-weight: 700; font-size: 17px; line-height: 1.45; }
 .title a { color: inherit; text-decoration: none; }

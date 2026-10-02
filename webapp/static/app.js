@@ -4,7 +4,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // 이 화면이 기대하는 수집 결과 형식 — webapp/collect.py RESULT_FORMAT과 같이 올린다
-const APP_FORMAT = 19;
+const APP_FORMAT = 20;
 const store = {
   get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* 저장 불가여도 동작 */ } },
@@ -321,6 +321,12 @@ function badges(c) {
 const SIDO_FULL = { 서울: "서울특별시", 부산: "부산광역시", 대구: "대구광역시", 인천: "인천광역시", 광주: "광주광역시",
   대전: "대전광역시", 울산: "울산광역시", 세종: "세종특별자치시", 경기: "경기도", 강원: "강원특별자치도", 충북: "충청북도",
   충남: "충청남도", 전북: "전북특별자치도", 전남: "전라남도", 경북: "경상북도", 경남: "경상남도", 제주: "제주특별자치도" };
+// 원문을 보여주는 팝업 공통 모양(2026-10-02 요청): 핵심 항목 표를 먼저, 원문은 아래 작게(출처와 함께)
+function summaryHtml(rows, quote, sourceLabel) {
+  const kv = (rows || []).length ? `<dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>` : "";
+  const q = quote ? `<div class="quote-src${kv ? "" : " solo"}"><span class="why">원문${sourceLabel ? ` · ${esc(sourceLabel)}` : ""}</span>${esc(quote)}</div>` : "";
+  return kv + q;
+}
 function regionBadge(c) {
   // 지역 제한 판정(업체 소재지 vs 지일 소재지). 후보에서 빼지는 않고 표시만 한다.
   // 자격 배지처럼 커서를 대면 팝업(2026-09-30 요청) — 판정 근거 문장과 지일 소재지를 보여준다
@@ -330,8 +336,17 @@ function regionBadge(c) {
   const pop = (label, cls, title, lines, note) => qualButton(label, cls, label,
     `<div class="tip-title ${cls}">${esc(title)}</div>` + lines.filter(Boolean).map((l) => `<div class="tip-item">${l}</div>`).join("")
     + (note ? `<div class="tip-note">${esc(note)}</div>` : ""));
-  const basis = [r.source ? `<span class="why">근거: ${esc(r.source)}</span>${esc(r.evidence || "")}` : "",
-    company ? `<span class="why">지일 소재지</span>${esc(company)}` : ""];
+  // 2026-10-02 요청: 원문 표기가 공고마다 달라 읽기 어려움 → 핵심 낱말로 같은 모양(요건·기간·지일 소재지)을 먼저,
+  // 원문은 맨 아래 작게(출처와 함께)
+  const sm = r.summary;
+  const kv = [];
+  if (sm) {
+    kv.push(["요건", `${sm.basis}가 ${req.join("·")}`]);
+    if (sm.period) kv.push(["기간", sm.period]);
+    if (sm.individual) kv.push(["개인사업자", "사업자등록증 등에 적힌 사업장 소재지 기준"]);
+  } else if (r.source) kv.push(["요건", `${r.source}: ${req.join("·") || r.evidence || ""}`]);
+  if (company) kv.push(["지일 소재지", company]);
+  const basis = [summaryHtml(kv, sm ? r.evidence : "", r.source)];
   if (r.status === "미달")
     return pop(`지역 미달 (${req.join("·")}만)`, "bad", `참가 가능 지역: ${req.join("·")}`, basis,
       "지역 제한은 후보에서 빼지 않고 표시만 합니다. 공동수급으로 보완할 수 있는지 공고문을 확인하세요.");
@@ -349,11 +364,12 @@ const FLAG_LABEL = { "실적": "실적 요건", "현장설명회": "현장설명
 function flagBadges(c) {
   return (c.text_flags || []).map((f) => {
     const label = `${FLAG_LABEL[f.kind] || f.kind}${f.date ? ` ${f.date.slice(5, 10)}` : ""}`;
+    // 요약(f.summary: [[항목, 값]…])이 있으면 표를 먼저, 원문은 아래 작게. 예전 결과(요약 없음)는 일시 + 원문만
+    const rows = f.summary && f.summary.length ? f.summary : (f.date ? [["일시", f.date]] : []);
     const body = `<div class="tip-title warn">${esc(FLAG_LABEL[f.kind] || f.kind)} — 확인 필요</div>`
-      + (f.date ? `<div class="tip-item"><span class="why">일시</span>${esc(f.date)}</div>` : "")
-      + `<div class="tip-item flag-text"><span class="why">공고문 원문</span>${esc(f.text)}</div>`
+      + `<div class="tip-item flag-text">${summaryHtml(rows, f.text, "")}</div>`
       + `<div class="tip-note">자동 판정하지 않습니다 — 공고문에서 직접 확인하세요.</div>`
-      + (f.source ? `<div class="tip-src">출처: ${esc(f.source)}</div>` : "");
+      + (f.source ? `<div class="tip-src">출처: ${esc(f.source)}</div>` : "");  // 출처는 맨 아래(10/2 요청 그대로)
     return qualButton(label, "warn", label, body);
   });
 }
