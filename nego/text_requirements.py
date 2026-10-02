@@ -24,6 +24,16 @@ _OR_HINT = re.compile(r"또는|혹은|중\s*(?:하나|1\s*개|한\s*가지)|어�
 # 요건이 아닌 항목 — 공동수급 방법·실적·결격사유 설명 속 업종명은 판정하지 않는다
 # "적격심사 평가대상 업종 및 평가비율" 표는 자격요건이 아니다(2026-10-01 고이분교: "종합 건축공사업 … 100%")
 _NOT_REQUIREMENT = re.compile(r"공동수급|공동도급|공동이행|분담이행|대표사|구성원|실적|제재|부정당|하도급|평가\s*대상\s*업종|평가\s*비율")
+# 대기업·중견기업 참여 제한 문장("대기업 및 중견기업 소프트웨어 사업자는 본 입찰에 참여할 수 없으며") 속 업종명은 요건이 아니다
+# (2026-10-02 제보: 고흥분청문화박물관 실감콘텐츠 — 원문에 없는 "소프트웨어사업자(1470)"가 보유 확인으로 뜸).
+# 진짜 요건 항목 안에 "※ … 대기업 참여는 불가" 주석으로 끼어 있는 경우가 많아 항목 전체가 아니라 그 문장만 뺀다.
+_RESTRICTION_SENTENCE = re.compile(r"대기업|중견\s*기업|상호\s*출자")
+
+
+def _drop_restriction_sentences(item: str) -> str:
+    if not _RESTRICTION_SENTENCE.search(item):
+        return item
+    return "\n".join(sent for sent in _sentences(item) if not _RESTRICTION_SENTENCE.search(sent))
 _DESIGN_FIELDS = ("시각", "제품", "포장", "환경", "멀티미디어", "서비스", "종합")
 _DESIGN_RE = re.compile(r"산업\s*디자인\s*전문\s*회사\s*[(\[]([^)\]]{1,80})[)\]]")
 _DIRECT_RE = re.compile(r"직접\s*생산\s*(?:확인)?\s*증명(?:서)?")
@@ -92,6 +102,7 @@ def name_bundles(
     한 항목 안에 "다음 각 조건을 모두 갖춘 업체 1) … 2) …"처럼 하위 번호가 있으면 하위 항목마다 따로
     본다(하위 항목끼리는 모두 필요). 찾은 게 없으면 빈 목록 — 판정하지 않는다.
     """
+    item = _drop_restriction_sentences(item)
     parts = sub_items(item)
     if len(parts) > 1:
         return [b for p in parts for b in name_bundles(p, held_code_names, lookup)]

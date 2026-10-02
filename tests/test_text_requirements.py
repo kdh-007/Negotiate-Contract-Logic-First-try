@@ -215,3 +215,19 @@ def test_site_briefing_mi_chamseok_is_mandatory():
     assert [f["kind"] for f in flags] == ["현장설명회"]
     assert flags[0]["summary"] == [["참가", "필수 (불참 시 입찰·응모 불가)"], ["일시", "2026-10-13 14:00"],
                                    ["장소", "거제시 일운면 옥림리 산1 지심도 휴게소"]]
+
+
+def test_large_company_restriction_is_not_a_requirement():
+    """고흥분청문화박물관 실감콘텐츠 — "대기업 및 중견기업 소프트웨어 사업자는 본 입찰에 참여할 수 없으며"에서
+    원문에 없는 소프트웨어사업자 요건이 생겼음(2026-10-02). 요건 항목 안 "※ … 대기업 참여는 불가" 주석도 그 문장만 뺀다."""
+    from nego.text_requirements import name_bundles
+
+    lookup = {"1468": "소프트웨어사업자", "1469": "소프트웨어사업자", "1470": "소프트웨어사업자"}
+    held = {"1469": "소프트웨어사업자(디지털콘텐츠개발서비스사업)", "3244": "비디오물제작업"}
+    clause = ("라. 본 과업은 소프트웨어분야 과업금액이 20억원 미만인 사업으로서,「대기업인 소프트웨어사업자가 참여할 수 있는 "
+              "사업금액의 하한」에 의거 대기업 및 중견기업 소프트웨어 사업자는 본 입찰에 참여할 수 없으며")
+    assert name_bundles(clause, held, lookup) == []
+    item = ("3) 「소프트웨어 진흥법」에 의한 소프트웨어사업자(디지털콘텐츠개발서비스사업) 또는 비디오물제작업으로 등록한 자\n"
+            "   ※ 소프트웨어 진흥법 제48조에 의한 중소 소프트웨어사업자의 사업 참여 지원에 따라 대기업 참여는 불가함.")
+    labels = [r.label for b in name_bundles(item, held, lookup) for r in b]
+    assert labels == ["소프트웨어사업자(디지털콘텐츠개발서비스사업)(1469)", "비디오물제작업(3244)"]
