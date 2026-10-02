@@ -231,3 +231,18 @@ def test_large_company_restriction_is_not_a_requirement():
             "   ※ 소프트웨어 진흥법 제48조에 의한 중소 소프트웨어사업자의 사업 참여 지원에 따라 대기업 참여는 불가함.")
     labels = [r.label for b in name_bundles(item, held, lookup) for r in b]
     assert labels == ["소프트웨어사업자(디지털콘텐츠개발서비스사업)(1469)", "비디오물제작업(3244)"]
+
+
+def test_prohibition_sentence_names_are_not_requirements():
+    """대기업이라는 말 없이 금지·제한만 적은 문장도 이름 판정에서 뺀다 — 고흥 사례가 다른 표현으로 재발하지 않게."""
+    from nego.text_requirements import name_bundles
+
+    lookup = {"1469": "소프트웨어사업자", "1470": "소프트웨어사업자", "0006": "실내건축공사업"}
+    held = {"1469": "소프트웨어사업자(디지털콘텐츠개발서비스사업)"}
+    for clause in ["사. 본 사업은 정보시스템 구축사업으로 소프트웨어사업자의 하도급 참여를 금지한다",
+                   "아. 실내건축공사업자는 본 입찰에 참가할 수 없음",
+                   "자. 소프트웨어사업자 중 상호출자제한기업집단 소속 기업은 제외함"]:
+        assert name_bundles(clause, held, lookup) == [], clause
+    # 동사 없이 나열한 진짜 요건은 그대로 판정 (과거 문서: "1) 「산업디자인 진흥법」제9조에 따른 산업디자인 전문회사(…)")
+    listed = "4)「소프트웨어산업진흥법」제24조에 의한 소프트웨어사업자(디지털콘텐츠개발서비스사업)"
+    assert name_bundles(listed, held, lookup) != []
