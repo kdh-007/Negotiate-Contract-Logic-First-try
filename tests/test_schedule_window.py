@@ -76,3 +76,14 @@ def test_registration_deadline_before_submission():
     guide = "제안서 제출기한 : 2026. 11. 17.(화) 09:00~18:00\n"
     assert extract_deadlines(notice) == [("응모신청 등록 마감", datetime(2026, 10, 13, 14, 0))]
     assert extract_deadlines(guide) == [("첨부파일 제출기한", datetime(2026, 11, 17, 18, 0))]
+
+
+def test_all_deadlines_sorted_for_popup():
+    """검단 박물관·도서관 복합문화시설 — 공동수급협정 마감(10/19)이 가장 일러 카드 마감이 되는데, 팝업엔 자격등록(11/09)도 보이게."""
+    from datetime import datetime
+    from nego.screen import Schedule
+
+    s = Schedule(qualification_deadline=datetime(2026, 11, 9, 18), joint_agreement_deadline=datetime(2026, 10, 19, 18),
+                 bid_deadline=datetime(2026, 11, 10, 10))
+    assert s.earliest == ("공동수급협정 마감", datetime(2026, 10, 19, 18))
+    assert [label for label, _ in s.all_deadlines] == ["공동수급협정 마감", "자격등록 마감", "입찰 마감"]

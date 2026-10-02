@@ -4,7 +4,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 // 이 화면이 기대하는 수집 결과 형식 — webapp/collect.py RESULT_FORMAT과 같이 올린다
-const APP_FORMAT = 21;
+const APP_FORMAT = 22;
 const store = {
   get(k, d = null) { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* 저장 불가여도 동작 */ } },
@@ -155,6 +155,18 @@ function dday(c) {
   if (c.days_left == null) return chip("일정 미상", "", "마감 정보 없음", "나라장터 공고와 첨부파일 어디에서도 마감 일시를 찾지 못했습니다.");
   // 지난 공고는 "마감 마감"이 되지 않게 "마감됨" 한 번만
   const text = c.days_left < 0 ? "마감됨" : c.days_left === 0 ? "마감 D-day" : `마감 D-${c.days_left}`;
+  // 마감이 여럿이면(자격등록·공동수급협정·입찰) 전부 날짜순으로 — 가장 이른 것이 카드의 D-N(2026-10-02 요청)
+  const list = c.deadlines || [];
+  if (list.length > 1) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const dn = (iso) => { const d = new Date(iso); d.setHours(0, 0, 0, 0); const n = Math.round((d - today) / 864e5); return n < 0 ? "지남" : n === 0 ? "D-day" : `D-${n}`; };
+    const rows = list.map(([label, iso], i) => `<dt>${esc(label)}</dt><dd${i ? ' class="sub"' : ""}>${esc(fmtDt(iso))} <span class="why-inline">${dn(iso)}</span></dd>`).join("");
+    const joint = list[0][0] === "공동수급협정 마감"
+      ? "<br>공동수급협정 마감은 공동수급으로 참가할 때만 해당합니다. 단독 참가라면 그 아래 마감을 보세요." : "";
+    const body = `<div class="tip-title">마감 일정 ${list.length}건</div><dl class="kv">${rows}</dl>`
+      + `<div class="tip-note">가장 이른 마감 기준으로 남은 날수를 표시합니다.${joint}</div>`;
+    return qualButton(text, `dday${c.days_left > 7 ? " far" : ""}`, `${text} — ${list[0][0]}`, body);
+  }
   return chip(text, `dday${c.days_left > 7 ? " far" : ""}`, `${c.deadline_label || "마감"} ${fmtDt(c.deadline)}`,
     "가장 이른 마감(입찰·자격등록·제안서 제출 등) 기준, 오늘부터 남은 날수입니다.");
 }

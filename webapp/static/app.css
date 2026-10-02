@@ -115,6 +115,8 @@ button.b.qual { cursor: help; position: relative; font: inherit; font-size: 12px
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 2px 0; font-size: 12.5px; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; font-weight: 600; }
+.kv dd.sub { font-weight: 400; }
+.kv .why-inline { color: var(--muted); font-weight: 400; font-size: 11.5px; margin-left: 4px; }
 .quote-src { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
 .kv + .quote-src { margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); }
 .quote-src.solo { font-size: 12.5px; color: var(--ink); }
