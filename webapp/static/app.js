@@ -153,6 +153,11 @@ function chip(label, cls, head, note, headCls = "") {
 }
 // 입찰 일정 팝업 본문 — 본문 마감 날짜("연-월-일 시:분")에 커서를 대면 뜬다(2026-10-02 요청, 윗줄 "마감 D-N" 칩엔 안 붙임)
 function deadlineTipBody(c) {
+  // 예전 버전(RESULT_FORMAT 22 미만)으로 수집한 결과엔 일정 목록(deadlines)이 없다 — 팀원 브라우저가 기억한 옛 결과(myRun)를 보고 있으면
+  // 팝업이 아예 안 떠서 헷갈렸음(10/2). 카드 마감 한 줄 + "다시 불러오기" 안내라도 띄운다.
+  if (!c.deadlines && c.deadline)
+    return `<div class="tip-title">입찰 일정</div><dl class="kv"><dt>${esc(c.deadline_label || "마감")} ★</dt><dd>${esc(fmtDt(c.deadline))}</dd></dl>`
+      + `<div class="tip-note">이 결과는 예전 버전으로 수집돼 나머지 일정(공고 게시·공동수급협정·입찰·개찰 등)이 없습니다. "나라장터에서 불러오기"를 다시 하면 전부 보입니다.</div>`;
   const list = c.deadlines || [];
   if (!list.length) return "";
   {
