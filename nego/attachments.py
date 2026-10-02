@@ -341,7 +341,7 @@ def save_attachment_texts(
     """
     from .qualification_text import find_qualification_section
     from .qualify import api_code_names, evaluate_attachment_text, merge_results, named_codes
-    from .schedule_text import extract_deadline
+    from .schedule_text import extract_deadlines
 
     text_dir = output_dir / "attachment_text"
     text_dir.mkdir(parents=True, exist_ok=True)
@@ -393,11 +393,15 @@ def save_attachment_texts(
                 (text_dir / f"{base}_참가자격.txt").write_text(summary, encoding="utf-8")
                 all_items.extend(section.items)
 
-            if needs_deadline and deadline is None:
-                deadline = extract_deadline(result.text)
+            if needs_deadline:
+                # 모든 첨부의 제출기한·응모신청 등록 마감 중 가장 이른 것 — 공고문엔 등록 마감, 지침서엔 제출기한만
+                # 있는 식으로 갈라 적는 공고가 있다(거제 지심도: 등록 10/13, 제출 11/17)
+                for found in extract_deadlines(result.text):
+                    if deadline is None or found[1] < deadline[1]:
+                        deadline = found
 
         if needs_deadline and deadline is not None:
-            schedule.attachment_deadline = deadline
+            schedule.attachment_deadline_kind, schedule.attachment_deadline = deadline
             stats["deadline_determined"] += 1
             # candidate.days_left는 후보 산출 시점에 schedule.days_left(now)로
             # 미리 계산돼 있다 — attachment_deadline을 지금 막 채웠으니 여기서도

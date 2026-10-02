@@ -146,7 +146,9 @@ _FLAGS = (
     ("실적", re.compile(r"실적|준공한|수행한\s*경험"), re.compile(r"\d\s*(?:억|천만|백만|만)?\s*원|\d+\s*건|최근\s*\d+\s*년")),
     # 참가 안 하면 입찰·평가에서 빠지는 경우만 — "참석하지 않은 업체의 질의는 받지 않음"은 필수가 아니다
     ("현장설명회", re.compile(r"현장\s*설명회"),
-     re.compile(r"불참자|참가하지\s*않은\s*(?:업체|자)는|참석하지\s*않은\s*(?:업체|자)는|참가한\s*(?:업체|자)|참석한\s*(?:업체|자)|참석\s*필수|참가\s*필수|의무")),
+     re.compile(r"불참자|참가하지\s*않은\s*(?:업체|자)는|참석하지\s*않은\s*(?:업체|자)는|참가한\s*(?:업체|자)|참석한\s*(?:업체|자)|참석\s*필수|참가\s*필수|의무"
+                # "현장설명회 미참석시 응모신청 불가"(2026-10-02 실측: 거제 지심도 산마루문화놀이터 제안공모), "불참 시 … 불가"
+                r"|(?:미\s*참(?:석|가)|불참)\s*(?:시|할\s*경우|업체는?)?[^.\n]{0,20}(?:불가|제외|무효|할\s*수\s*없)")),
     ("건축사사무소", re.compile(r"건축사\s*사무소"), re.compile(r"개설|등록|신고")),
     ("인력", re.compile(r"기술자|기술사|학예사|건축사|전문\s*인력|기사\s*자격"), re.compile(r"보유|소지|소속|재직|자격증")),
 )
@@ -245,6 +247,10 @@ def flag_requirements(items: list[str], full_text: str = "") -> list[dict]:
                     if d:
                         entry["date"] = f"{d.group(1)}-{int(d.group(2)):02d}-{int(d.group(3)):02d}" + (
                             f" {d.group(4).replace(' ', '')}" if d.group(4) else "")
+                    # 장소도 같은 표의 다른 줄("◦ 현장설명회 장소 : 거제시 …")에 적는 경우가 많다
+                    place = re.search(r"현장\s*설명회\s*장소\s*[:：]\s*([^\n]{2,60})", full_text or "")
+                    if place:
+                        entry["place"] = re.sub(r"\s+", " ", place.group(1)).strip()
                 out.setdefault(kind, entry)
                 break
     for entry in out.values():
@@ -377,13 +383,14 @@ def _staff_summary(text: str) -> list[list[str]]:
     return rows
 
 
-def _site_summary(text: str, date: str | None) -> list[list[str]]:
+def _site_summary(text: str, date: str | None, place: str | None = None) -> list[list[str]]:
     rows = [["참가", "필수 (불참 시 입찰·응모 불가)"]]
     if date:
         rows.append(["일시", date])
-    place = re.search(r"장소\s*[:：]\s*([^\n,·]{2,40})", text)
+    m = re.search(r"장소\s*[:：]\s*([^\n,·]{2,40})", text)
+    place = place or (_sq(m.group(1)) if m else None)
     if place:
-        rows.append(["장소", _sq(place.group(1))])
+        rows.append(["장소", place])
     return rows
 
 
@@ -403,7 +410,7 @@ def summarize_flag(flag: dict) -> list[list[str]]:
     if kind == "인력":
         return _staff_summary(text)
     if kind == "현장설명회":
-        return _site_summary(text, flag.get("date"))
+        return _site_summary(text, flag.get("date"), flag.get("place"))
     if kind == "건축사사무소":
         return _office_summary(text)
     return []

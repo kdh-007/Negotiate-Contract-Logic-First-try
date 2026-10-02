@@ -203,3 +203,15 @@ def test_flag_summaries_have_same_shape():
         ["참가", "필수 (불참 시 입찰·응모 불가)"], ["일시", "2026-10-07 14:00"]]
     assert summarize_flag({"kind": "건축사사무소", "text": "5) 「건축사법」 제7조의 규정에 의한 건축사 면허를 소지하고 건축사사무소를 개설"}) == [
         ["요건", "건축사사무소 개설 신고(등록)"], ["근거", "건축사법 제7조"]]
+
+
+def test_site_briefing_mi_chamseok_is_mandatory():
+    """거제 지심도 산마루문화놀이터 제안공모 — "현장설명회 미참석시 응모신청 불가"가 칩으로 안 잡혔음(2026-10-02)."""
+    from nego.text_requirements import flag_requirements
+
+    full = ("현장설명회\n ◦ 현장설명회 일시 : 2026. 10. 13.(화) 14:00 ~\n ◦ 현장설명회 장소 : 거제시 일운면 옥림리 산1 지심도 휴게소\n"
+            " ※ 현장설명회 미참석시 응모신청 불가\n")
+    flags = flag_requirements([], full)
+    assert [f["kind"] for f in flags] == ["현장설명회"]
+    assert flags[0]["summary"] == [["참가", "필수 (불참 시 입찰·응모 불가)"], ["일시", "2026-10-13 14:00"],
+                                   ["장소", "거제시 일운면 옥림리 산1 지심도 휴게소"]]

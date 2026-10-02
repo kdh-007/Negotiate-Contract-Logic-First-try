@@ -252,6 +252,8 @@ class Schedule:
     # 제출기한(`attachments.save_attachment_texts` → `schedule_text.extract_deadline`).
     # API 값이 하나라도 있으면 이 필드는 아예 안 쓰인다.
     attachment_deadline: datetime | None = None
+    # 첨부에서 찾은 마감의 종류 — "첨부파일 제출기한" 또는 "응모신청 등록 마감"(2026-10-02)
+    attachment_deadline_kind: str = "첨부파일 제출기한"
     # 사전규격의 의견등록 마감. 본공고에는 없다(항상 None) — 입찰 마감이 없는 사전규격에서만 쓰인다.
     opinion_deadline: datetime | None = None
 
@@ -268,8 +270,24 @@ class Schedule:
         if self.opinion_deadline is not None:
             return ("의견등록 마감", self.opinion_deadline)
         if self.attachment_deadline is not None:
-            return ("첨부파일 제출기한", self.attachment_deadline)
+            return (self.attachment_deadline_kind, self.attachment_deadline)
         return None
+
+    @property
+    def all_deadlines(self) -> list[tuple[str, datetime]]:
+        """알려진 마감 전부를 날짜순으로 — 화면 마감 팝업에 같이 보여준다(2026-10-02 요청: 공동수급협정 마감이 가장 일러
+        마감으로 잡힐 때 자격등록·입찰 마감도 바로 보이게). API 필드가 있으면 첨부에서 찾은 마감은 쓰지 않는 규칙은 그대로."""
+        items = [
+            ("자격등록 마감", self.qualification_deadline),
+            ("공동수급협정 마감", self.joint_agreement_deadline),
+            ("입찰 마감", self.bid_deadline),
+        ]
+        found = [(label, dt) for label, dt in items if dt is not None]
+        if not found and self.opinion_deadline is not None:
+            found = [("의견등록 마감", self.opinion_deadline)]
+        if not found and self.attachment_deadline is not None:
+            found = [(self.attachment_deadline_kind, self.attachment_deadline)]
+        return sorted(found, key=lambda pair: pair[1])
 
     def days_left(self, now: datetime) -> int | None:
         earliest = self.earliest
