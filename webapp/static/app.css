@@ -170,14 +170,36 @@ dialog::backdrop { background: rgba(0,0,0,.35); }
 .manual { margin-top: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
 .manual summary { cursor: pointer; font-weight: 700; }
 .manual input, .manual textarea { width: 100%; margin: 8px 0; }
-.pastrow { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; }
-.pastrow .y { color: var(--muted); margin-right: 6px; }
-.pastrow p { margin: 4px 0 0; font-size: 13px; }
-.pastrow .lab { color: var(--muted); }
+.pastcount { color: var(--muted); font-size: 13px; }
+#pastToggle { margin-left: auto; }
+.pastyear { margin: 18px 0 6px; }
+.pastyear h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; font-size: 15px; }
+.pastyear h3 span { color: var(--muted); font-size: 12px; font-weight: 400; }
+.pastlist { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.pastitem + .pastitem { border-top: 1px solid var(--line); }
+.pastitem > summary { display: flex; align-items: center; gap: 8px; padding: 11px 14px; cursor: pointer; list-style: none; font-size: 14px; }
+.pastitem > summary::-webkit-details-marker { display: none; }
+.pastitem > summary::before { content: "▸"; color: var(--muted); font-size: 11px; width: 10px; flex: none; }
+.pastitem[open] > summary::before { content: "▾"; }
+.pastitem > summary:hover { background: var(--chip); }
+.pastitem .pt { flex: 1; min-width: 0; }
+.pastitem[open] .pt { font-weight: 600; }
+.pasthit { flex: none; font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--chip); color: var(--chip-ink); }
+.pastbody { padding: 2px 16px 14px 32px; font-size: 13px; line-height: 1.6; max-width: 900px; }
+.pastbody h4 { margin: 10px 0 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.pastbody ul { margin: 0; padding-left: 18px; columns: 2 280px; column-gap: 28px; }
+.pastbody li { break-inside: avoid; margin-bottom: 2px; }
+.pastbody p { margin: 0; }
+.pastbody .muted { color: var(--muted); }
+.pasttags { margin-top: 10px; }
+.pasttags summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.pasttags .tags { margin-top: 6px; }
+.pastbody mark, .pastitem mark { background: color-mix(in srgb, var(--accent) 30%, transparent); color: inherit; border-radius: 2px; }
 @media (max-width: 600px) {
   .top, main { padding-left: 16px; padding-right: 16px; }
   .tabs { padding: 0 8px; flex-wrap: wrap; } .tabsearch { margin-left: 0; width: 100%; } .tabsearch input { width: 100%; } .hint { margin: 0 16px 8px; }
   .card { padding: 14px; }
+  .pastbody { padding-left: 16px; } .pastbody ul { columns: 1; }
   .card-body { flex-direction: column; gap: 12px; }
   .card-side { flex: none; flex-direction: row; align-items: center; justify-content: space-between; border-left: 0; border-top: 1px solid var(--line); padding: 10px 0 0; }
   .card-side .bar { flex: 1; }
